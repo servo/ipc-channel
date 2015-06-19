@@ -1,0 +1,15 @@
+[package]
+name = "ipc-channel"
+version = "0.1.0"
+
+[lib]
+name = "ipc_channel"
+path = "lib.rs"
+
+[dependencies]
+cocoa = "*"
+libc = "*"
+rand = "*"
+
+[dependencies.serde]
+path = "../serde/serde"
