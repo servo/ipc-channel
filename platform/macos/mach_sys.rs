@@ -148,9 +148,9 @@ pub type mach_msg_type_descriptor_t = Struct_Unnamed1;
 pub struct Struct_Unnamed2 {
     pub name: mach_port_t,
     pub pad1: mach_msg_size_t,
-    pub type_: u8,
-    pub disposition: u8,
     pub pad2: u16,
+    pub disposition: u8,
+    pub type_: u8,
 }
 impl ::std::clone::Clone for Struct_Unnamed2 {
     fn clone(&self) -> Self { *self }
