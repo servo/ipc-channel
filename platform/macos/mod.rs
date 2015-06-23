@@ -51,6 +51,12 @@ const TASK_BOOTSTRAP_PORT: i32 = 4;
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
+pub fn channel() -> Result<(MachSender, MachReceiver),kern_return_t> {
+    let receiver = try!(MachReceiver::new());
+    let sender = try!(receiver.sender());
+    Ok((sender, receiver))
+}
+
 #[derive(PartialEq, Debug)]
 pub struct MachReceiver {
     port: mach_port_t,
@@ -68,7 +74,7 @@ impl Drop for MachReceiver {
 }
 
 impl MachReceiver {
-    pub fn new() -> Result<MachReceiver,kern_return_t> {
+    fn new() -> Result<MachReceiver,kern_return_t> {
         let mut port: mach_port_t = 0;
         let os_result = unsafe {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
@@ -82,7 +88,7 @@ impl MachReceiver {
         }
     }
 
-    pub fn sender(&self) -> Result<MachSender,kern_return_t> {
+    fn sender(&self) -> Result<MachSender,kern_return_t> {
         unsafe {
             let (mut right, mut acquired_right) = (0, 0);
             let os_result = mach_sys::mach_port_extract_right(mach_task_self(),

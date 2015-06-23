@@ -8,13 +8,12 @@
 // except according to those terms.
 
 use libc;
-use platform::{OsIpcReceiver, OsIpcSender};
+use platform::{self, OsIpcSender};
 use std::iter;
 
 #[test]
 fn simple() {
-    let rx = OsIpcReceiver::new().unwrap();
-    let tx = rx.sender().unwrap();
+    let (tx, rx) = platform::channel().unwrap();
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new()).unwrap();
     let (mut received_data, received_channels) = rx.recv().unwrap();
@@ -24,8 +23,8 @@ fn simple() {
 
 #[test]
 fn channel_transfer() {
-    let (super_rx, sub_rx) = (OsIpcReceiver::new().unwrap(), OsIpcReceiver::new().unwrap());
-    let (super_tx, sub_tx) = (super_rx.sender().unwrap(), sub_rx.sender().unwrap());
+    let (super_tx, super_rx) = platform::channel().unwrap();
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
     super_tx.send(data, vec![sub_tx]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
@@ -39,12 +38,9 @@ fn channel_transfer() {
 
 #[test]
 fn multichannel_transfer() {
-    let (super_rx, sub0_rx, sub1_rx) = (OsIpcReceiver::new().unwrap(),
-                                        OsIpcReceiver::new().unwrap(),
-                                        OsIpcReceiver::new().unwrap());
-    let (super_tx, sub0_tx, sub1_tx) = (super_rx.sender().unwrap(),
-                                        sub0_rx.sender().unwrap(),
-                                        sub1_rx.sender().unwrap());
+    let (super_tx, super_rx) = platform::channel().unwrap();
+    let (sub0_tx, sub0_rx) = platform::channel().unwrap();
+    let (sub1_tx, sub1_rx) = platform::channel().unwrap();
     let data: &[u8] = b"asdfasdf";
     super_tx.send(data, vec![sub0_tx, sub1_tx]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
@@ -67,8 +63,7 @@ fn multichannel_transfer() {
 fn big_data() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
-    let rx = OsIpcReceiver::new().unwrap();
-    let tx = rx.sender().unwrap();
+    let (tx, rx) = platform::channel().unwrap();
     tx.send(data, Vec::new()).unwrap();
     let (mut received_data, received_channels) = rx.recv().unwrap();
     received_data.truncate(65536);
@@ -79,8 +74,8 @@ fn big_data() {
 fn big_data_with_channel_transfer() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
-    let (super_rx, sub_rx) = (OsIpcReceiver::new().unwrap(), OsIpcReceiver::new().unwrap());
-    let (super_tx, sub_tx) = (super_rx.sender().unwrap(), sub_rx.sender().unwrap());
+    let (super_tx, super_rx) = platform::channel().unwrap();
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
     super_tx.send(data, vec![sub_tx]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
@@ -93,7 +88,7 @@ fn big_data_with_channel_transfer() {
 
 #[test]
 fn global_name_registration() {
-    let rx = OsIpcReceiver::new().unwrap();
+    let rx = platform::channel().unwrap().1;
     let name = rx.register_global_name().unwrap();
     let tx = OsIpcSender::from_global_name(name).unwrap();
 
@@ -106,7 +101,7 @@ fn global_name_registration() {
 
 #[test]
 fn cross_process() {
-    let rx = OsIpcReceiver::new().unwrap();
+    let rx = platform::channel().unwrap().1;
     let name = rx.register_global_name().unwrap();
     let data: &[u8] = b"1234567";
 
@@ -125,14 +120,13 @@ fn cross_process() {
 
 #[test]
 fn cross_process_channel_transfer() {
-    let super_rx = OsIpcReceiver::new().unwrap();
+    let super_rx = platform::channel().unwrap().1;
     let name = super_rx.register_global_name().unwrap();
 
     unsafe {
         if libc::fork() == 0 {
             let super_tx = OsIpcSender::from_global_name(name).unwrap();
-            let sub_rx = OsIpcReceiver::new().unwrap();
-            let sub_tx = sub_rx.sender().unwrap();
+            let (sub_tx, sub_rx) = platform::channel().unwrap();
             let data: &[u8] = b"foo";
             super_tx.send(data, vec![sub_tx]).unwrap();
             sub_rx.recv().unwrap();

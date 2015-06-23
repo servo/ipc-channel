@@ -7,16 +7,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(target_os="macos")]
-pub use platform::macos::channel;
-#[cfg(target_os="macos")]
-pub use platform::macos::MachReceiver as OsIpcReceiver;
-#[cfg(target_os="macos")]
-pub use platform::macos::MachSender as OsIpcSender;
+use libc::c_int;
 
-#[cfg(target_os="macos")]
-mod macos;
+pub struct UnixReceiver {
+    fd: c_int,
+}
 
-#[cfg(test)]
-mod test;
+impl UnixReceiver {
+    pub fn new() -> Result<UnixReceiver,c_int> {
+        panic!()
+    }
+}
 
