@@ -7,9 +7,12 @@ name = "ipc_channel"
 path = "lib.rs"
 
 [dependencies]
-cocoa = "*"
 libc = "*"
 rand = "*"
 
 [dependencies.serde]
 path = "../serde/serde"
+
+[dependencies.serde_macros]
+path = "../serde/serde_macros"
+

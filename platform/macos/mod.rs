@@ -30,6 +30,7 @@ static BOOTSTRAP_PREFIX: &'static str = "org.rust-lang.ipc-channel.";
 const BOOTSTRAP_SUCCESS: kern_return_t = 0;
 const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const KERN_SUCCESS: kern_return_t = 0;
+const KERN_INVALID_RIGHT: kern_return_t = 17;
 const MACH_MSG_PORT_DESCRIPTOR: u8 = 0;
 const MACH_MSG_SUCCESS: kern_return_t = 0;
 const MACH_MSG_TIMEOUT_NONE: mach_msg_timeout_t = 0;
@@ -206,16 +207,40 @@ pub struct MachSender {
 impl Drop for MachSender {
     fn drop(&mut self) {
         unsafe {
+            let error = mach_sys::mach_port_mod_refs(mach_task_self(),
+                                                     self.port,
+                                                     MACH_PORT_RIGHT_SEND,
+                                                     -1);
+            // `KERN_INVALID_RIGHT` is returned if (as far as I can tell) the receiver already shut
+            // down. This is fine.
+            if error != KERN_SUCCESS && error != KERN_INVALID_RIGHT {
+                panic!("mach_port_mod_refs(-1, {}) failed: {:08x}", self.port, error)
+            }
+        }
+    }
+}
+
+impl Clone for MachSender {
+    fn clone(&self) -> MachSender {
+        unsafe {
             assert!(mach_sys::mach_port_mod_refs(mach_task_self(),
                                                  self.port,
                                                  MACH_PORT_RIGHT_SEND,
-                                                 -1) == KERN_SUCCESS);
+                                                 1) == KERN_SUCCESS);
+        }
+        MachSender {
+            port: self.port,
         }
     }
 }
 
 impl MachSender {
     fn from_name(port: mach_port_t) -> MachSender {
+        unsafe {
+            let mut urefs = 0;
+            mach_sys::mach_port_get_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, &mut urefs);
+            println!("send right ref for {} at from_name = {}", port, urefs);
+        }
         MachSender {
             port: port,
         }

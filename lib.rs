@@ -7,11 +7,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(vec_from_raw_buf)]
+#![feature(custom_derive, plugin, vec_from_raw_buf)]
+#![plugin(serde_macros)]
 
-extern crate cocoa;
 extern crate libc;
 extern crate rand;
+extern crate serde;
 
+pub mod ipc;
 pub mod platform;
+
+#[cfg(test)]
+mod test;
 
