@@ -11,8 +11,7 @@ use platform::macos::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_
 use platform::macos::mach_sys::{mach_msg_port_descriptor_t, mach_msg_timeout_t, mach_port_right_t};
 use platform::macos::mach_sys::{mach_port_t, mach_task_self_};
 
-use cocoa::foundation;
-use libc::{self, c_char, c_uint, size_t};
+use libc::{self, c_char, size_t};
 use rand::{self, Rng};
 use std::ffi::CString;
 use std::mem;
@@ -20,7 +19,6 @@ use std::ptr;
 use std::slice;
 
 mod mach_sys;
-mod test;
 
 /// The size that we preallocate on the stack to receive messages. If the message is larger than
 /// this, we retry and spill to the heap.
@@ -49,11 +47,11 @@ const MACH_RCV_LARGE: i32 = 4;
 const MACH_RCV_TOO_LARGE: i32 = 0x10004004;
 const TASK_BOOTSTRAP_PORT: i32 = 4;
 
-#[allow(non_snake_case)]
+#[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
 #[derive(PartialEq, Debug)]
-struct MachReceiver {
+pub struct MachReceiver {
     port: mach_port_t,
 }
 
@@ -78,12 +76,6 @@ impl MachReceiver {
         }
         MachReceiver {
             port: port
-        }
-    }
-
-    fn from_name(port: mach_port_t) -> MachReceiver {
-        MachReceiver {
-            port: port,
         }
     }
 
@@ -164,7 +156,7 @@ impl MachReceiver {
                 MACH_RCV_TOO_LARGE => {
                     // For some reason the size reported by the kernel is too small by 8. Why?!
                     let actual_size = (*message).header.msgh_size + 8;
-                    let mut allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                    let allocated_buffer = Some(libc::malloc(actual_size as size_t));
                     setup_receive_buffer(slice::from_raw_parts_mut(
                                             allocated_buffer.unwrap() as *mut u8,
                                             actual_size as usize),
@@ -207,7 +199,7 @@ impl MachReceiver {
 }
 
 #[derive(PartialEq, Debug)]
-struct MachSender {
+pub struct MachSender {
     port: mach_port_t,
 }
 

@@ -7,11 +7,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(vec_from_raw_buf)]
+#[cfg(target_os="macos")]
+pub use platform::macos::MachReceiver as OsIpcReceiver;
+#[cfg(target_os="macos")]
+pub use platform::macos::MachSender as OsIpcSender;
 
-extern crate cocoa;
-extern crate libc;
-extern crate rand;
+#[cfg(target_os="macos")]
+mod macos;
 
-pub mod platform;
+#[cfg(test)]
+mod test;
 
