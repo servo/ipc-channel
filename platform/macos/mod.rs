@@ -210,7 +210,7 @@ impl MachReceiver {
             let payload_ptr = port_descriptor as *mut u8;
             let payload_size = message as usize + ((*message).header.msgh_size as usize) -
                 (port_descriptor as usize);
-            let payload = Vec::from_raw_buf(payload_ptr, payload_size);
+            let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
 
             if let Some(allocated_buffer) = allocated_buffer {
                 libc::free(allocated_buffer)

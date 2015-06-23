@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(custom_derive, plugin, vec_from_raw_buf)]
+#![feature(custom_derive, plugin)]
 #![plugin(serde_macros)]
 
 extern crate libc;
