@@ -7,6 +7,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[cfg(target_os="linux")]
+pub use platform::linux::channel;
+#[cfg(target_os="linux")]
+pub use platform::linux::UnixReceiver as OsIpcReceiver;
+#[cfg(target_os="linux")]
+pub use platform::linux::UnixSender as OsIpcSender;
+
 #[cfg(target_os="macos")]
 pub use platform::macos::channel;
 #[cfg(target_os="macos")]
@@ -14,6 +21,8 @@ pub use platform::macos::MachReceiver as OsIpcReceiver;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachSender as OsIpcSender;
 
+#[cfg(target_os="linux")]
+mod linux;
 #[cfg(target_os="macos")]
 mod macos;
 
