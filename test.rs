@@ -29,10 +29,10 @@ fn simple() {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
-    let rx = IpcReceiver::new();
-    let tx = rx.sender();
-    tx.send(person.clone());
-    let received_person = rx.recv();
+    let rx = IpcReceiver::new().unwrap();
+    let tx = rx.sender().unwrap();
+    tx.send(person.clone()).unwrap();
+    let received_person = rx.recv().unwrap();
     assert_eq!(person, received_person);
 }
 
@@ -42,19 +42,19 @@ fn embedded_channels() {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
-    let sub_rx = IpcReceiver::new();
-    let sub_tx = sub_rx.sender();
+    let sub_rx = IpcReceiver::new().unwrap();
+    let sub_tx = sub_rx.sender().unwrap();
     let person_and_channel = PersonAndChannel {
         person: person.clone(),
         sender: sub_tx,
     };
-    let super_rx = IpcReceiver::new();
-    let super_tx = super_rx.sender();
-    super_tx.send(person_and_channel);
-    let received_person_and_channel = super_rx.recv();
+    let super_rx = IpcReceiver::new().unwrap();
+    let super_tx = super_rx.sender().unwrap();
+    super_tx.send(person_and_channel).unwrap();
+    let received_person_and_channel = super_rx.recv().unwrap();
     assert_eq!(received_person_and_channel.person, person);
-    received_person_and_channel.sender.send(person.clone());
-    let received_person = sub_rx.recv();
+    received_person_and_channel.sender.send(person.clone()).unwrap();
+    let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
@@ -64,25 +64,25 @@ fn cross_process_embedded_channels() {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
-    let rx0: IpcReceiver<IpcSender<Person>> = IpcReceiver::new();
-    let rx0_name = rx0.register_global_name();
-    let rx2: IpcReceiver<Person> = IpcReceiver::new();
-    let rx2_name = rx2.register_global_name();
+    let rx0: IpcReceiver<IpcSender<Person>> = IpcReceiver::new().unwrap();
+    let rx0_name = rx0.register_global_name().unwrap();
+    let rx2: IpcReceiver<Person> = IpcReceiver::new().unwrap();
+    let rx2_name = rx2.register_global_name().unwrap();
     unsafe {
         if libc::fork() == 0 {
-            let rx1: IpcReceiver<Person> = IpcReceiver::new();
-            let tx1: IpcSender<Person> = rx1.sender();
-            let tx0 = IpcSender::from_global_name(rx0_name);
-            tx0.send(tx1);
-            rx1.recv();
-            let tx2: IpcSender<Person> = IpcSender::from_global_name(rx2_name);
-            tx2.send(person.clone());
+            let rx1: IpcReceiver<Person> = IpcReceiver::new().unwrap();
+            let tx1: IpcSender<Person> = rx1.sender().unwrap();
+            let tx0 = IpcSender::from_global_name(rx0_name).unwrap();
+            tx0.send(tx1).unwrap();
+            rx1.recv().unwrap();
+            let tx2: IpcSender<Person> = IpcSender::from_global_name(rx2_name).unwrap();
+            tx2.send(person.clone()).unwrap();
             libc::exit(0);
         }
     }
-    let tx1: IpcSender<Person> = rx0.recv();
-    tx1.send(person.clone());
-    let received_person = rx2.recv();
+    let tx1: IpcSender<Person> = rx0.recv().unwrap();
+    tx1.send(person.clone()).unwrap();
+    let received_person = rx2.recv().unwrap();
     assert_eq!(received_person, person);
 }
 

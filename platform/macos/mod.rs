@@ -68,80 +68,102 @@ impl Drop for MachReceiver {
 }
 
 impl MachReceiver {
-    pub fn new() -> MachReceiver {
+    pub fn new() -> Result<MachReceiver,kern_return_t> {
         let mut port: mach_port_t = 0;
-        unsafe {
-            assert!(mach_sys::mach_port_allocate(mach_task_self(),
-                                                 MACH_PORT_RIGHT_RECEIVE,
-                                                 &mut port) == KERN_SUCCESS);
-        }
-        MachReceiver {
-            port: port
+        let os_result = unsafe {
+            mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
+        };
+        if os_result == KERN_SUCCESS {
+            Ok(MachReceiver {
+                port: port
+            })
+        } else {
+            Err(os_result)
         }
     }
 
-    pub fn sender(&self) -> MachSender {
+    pub fn sender(&self) -> Result<MachSender,kern_return_t> {
         unsafe {
             let (mut right, mut acquired_right) = (0, 0);
-            assert!(mach_sys::mach_port_extract_right(mach_task_self(),
-                                                      self.port,
-                                                      MACH_MSG_TYPE_MAKE_SEND as u32,
-                                                      &mut right,
-                                                      &mut acquired_right) == KERN_SUCCESS);
-            debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
-            MachSender::from_name(right)
+            let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
+                                                              self.port,
+                                                              MACH_MSG_TYPE_MAKE_SEND as u32,
+                                                              &mut right,
+                                                              &mut acquired_right);
+            if os_result == KERN_SUCCESS {
+                debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
+                Ok(MachSender::from_name(right))
+            } else {
+                Err(os_result)
+            }
         }
     }
 
-    pub fn register_global_name(&self) -> String {
+    pub fn register_global_name(&self) -> Result<String,kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
-            assert!(mach_sys::task_get_special_port(mach_task_self(),
-                                                    TASK_BOOTSTRAP_PORT,
-                                                    &mut bootstrap_port) == KERN_SUCCESS);
+            let os_result = mach_sys::task_get_special_port(mach_task_self(),
+                                                            TASK_BOOTSTRAP_PORT,
+                                                            &mut bootstrap_port);
+            if os_result != KERN_SUCCESS {
+                return Err(os_result)
+            }
 
 
             // FIXME(pcwalton): Does this leak?
             let (mut right, mut acquired_right) = (0, 0);
-            assert!(mach_sys::mach_port_extract_right(mach_task_self(),
-                                                      self.port,
-                                                      MACH_MSG_TYPE_MAKE_SEND as u32,
-                                                      &mut right,
-                                                      &mut acquired_right) == KERN_SUCCESS);
+            let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
+                                                              self.port,
+                                                              MACH_MSG_TYPE_MAKE_SEND as u32,
+                                                              &mut right,
+                                                              &mut acquired_right);
+            if os_result != KERN_SUCCESS {
+                return Err(os_result)
+            }
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
-            let mut err;
+            let mut os_result;
             let mut name;
             loop {
                 name = format!("{}{}", BOOTSTRAP_PREFIX, rand::thread_rng().gen::<i64>());
                 let c_name = CString::new(name.clone()).unwrap();
-                err = bootstrap_register2(bootstrap_port, c_name.as_ptr(), right, 0);
-                if err == BOOTSTRAP_NAME_IN_USE {
+                os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), right, 0);
+                if os_result == BOOTSTRAP_NAME_IN_USE {
                     continue
                 }
-                if err != BOOTSTRAP_SUCCESS {
-                    panic!("bootstrap_register2() failed: {:08x}", err);
+                if os_result != BOOTSTRAP_SUCCESS {
+                    return Err(os_result)
                 }
                 break
             }
-            name
+            Ok(name)
         }
     }
 
-    pub fn unregister_global_name(name: String) {
+    pub fn unregister_global_name(name: String) -> Result<(),kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
-            assert!(mach_sys::task_get_special_port(mach_task_self(),
-                                                    TASK_BOOTSTRAP_PORT,
-                                                    &mut bootstrap_port) == KERN_SUCCESS);
+            let os_result = mach_sys::task_get_special_port(mach_task_self(),
+                                                            TASK_BOOTSTRAP_PORT,
+                                                            &mut bootstrap_port);
+            if os_result != KERN_SUCCESS {
+                return Err(os_result)
+            }
 
             let c_name = CString::new(name).unwrap();
-            assert!(bootstrap_register2(bootstrap_port, c_name.as_ptr(), MACH_PORT_NULL, 0) ==
-                    BOOTSTRAP_SUCCESS);
+            let os_result = bootstrap_register2(bootstrap_port,
+                                                c_name.as_ptr(),
+                                                MACH_PORT_NULL,
+                                                0);
+            if os_result == BOOTSTRAP_SUCCESS {
+                Ok(())
+            } else {
+                Err(os_result)
+            }
         }
     }
 
-    pub fn recv(&self) -> (Vec<u8>, Vec<MachSender>) {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<MachSender>),kern_return_t> {
         unsafe {
             let mut buffer = [0; SMALL_MESSAGE_SIZE];
             let allocated_buffer = None;
@@ -171,11 +193,11 @@ impl MachReceiver {
                                              MACH_MSG_TIMEOUT_NONE,
                                              MACH_PORT_NULL) {
                         MACH_MSG_SUCCESS => {}
-                        error => panic!("error in mach_msg when receiving (big): {:08x}", error),
+                        os_result => return Err(os_result),
                     }
                 }
                 MACH_MSG_SUCCESS => {}
-                error => panic!("error in mach_msg when receiving: {:08x}", error),
+                os_result => return Err(os_result),
             }
 
             let mut ports = Vec::new();
@@ -194,7 +216,7 @@ impl MachReceiver {
                 libc::free(allocated_buffer)
             }
 
-            (payload, ports)
+            Ok((payload, ports))
         }
     }
 }
@@ -236,32 +258,33 @@ impl Clone for MachSender {
 
 impl MachSender {
     fn from_name(port: mach_port_t) -> MachSender {
-        unsafe {
-            let mut urefs = 0;
-            mach_sys::mach_port_get_refs(mach_task_self(), port, MACH_PORT_RIGHT_SEND, &mut urefs);
-            println!("send right ref for {} at from_name = {}", port, urefs);
-        }
         MachSender {
             port: port,
         }
     }
 
-    pub fn from_global_name(name: String) -> MachSender {
+    pub fn from_global_name(name: String) -> Result<MachSender,kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
-            assert!(mach_sys::task_get_special_port(mach_task_self(),
-                                                    TASK_BOOTSTRAP_PORT,
-                                                    &mut bootstrap_port) == KERN_SUCCESS);
+            let os_result = mach_sys::task_get_special_port(mach_task_self(),
+                                                            TASK_BOOTSTRAP_PORT,
+                                                            &mut bootstrap_port);
+            if os_result != KERN_SUCCESS {
+                return Err(os_result)
+            }
 
             let mut port = 0;
             let c_name = CString::new(name).unwrap();
-            assert!(bootstrap_look_up(bootstrap_port, c_name.as_ptr(), &mut port) ==
-                    BOOTSTRAP_SUCCESS);
-            MachSender::from_name(port)
+            let os_result = bootstrap_look_up(bootstrap_port, c_name.as_ptr(), &mut port);
+            if os_result == BOOTSTRAP_SUCCESS {
+                Ok(MachSender::from_name(port))
+            } else {
+                Err(os_result)
+            }
         }
     }
 
-    pub fn send(&self, data: &[u8], ports: Vec<MachSender>) {
+    pub fn send(&self, data: &[u8], ports: Vec<MachSender>) -> Result<(),kern_return_t> {
         unsafe {
             let size = Message::size_of(data.len(), ports.len());
             let message = libc::malloc(size as size_t) as *mut Message;
@@ -295,17 +318,18 @@ impl MachSender {
                 ptr = ptr.offset(1);
             }
 
-            let err = mach_sys::mach_msg(message as *mut _,
-                                         MACH_SEND_MSG,
-                                         (*message).header.msgh_size,
-                                         0,
-                                         MACH_PORT_NULL,
-                                         MACH_MSG_TIMEOUT_NONE,
-                                         MACH_PORT_NULL);
-            if err != MACH_MSG_SUCCESS {
-                panic!("failed to send Mach message: {:x} (size: {})", err, size)
+            let os_result = mach_sys::mach_msg(message as *mut _,
+                                               MACH_SEND_MSG,
+                                               (*message).header.msgh_size,
+                                               0,
+                                               MACH_PORT_NULL,
+                                               MACH_MSG_TIMEOUT_NONE,
+                                               MACH_PORT_NULL);
+            if os_result != MACH_MSG_SUCCESS {
+                return Err(os_result)
             }
             libc::free(message as *mut _);
+            Ok(())
         }
     }
 }
