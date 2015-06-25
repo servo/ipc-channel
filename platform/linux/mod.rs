@@ -7,8 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use libc::{self, c_char, c_int, c_short, c_void, size_t, socklen_t};
+use libc::{self, c_char, c_int, c_short, c_void, size_t, socklen_t, ssize_t};
 use std::ffi::{CStr, CString};
+use std::io::Error;
 use std::iter;
 use std::mem;
 use std::ptr;
@@ -19,7 +20,7 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),c_int> {
         if socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut results[0]) >= 0 {
             Ok((UnixSender::from_fd(results[0]), UnixReceiver::from_fd(results[1])))
         } else {
-            Err(Error::last_os_error().raw_os_error())
+            Err(Error::last_os_error().raw_os_error().unwrap())
         }
     }
 }
@@ -37,24 +38,30 @@ impl Drop for UnixReceiver {
 }
 
 impl UnixReceiver {
+    fn from_fd(fd: c_int) -> UnixReceiver {
+        UnixReceiver {
+            fd: fd,
+        }
+    }
+
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnixSender>),c_int> {
         unsafe {
             let mut length_data: [usize; 2] = [0, 0];
             let result = libc::recv(self.fd,
-                                    &length_data[0] as *mut _ as *mut u8,
-                                    mem::size_of::<[usize; 2]>,
+                                    &mut length_data[0] as *mut _ as *mut c_void,
+                                    mem::size_of::<[usize; 2]>() as size_t,
                                     MSG_WAITALL);
             if result <= 0 {
-                return Err(Error::last_os_error())
+                return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
             let [data_length, sender_length] = length_data;
             let cmsg_length = mem::size_of::<cmsghdr>() + sender_length * mem::size_of::<c_int>();
-            let cmsg_buffer = libc::malloc(cmsg_length);
+            let cmsg_buffer: *mut cmsghdr = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
 
-            let mut data_buffer = iter::repeat(0).take(data_length).collect();
+            let mut data_buffer: Vec<u8> = iter::repeat(0).take(data_length).collect();
             let mut iovec = iovec {
-                iov_base: &mut data_buffer[0],
+                iov_base: &mut data_buffer[0] as *mut _ as *mut i8,
                 iov_len: data_length as size_t,
             };
 
@@ -63,20 +70,21 @@ impl UnixReceiver {
                 msg_namelen: 0,
                 msg_iov: &mut iovec,
                 msg_iovlen: 1,
-                msg_control: cmsg as *mut c_void,
+                msg_control: cmsg_buffer as *mut c_void,
                 msg_controllen: cmsg_length as size_t,
                 msg_flags: 0,
             };
 
             let result = recvmsg(self.fd, &mut msghdr, 0);
-            libc::free(cmsg_buffer);
+            libc::free(cmsg_buffer as *mut c_void);
             if result <= 0 {
-                return Err(Error::last_os_error())
+                return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
-            let cmsg_fds = cmsg.offset(1) as *const u8 as *const c_int;
-            let senders = (0..cmsg_fds).map(|index| UnixSender::from_fd(*cmsg_fds.offset(index)))
-                                       .collect();
+            let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
+            let senders = (0..sender_length).map(|index| {
+                UnixSender::from_fd(*cmsg_fds.offset(index as isize))
+            }).collect();
 
             Ok((data_buffer, senders))
         }
@@ -106,7 +114,7 @@ impl Clone for UnixSender {
 }
 
 impl UnixSender {
-    fn from_fd(&self, fd: c_int) -> UnixSender {
+    fn from_fd(fd: c_int) -> UnixSender {
         UnixSender {
             fd: fd,
         }
@@ -116,17 +124,16 @@ impl UnixSender {
         unsafe {
             let length_data: [usize; 2] = [data.len(), senders.len()];
             let result = libc::send(self.fd,
-                                    &length_data as *mut _ as *mut u8,
-                                    mem::size_of::<[usize; 2]>,
+                                    &length_data[0] as *const _ as *const c_void,
+                                    mem::size_of::<[usize; 2]>() as u64,
                                     0);
             if result <= 0 {
-                return Err(Error::last_os_error())
+                return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
             let cmsg_length = mem::size_of::<cmsghdr>() + senders.len() * mem::size_of::<c_int>();
-            let cmsg_buffer = libc::malloc(cmsg_length);
-            let cmsg = cmsg_buffer as *mut _ as *mut cmsghdr;
-            (*cmsg_buffer).cmsg_len = cmsg_len as size_t;
+            let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
+            (*cmsg_buffer).cmsg_len = cmsg_length as size_t;
             (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
             (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
@@ -136,12 +143,12 @@ impl UnixSender {
                 mem::forget(sender);
             }
             ptr::copy_nonoverlapping(fds.as_ptr(),
-                                     cmsg.offset(1) as *mut _ as *mut c_int,
+                                     cmsg_buffer.offset(1) as *mut _ as *mut c_int,
                                      fds.len());
 
             let mut iovec = iovec {
-                iov_base: data.as_ptr(),
-                iov_len: data.len() as usize,
+                iov_base: data.as_mut_ptr() as *mut i8,
+                iov_len: data.len() as size_t,
             };
 
             let msghdr = msghdr {
@@ -149,18 +156,18 @@ impl UnixSender {
                 msg_namelen: 0,
                 msg_iov: &mut iovec,
                 msg_iovlen: 1,
-                msg_control: cmsg as *mut c_void,
+                msg_control: cmsg_buffer as *mut c_void,
                 msg_controllen: cmsg_length as size_t,
                 msg_flags: 0,
             };
 
             let result = sendmsg(self.fd, &msghdr, 0);
-            libc::free(cmsg_buf);
+            libc::free(cmsg_buffer as *mut c_void);
 
             if result > 0 {
                 Ok(())
             } else {
-                Err(Error::last_os_error())
+                Err(Error::last_os_error().raw_os_error().unwrap())
             }
         }
     }
@@ -239,6 +246,9 @@ impl UnixOneShotServer {
 }
 
 // FFI stuff follows:
+
+const MSG_WAITALL: c_int = 0x100;
+const SCM_RIGHTS: c_int = 0x01;
 
 extern {
     fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
