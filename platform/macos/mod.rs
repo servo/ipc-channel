@@ -340,22 +340,22 @@ impl MachSender {
     }
 }
 
-pub struct MachServer {
+pub struct MachOneShotServer {
     receiver: Option<MachReceiver>,
     name: String,
 }
 
-impl Drop for MachServer {
+impl Drop for MachOneShotServer {
     fn drop(&mut self) {
         drop(MachReceiver::unregister_global_name(mem::replace(&mut self.name, String::new())));
     }
 }
 
-impl MachServer {
-    pub fn new() -> Result<(MachServer, String),kern_return_t> {
+impl MachOneShotServer {
+    pub fn new() -> Result<(MachOneShotServer, String),kern_return_t> {
         let receiver = try!(MachReceiver::new());
         let name = try!(receiver.register_bootstrap_name());
-        Ok((MachServer {
+        Ok((MachOneShotServer {
             receiver: Some(receiver),
             name: name.clone(),
         }, name))

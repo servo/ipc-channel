@@ -23,7 +23,7 @@ pub use platform::macos::MachReceiver as OsIpcReceiver;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachSender as OsIpcSender;
 #[cfg(target_os="macos")]
-pub use platform::macos::MachServer as OsIpcServer;
+pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;
 
 #[cfg(target_os="linux")]
 mod linux;

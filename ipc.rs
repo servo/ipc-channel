@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use platform::{self, OsIpcReceiver, OsIpcSender, OsIpcServer};
+use platform::{self, OsIpcReceiver, OsIpcSender, OsIpcOneShotServer};
 
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -114,18 +114,18 @@ impl<T> Serialize for IpcSender<T> where T: Serialize {
     }
 }
 
-pub struct IpcServer<T> {
-    os_server: OsIpcServer,
+pub struct IpcOneShotServer<T> {
+    os_server: OsIpcOneShotServer,
     phantom: PhantomData<T>,
 }
 
-impl<T> IpcServer<T> where T: Deserialize + Serialize {
-    pub fn new() -> Result<(IpcServer<T>, String),()> {
-        let (os_server, name) = match OsIpcServer::new() {
+impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
+    pub fn new() -> Result<(IpcOneShotServer<T>, String),()> {
+        let (os_server, name) = match OsIpcOneShotServer::new() {
             Ok(result) => result,
             Err(_) => return Err(()),
         };
-        Ok((IpcServer {
+        Ok((IpcOneShotServer {
             os_server: os_server,
             phantom: PhantomData,
         }, name))
