@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcReceiver, IpcSender};
+use ipc::{self, IpcReceiver, IpcSender, IpcServer};
 
 use libc;
 
@@ -61,24 +61,22 @@ fn cross_process_embedded_channels() {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
-    let rx0: IpcReceiver<IpcSender<Person>> = ipc::channel().unwrap().1;
-    let rx0_name = rx0.register_global_name().unwrap();
-    let rx2: IpcReceiver<Person> = ipc::channel().unwrap().1;
-    let rx2_name = rx2.register_global_name().unwrap();
+    let (server0, server0_name) = IpcServer::new().unwrap();
+    let (server2, server2_name) = IpcServer::new().unwrap();
     unsafe {
         if libc::fork() == 0 {
             let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
-            let tx0 = IpcSender::from_global_name(rx0_name).unwrap();
+            let tx0 = IpcSender::connect(server0_name).unwrap();
             tx0.send(tx1).unwrap();
             rx1.recv().unwrap();
-            let tx2: IpcSender<Person> = IpcSender::from_global_name(rx2_name).unwrap();
+            let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
             tx2.send(person.clone()).unwrap();
             libc::exit(0);
         }
     }
-    let tx1: IpcSender<Person> = rx0.recv().unwrap();
+    let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
     tx1.send(person.clone()).unwrap();
-    let received_person = rx2.recv().unwrap();
+    let (_, received_person): (_, Person) = server2.accept().unwrap();
     assert_eq!(received_person, person);
 }
 

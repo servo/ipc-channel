@@ -8,8 +8,9 @@
 // except according to those terms.
 
 use libc;
-use platform::{self, OsIpcSender};
+use platform::{self, OsIpcSender, OsIpcServer};
 use std::iter;
+use std::thread;
 
 #[test]
 fn simple() {
@@ -87,45 +88,45 @@ fn big_data_with_channel_transfer() {
 }
 
 #[test]
-fn global_name_registration() {
-    let rx = platform::channel().unwrap().1;
-    let name = rx.register_global_name().unwrap();
-    let tx = OsIpcSender::from_global_name(name).unwrap();
-
+fn server() {
+    let (server, name) = OsIpcServer::new().unwrap();
     let data: &[u8] = b"1234567";
-    tx.send(data, Vec::new()).unwrap();
-    let (mut received_data, received_channels) = rx.recv().unwrap();
+
+    thread::spawn(move || {
+        let tx = OsIpcSender::connect(name).unwrap();
+        tx.send(data, Vec::new()).unwrap();
+    });
+
+    let (_, mut received_data, received_channels) = server.accept().unwrap();
     received_data.truncate(7);
     assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
 }
 
 #[test]
 fn cross_process() {
-    let rx = platform::channel().unwrap().1;
-    let name = rx.register_global_name().unwrap();
+    let (server, name) = OsIpcServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
     unsafe {
         if libc::fork() == 0 {
-            let tx = OsIpcSender::from_global_name(name).unwrap();
+            let tx = OsIpcSender::connect(name).unwrap();
             tx.send(data, Vec::new()).unwrap();
             libc::exit(0);
         }
     }
 
-    let (mut received_data, received_channels) = rx.recv().unwrap();
+    let (_, mut received_data, received_channels) = server.accept().unwrap();
     received_data.truncate(7);
     assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
 }
 
 #[test]
 fn cross_process_channel_transfer() {
-    let super_rx = platform::channel().unwrap().1;
-    let name = super_rx.register_global_name().unwrap();
+    let (server, name) = OsIpcServer::new().unwrap();
 
     unsafe {
         if libc::fork() == 0 {
-            let super_tx = OsIpcSender::from_global_name(name).unwrap();
+            let super_tx = OsIpcSender::connect(name).unwrap();
             let (sub_tx, sub_rx) = platform::channel().unwrap();
             let data: &[u8] = b"foo";
             super_tx.send(data, vec![sub_tx]).unwrap();
@@ -136,7 +137,7 @@ fn cross_process_channel_transfer() {
         }
     }
 
-    let (_, mut received_channels) = super_rx.recv().unwrap();
+    let (super_rx, _, mut received_channels) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap();
     let data: &[u8] = b"baz";

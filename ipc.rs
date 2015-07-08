@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use platform::{self, OsIpcReceiver, OsIpcSender};
+use platform::{self, OsIpcReceiver, OsIpcSender, OsIpcServer};
 
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -45,32 +45,10 @@ pub struct IpcReceiver<T> where T: Deserialize + Serialize {
 
 impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
     pub fn recv(&self) -> Result<T,()> {
-        let (data, mut os_ipc_senders) = match self.os_receiver.recv() {
-            Ok((data, os_ipc_senders)) => (data, os_ipc_senders),
-            Err(_) => return Err(()),
-        };
-        OS_IPC_SENDERS_FOR_DESERIALIZATION.with(|os_ipc_senders_for_deserialization| {
-            mem::swap(&mut *os_ipc_senders_for_deserialization.borrow_mut(), &mut os_ipc_senders);
-            let mut deserializer = match json::Deserializer::new(data.iter()
-                                                                     .map(|byte| Ok(*byte))) {
-                Ok(deserializer) => deserializer,
-                Err(_) => return Err(()),
-            };
-            let result = match Deserialize::deserialize(&mut deserializer) {
-                Ok(result) => result,
-                Err(_) => return Err(()),
-            };
-            mem::swap(&mut *os_ipc_senders_for_deserialization.borrow_mut(), &mut os_ipc_senders);
-            Ok(result)
-        })
-    }
-
-    pub fn register_global_name(&self) -> Result<String,()> {
-        self.os_receiver.register_global_name().map_err(|_| ())
-    }
-
-    pub fn unregister_global_name(name: String) -> Result<(),()> {
-        OsIpcReceiver::unregister_global_name(name).map_err(|_| ())
+        match self.os_receiver.recv() {
+            Ok((data, os_ipc_senders)) => deserialize_received_data(&data[..], os_ipc_senders),
+            Err(_) => Err(()),
+        }
     }
 }
 
@@ -81,8 +59,8 @@ pub struct IpcSender<T> where T: Serialize {
 }
 
 impl<T> IpcSender<T> where T: Serialize {
-    pub fn from_global_name(name: String) -> Result<IpcSender<T>,()> {
-        let os_sender = match OsIpcSender::from_global_name(name) {
+    pub fn connect(name: String) -> Result<IpcSender<T>,()> {
+        let os_sender = match OsIpcSender::connect(name) {
             Ok(os_sender) => os_sender,
             Err(_) => return Err(()),
         };
@@ -134,5 +112,53 @@ impl<T> Serialize for IpcSender<T> where T: Serialize {
         });
         index.serialize(serializer)
     }
+}
+
+pub struct IpcServer<T> {
+    os_server: OsIpcServer,
+    phantom: PhantomData<T>,
+}
+
+impl<T> IpcServer<T> where T: Deserialize + Serialize {
+    pub fn new() -> Result<(IpcServer<T>, String),()> {
+        let (os_server, name) = match OsIpcServer::new() {
+            Ok(result) => result,
+            Err(_) => return Err(()),
+        };
+        Ok((IpcServer {
+            os_server: os_server,
+            phantom: PhantomData,
+        }, name))
+    }
+
+    pub fn accept(self) -> Result<(IpcReceiver<T>,T),()> {
+        let (os_receiver, data, os_senders) = match self.os_server.accept() {
+            Ok(result) => result,
+            Err(_) => return Err(()),
+        };
+        let value = try!(deserialize_received_data(&data[..], os_senders));
+        Ok((IpcReceiver {
+            os_receiver: os_receiver,
+            phantom: PhantomData,
+        }, value))
+    }
+}
+
+fn deserialize_received_data<T>(data: &[u8], mut os_ipc_senders: Vec<OsIpcSender>) -> Result<T,()>
+                                where T: Deserialize + Serialize {
+    OS_IPC_SENDERS_FOR_DESERIALIZATION.with(|os_ipc_senders_for_deserialization| {
+        mem::swap(&mut *os_ipc_senders_for_deserialization.borrow_mut(), &mut os_ipc_senders);
+        let mut deserializer = match json::Deserializer::new(data.iter()
+                                                                 .map(|byte| Ok(*byte))) {
+            Ok(deserializer) => deserializer,
+            Err(_) => return Err(()),
+        };
+        let result = match Deserialize::deserialize(&mut deserializer) {
+            Ok(result) => result,
+            Err(_) => return Err(()),
+        };
+        mem::swap(&mut *os_ipc_senders_for_deserialization.borrow_mut(), &mut os_ipc_senders);
+        Ok(result)
+    })
 }
 

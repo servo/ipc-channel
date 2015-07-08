@@ -105,7 +105,7 @@ impl MachReceiver {
         }
     }
 
-    pub fn register_global_name(&self) -> Result<String,kern_return_t> {
+    fn register_bootstrap_name(&self) -> Result<String,kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
@@ -146,7 +146,7 @@ impl MachReceiver {
         }
     }
 
-    pub fn unregister_global_name(name: String) -> Result<(),kern_return_t> {
+    fn unregister_global_name(name: String) -> Result<(),kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
@@ -269,7 +269,7 @@ impl MachSender {
         }
     }
 
-    pub fn from_global_name(name: String) -> Result<MachSender,kern_return_t> {
+    pub fn connect(name: String) -> Result<MachSender,kern_return_t> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
@@ -337,6 +337,33 @@ impl MachSender {
             libc::free(message as *mut _);
             Ok(())
         }
+    }
+}
+
+pub struct MachServer {
+    receiver: Option<MachReceiver>,
+    name: String,
+}
+
+impl Drop for MachServer {
+    fn drop(&mut self) {
+        drop(MachReceiver::unregister_global_name(mem::replace(&mut self.name, String::new())));
+    }
+}
+
+impl MachServer {
+    pub fn new() -> Result<(MachServer, String),kern_return_t> {
+        let receiver = try!(MachReceiver::new());
+        let name = try!(receiver.register_bootstrap_name());
+        Ok((MachServer {
+            receiver: Some(receiver),
+            name: name.clone(),
+        }, name))
+    }
+
+    pub fn accept(mut self) -> Result<(MachReceiver, Vec<u8>, Vec<MachSender>),kern_return_t> {
+        let (bytes, senders) = try!(self.receiver.as_mut().unwrap().recv());
+        Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, senders))
     }
 }
 

@@ -13,6 +13,8 @@ pub use platform::linux::channel;
 pub use platform::linux::UnixReceiver as OsIpcReceiver;
 #[cfg(target_os="linux")]
 pub use platform::linux::UnixSender as OsIpcSender;
+#[cfg(target_os="linux")]
+pub use platform::linux::UnixServer as OsIpcServer;
 
 #[cfg(target_os="macos")]
 pub use platform::macos::channel;
@@ -20,6 +22,8 @@ pub use platform::macos::channel;
 pub use platform::macos::MachReceiver as OsIpcReceiver;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachSender as OsIpcSender;
+#[cfg(target_os="macos")]
+pub use platform::macos::MachServer as OsIpcServer;
 
 #[cfg(target_os="linux")]
 mod linux;
