@@ -46,6 +46,12 @@ impl UnixReceiver {
         }
     }
 
+    pub fn consume(&self) -> UnixReceiver {
+        unsafe {
+            UnixReceiver::from_fd(libc::dup(self.fd))
+        }
+    }
+
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnknownUnixChannel>),c_int> {
         unsafe {
             let mut length_data: [usize; 2] = [0, 0];
@@ -88,7 +94,7 @@ impl UnixReceiver {
                 UnknownUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
             }).collect();
 
-            Ok((data_buffer, senders))
+            Ok((data_buffer, channels))
         }
     }
 }
@@ -125,7 +131,7 @@ impl UnixSender {
 
     pub fn send(&self, data: &[u8], channels: Vec<UnixChannel>) -> Result<(),c_int> {
         unsafe {
-            let length_data: [usize; 2] = [data.len(), senders.len()];
+            let length_data: [usize; 2] = [data.len(), channels.len()];
             let result = libc::send(self.fd,
                                     &length_data[0] as *const _ as *const c_void,
                                     mem::size_of::<[usize; 2]>() as u64,
@@ -134,7 +140,7 @@ impl UnixSender {
                 return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
-            let cmsg_length = mem::size_of::<cmsghdr>() + senders.len() * mem::size_of::<c_int>();
+            let cmsg_length = mem::size_of::<cmsghdr>() + channels.len() * mem::size_of::<c_int>();
             let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
             (*cmsg_buffer).cmsg_len = cmsg_length as size_t;
             (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
@@ -222,7 +228,7 @@ pub struct UnknownUnixChannel {
 impl Drop for UnknownUnixChannel {
     fn drop(&mut self) {
         unsafe {
-            libc::close(self.fd)
+            debug_assert!(libc::close(self.fd) == 0)
         }
     }
 }
@@ -300,7 +306,7 @@ impl UnixOneShotServer {
         }
     }
 
-    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<UnixSender>),c_int> {
+    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<UnknownUnixChannel>),c_int> {
         unsafe {
             let mut sockaddr = mem::uninitialized();
             let mut sockaddr_len = mem::uninitialized();
@@ -312,8 +318,8 @@ impl UnixOneShotServer {
             let receiver = UnixReceiver {
                 fd: client_fd,
             };
-            let (data, senders) = try!(receiver.recv());
-            Ok((receiver, data, senders))
+            let (data, channels) = try!(receiver.recv());
+            Ok((receiver, data, channels))
         }
     }
 }
