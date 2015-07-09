@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcReceiver, IpcSender, IpcServer};
+use ipc::{self, IpcReceiver, IpcSender, IpcOneShotServer};
 
 use libc;
 
@@ -61,8 +61,8 @@ fn cross_process_embedded_channels() {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
-    let (server0, server0_name) = IpcServer::new().unwrap();
-    let (server2, server2_name) = IpcServer::new().unwrap();
+    let (server0, server0_name) = IpcOneShotServer::new().unwrap();
+    let (server2, server2_name) = IpcOneShotServer::new().unwrap();
     unsafe {
         if libc::fork() == 0 {
             let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();

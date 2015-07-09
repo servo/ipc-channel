@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use libc;
-use platform::{self, OsIpcSender, OsIpcServer};
+use platform::{self, OsIpcSender, OsIpcOneShotServer};
 use std::iter;
 use std::thread;
 
@@ -89,7 +89,7 @@ fn big_data_with_channel_transfer() {
 
 #[test]
 fn server() {
-    let (server, name) = OsIpcServer::new().unwrap();
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
     thread::spawn(move || {
@@ -104,7 +104,7 @@ fn server() {
 
 #[test]
 fn cross_process() {
-    let (server, name) = OsIpcServer::new().unwrap();
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
     unsafe {
@@ -122,7 +122,7 @@ fn cross_process() {
 
 #[test]
 fn cross_process_channel_transfer() {
-    let (server, name) = OsIpcServer::new().unwrap();
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
 
     unsafe {
         if libc::fork() == 0 {

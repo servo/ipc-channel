@@ -26,6 +26,7 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),c_int> {
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub struct UnixReceiver {
     fd: c_int,
 }
@@ -92,6 +93,7 @@ impl UnixReceiver {
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub struct UnixSender {
     fd: c_int,
 }
