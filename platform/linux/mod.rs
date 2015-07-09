@@ -7,7 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use libc::{self, c_char, c_int, c_short, c_void, size_t, socklen_t, ssize_t};
+use libc::{self, c_char, c_int, c_short, c_uint, c_ushort, c_void, size_t, sockaddr, sockaddr_un, socklen_t};
+use libc::{ssize_t};
 use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::iter;
@@ -147,7 +148,7 @@ impl UnixSender {
                                      fds.len());
 
             let mut iovec = iovec {
-                iov_base: data.as_mut_ptr() as *mut i8,
+                iov_base: data.as_ptr() as *const i8 as *mut i8,
                 iov_len: data.len() as size_t,
             };
 
@@ -171,6 +172,29 @@ impl UnixSender {
             }
         }
     }
+
+    pub fn connect(name: String) -> Result<UnixSender,c_int> {
+        let name = CString::new(name).unwrap();
+        unsafe {
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+            let mut sockaddr = sockaddr_un {
+                sun_family: libc::AF_UNIX as u16,
+                sun_path: [ 0; 108 ],
+            };
+            libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
+                          name.as_ptr(),
+                          sockaddr.sun_path.len() as size_t);
+
+            let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
+            if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) < 0 {
+                return Err(Error::last_os_error().raw_os_error().unwrap())
+            }
+
+            Ok(UnixSender {
+                fd: fd,
+            })
+        }
+    }
 }
 
 pub struct UnixOneShotServer {
@@ -188,52 +212,51 @@ impl Drop for UnixOneShotServer {
 impl UnixOneShotServer {
     pub fn new() -> Result<(UnixOneShotServer, String),c_int> {
         unsafe {
-            let fd = libc::socket(libc::PF_UNIX, libc::SOCK_STREAM, 0);
+            let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
             let mut path: Vec<u8>;
             loop {
-                let mut path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX").unwrap();
+                let path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX" as &[u8]).unwrap();
                 path = path_string.as_bytes().iter().cloned().collect();
-                if libc::mkstemp(path.as_mut_ptr()) == ptr::null() {
-                    return Error::last_os_error().raw_os_error()
+                if mktemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
+                    return Err(Error::last_os_error().raw_os_error().unwrap())
                 }
 
-                let mut sockaddr = libc::sockaddr_un {
-                    sun_family: libc::AF_UNIX,
-                    sun_path: [ 0 ],
+                let mut sockaddr = sockaddr_un {
+                    sun_family: libc::AF_UNIX as c_ushort,
+                    sun_path: [ 0; 108 ],
                 };
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
-                              path.as_ptr(),
+                              path.as_ptr() as *const c_char,
                               sockaddr.sun_path.len() as size_t);
 
-                if libc::bind(fd,
-                              &sockaddr,
-                              mem::size_of::<c_short>() + libc::strlen(sockaddr.sun_path)) == 0 {
+                let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
+                if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) == 0 {
                     break
                 }
 
-                let errno = Error::last_os_error().raw_os_error();
+                let errno = Error::last_os_error().raw_os_error().unwrap();
                 if errno != libc::EINVAL {
                     return Err(errno)
                 }
             }
 
             if libc::listen(fd, 10) != 0 {
-                return Err(Error::last_os_error().raw_os_error())
+                return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
-            Ok(UnixOneShotServer {
+            Ok((UnixOneShotServer {
                 fd: fd,
-            }, String::from_utf8(CStr::from_ptr(path.as_ptr()).to_bytes()))
+            }, String::from_utf8(CStr::from_ptr(path.as_ptr() as *const c_char).to_bytes().to_owned()).unwrap()))
         }
     }
 
-    pub fn accept(mut self) -> Result<(UnixReceiver, Vec<u8>, Vec<UnixSender>),c_int> {
+    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<UnixSender>),c_int> {
         unsafe {
             let mut sockaddr = mem::uninitialized();
             let mut sockaddr_len = mem::uninitialized();
             let client_fd = libc::accept(self.fd, &mut sockaddr, &mut sockaddr_len);
             if client_fd < 0 {
-                return Err(Error::last_os_error().raw_os_error())
+                return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
             let receiver = UnixReceiver {
@@ -251,6 +274,7 @@ const MSG_WAITALL: c_int = 0x100;
 const SCM_RIGHTS: c_int = 0x01;
 
 extern {
+    fn mktemp(template: *mut c_char) -> *mut c_char;
     fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
     fn sendmsg(socket: c_int, message: *const msghdr, flags: c_int) -> ssize_t;
     fn socketpair(domain: c_int, socket_type: c_int, protocol: c_int, sv: *mut c_int) -> c_int;
