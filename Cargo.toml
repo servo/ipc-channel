@@ -9,10 +9,6 @@ path = "lib.rs"
 [dependencies]
 libc = "*"
 rand = "*"
-
-[dependencies.serde]
-path = "../serde/serde"
-
-[dependencies.serde_macros]
-path = "../serde/serde_macros"
+serde = "*"
+serde_macros = "*"
 
