@@ -14,6 +14,10 @@ pub use platform::linux::UnixReceiver as OsIpcReceiver;
 #[cfg(target_os="linux")]
 pub use platform::linux::UnixSender as OsIpcSender;
 #[cfg(target_os="linux")]
+pub use platform::linux::UnixChannel as OsIpcChannel;
+#[cfg(target_os="linux")]
+pub use platform::linux::UnknownUnixChannel as OsUnknownIpcChannel;
+#[cfg(target_os="linux")]
 pub use platform::linux::UnixOneShotServer as OsIpcOneShotServer;
 
 #[cfg(target_os="macos")]
@@ -22,6 +26,10 @@ pub use platform::macos::channel;
 pub use platform::macos::MachReceiver as OsIpcReceiver;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachSender as OsIpcSender;
+#[cfg(target_os="macos")]
+pub use platform::macos::MachChannel as OsIpcChannel;
+#[cfg(target_os="macos")]
+pub use platform::macos::UnknownMachChannel as OsUnknownIpcChannel;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;
 

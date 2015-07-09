@@ -18,9 +18,15 @@ struct Person {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct PersonAndChannel {
+struct PersonAndSender {
     person: Person,
     sender: IpcSender<Person>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PersonAndReceiver {
+    person: Person,
+    receiver: IpcReceiver<Person>,
 }
 
 #[test]
@@ -36,27 +42,47 @@ fn simple() {
 }
 
 #[test]
-fn embedded_channels() {
+fn embedded_senders() {
     let person = Person {
         name: "Patrick Walton".to_owned(),
         age: 29,
     };
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
-    let person_and_channel = PersonAndChannel {
+    let person_and_sender = PersonAndSender {
         person: person.clone(),
         sender: sub_tx,
     };
     let (super_tx, super_rx) = ipc::channel().unwrap();
-    super_tx.send(person_and_channel).unwrap();
-    let received_person_and_channel = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_channel.person, person);
-    received_person_and_channel.sender.send(person.clone()).unwrap();
+    super_tx.send(person_and_sender).unwrap();
+    let received_person_and_sender = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_sender.person, person);
+    received_person_and_sender.sender.send(person.clone()).unwrap();
     let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
 #[test]
-fn cross_process_embedded_channels() {
+fn embedded_receivers() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (sub_tx, sub_rx) = ipc::channel().unwrap();
+    let person_and_receiver = PersonAndReceiver {
+        person: person.clone(),
+        receiver: sub_rx,
+    };
+    let (super_tx, super_rx) = ipc::channel().unwrap();
+    super_tx.send(person_and_receiver).unwrap();
+    let received_person_and_receiver = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_receiver.person, person);
+    sub_tx.send(person.clone()).unwrap();
+    let received_person = received_person_and_receiver.receiver.recv().unwrap();
+    assert_eq!(received_person, person);
+}
+
+#[test]
+fn cross_process_embedded_senders() {
     let person = Person {
         name: "Patrick Walton".to_owned(),
         age: 29,

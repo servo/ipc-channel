@@ -13,6 +13,7 @@ use platform::macos::mach_sys::{mach_port_t, mach_task_self_};
 
 use libc::{self, c_char, size_t};
 use rand::{self, Rng};
+use std::cell::Cell;
 use std::ffi::CString;
 use std::mem;
 use std::ptr;
@@ -34,6 +35,7 @@ const KERN_INVALID_RIGHT: kern_return_t = 17;
 const MACH_MSG_PORT_DESCRIPTOR: u8 = 0;
 const MACH_MSG_SUCCESS: kern_return_t = 0;
 const MACH_MSG_TIMEOUT_NONE: mach_msg_timeout_t = 0;
+const MACH_MSG_TYPE_MOVE_RECEIVE: u8 = 16;
 const MACH_MSG_TYPE_MOVE_SEND: u8 = 17;
 const MACH_MSG_TYPE_COPY_SEND: u8 = 19;
 const MACH_MSG_TYPE_MAKE_SEND: u8 = 20;
@@ -59,16 +61,19 @@ pub fn channel() -> Result<(MachSender, MachReceiver),kern_return_t> {
 
 #[derive(PartialEq, Debug)]
 pub struct MachReceiver {
-    port: mach_port_t,
+    port: Cell<mach_port_t>,
 }
 
 impl Drop for MachReceiver {
     fn drop(&mut self) {
-        unsafe {
-            assert!(mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                 self.port,
-                                                 MACH_PORT_RIGHT_RECEIVE,
-                                                 -1) == KERN_SUCCESS);
+        let port = self.port.get();
+        if port != MACH_PORT_NULL {
+            unsafe {
+                assert!(mach_sys::mach_port_mod_refs(mach_task_self(),
+                                                     port,
+                                                     MACH_PORT_RIGHT_RECEIVE,
+                                                     -1) == KERN_SUCCESS);
+            }
         }
     }
 }
@@ -80,19 +85,32 @@ impl MachReceiver {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
         };
         if os_result == KERN_SUCCESS {
-            Ok(MachReceiver {
-                port: port
-            })
+            Ok(MachReceiver::from_name(port))
         } else {
             Err(os_result)
         }
     }
 
+    fn from_name(port: mach_port_t) -> MachReceiver {
+        MachReceiver {
+            port: Cell::new(port),
+        }
+    }
+
+    pub fn consume(&self) -> MachReceiver {
+        let port = self.port.get();
+        debug_assert!(port != MACH_PORT_NULL);
+        self.port.set(MACH_PORT_NULL);
+        MachReceiver::from_name(port)
+    }
+
     fn sender(&self) -> Result<MachSender,kern_return_t> {
+        let port = self.port.get();
+        debug_assert!(port != MACH_PORT_NULL);
         unsafe {
             let (mut right, mut acquired_right) = (0, 0);
             let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
-                                                              self.port,
+                                                              port,
                                                               MACH_MSG_TYPE_MAKE_SEND as u32,
                                                               &mut right,
                                                               &mut acquired_right);
@@ -106,6 +124,8 @@ impl MachReceiver {
     }
 
     fn register_bootstrap_name(&self) -> Result<String,kern_return_t> {
+        let port = self.port.get();
+        debug_assert!(port != MACH_PORT_NULL);
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
@@ -119,7 +139,7 @@ impl MachReceiver {
             // FIXME(pcwalton): Does this leak?
             let (mut right, mut acquired_right) = (0, 0);
             let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
-                                                              self.port,
+                                                              port,
                                                               MACH_MSG_TYPE_MAKE_SEND as u32,
                                                               &mut right,
                                                               &mut acquired_right);
@@ -169,17 +189,19 @@ impl MachReceiver {
         }
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<MachSender>),kern_return_t> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnknownMachChannel>),kern_return_t> {
+        let port = self.port.get();
+        debug_assert!(port != MACH_PORT_NULL);
         unsafe {
             let mut buffer = [0; SMALL_MESSAGE_SIZE];
             let allocated_buffer = None;
-            setup_receive_buffer(&mut buffer, self.port);
+            setup_receive_buffer(&mut buffer, port);
             let mut message = &mut buffer[0] as *mut _ as *mut Message;
             match mach_sys::mach_msg(message as *mut _,
                                      MACH_RCV_MSG | MACH_RCV_LARGE,
                                      0,
                                      (*message).header.msgh_size,
-                                     self.port,
+                                     port,
                                      MACH_MSG_TIMEOUT_NONE,
                                      MACH_PORT_NULL) {
                 MACH_RCV_TOO_LARGE => {
@@ -189,13 +211,13 @@ impl MachReceiver {
                     setup_receive_buffer(slice::from_raw_parts_mut(
                                             allocated_buffer.unwrap() as *mut u8,
                                             actual_size as usize),
-                                         self.port);
+                                         port);
                     message = allocated_buffer.unwrap() as *mut Message;
                     match mach_sys::mach_msg(message as *mut _,
                                              MACH_RCV_MSG | MACH_RCV_LARGE,
                                              0,
                                              actual_size,
-                                             self.port,
+                                             port,
                                              MACH_MSG_TIMEOUT_NONE,
                                              MACH_PORT_NULL) {
                         MACH_MSG_SUCCESS => {}
@@ -209,7 +231,7 @@ impl MachReceiver {
             let mut ports = Vec::new();
             let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
             for _ in 0..(*message).body.msgh_descriptor_count {
-                ports.push(MachSender::from_name((*port_descriptor).name));
+                ports.push(UnknownMachChannel::from_name((*port_descriptor).name));
                 port_descriptor = port_descriptor.offset(1);
             }
 
@@ -290,7 +312,7 @@ impl MachSender {
         }
     }
 
-    pub fn send(&self, data: &[u8], ports: Vec<MachSender>) -> Result<(),kern_return_t> {
+    pub fn send(&self, data: &[u8], ports: Vec<MachChannel>) -> Result<(),kern_return_t> {
         unsafe {
             let size = Message::size_of(data.len(), ports.len());
             let message = libc::malloc(size as size_t) as *mut Message;
@@ -304,9 +326,15 @@ impl MachSender {
             (*message).body.msgh_descriptor_count = ports.len() as u32;
             let mut port_descriptor_dest = message.offset(1) as *mut mach_msg_port_descriptor_t;
             for outgoing_port in ports.into_iter() {
-                (*port_descriptor_dest).name = outgoing_port.port;
+                (*port_descriptor_dest).name = outgoing_port.port();
                 (*port_descriptor_dest).pad1 = 0;
-                (*port_descriptor_dest).disposition = MACH_MSG_TYPE_COPY_SEND;
+
+                // FIXME(pcwalton): MOVE_SEND maybe?
+                (*port_descriptor_dest).disposition = match outgoing_port {
+                    MachChannel::Sender(_) => MACH_MSG_TYPE_COPY_SEND,
+                    MachChannel::Receiver(_) => MACH_MSG_TYPE_MOVE_RECEIVE,
+                };
+
                 (*port_descriptor_dest).type_ = MACH_MSG_PORT_DESCRIPTOR;
                 port_descriptor_dest = port_descriptor_dest.offset(1);
                 mem::forget(outgoing_port);
@@ -340,6 +368,50 @@ impl MachSender {
     }
 }
 
+pub enum MachChannel {
+    Sender(MachSender),
+    Receiver(MachReceiver),
+}
+
+impl MachChannel {
+    fn port(&self) -> mach_port_t {
+        match *self {
+            MachChannel::Sender(ref sender) => sender.port,
+            MachChannel::Receiver(ref receiver) => receiver.port.get(),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct UnknownMachChannel {
+    port: mach_port_t,
+}
+
+impl Drop for UnknownMachChannel {
+    fn drop(&mut self) {
+        // Make sure we don't leak!
+        debug_assert!(self.port == MACH_PORT_NULL);
+    }
+}
+
+impl UnknownMachChannel {
+    fn from_name(name: mach_port_t) -> UnknownMachChannel {
+        UnknownMachChannel {
+            port: name,
+        }
+    }
+
+    pub fn to_sender(&mut self) -> MachSender {
+        MachSender {
+            port: mem::replace(&mut self.port, MACH_PORT_NULL),
+        }
+    }
+
+    pub fn to_receiver(&mut self) -> MachReceiver {
+        MachReceiver::from_name(mem::replace(&mut self.port, MACH_PORT_NULL))
+    }
+}
+
 pub struct MachOneShotServer {
     receiver: Option<MachReceiver>,
     name: String,
@@ -361,9 +433,10 @@ impl MachOneShotServer {
         }, name))
     }
 
-    pub fn accept(mut self) -> Result<(MachReceiver, Vec<u8>, Vec<MachSender>),kern_return_t> {
-        let (bytes, senders) = try!(self.receiver.as_mut().unwrap().recv());
-        Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, senders))
+    pub fn accept(mut self)
+                  -> Result<(MachReceiver, Vec<u8>, Vec<UnknownMachChannel>),kern_return_t> {
+        let (bytes, channels) = try!(self.receiver.as_mut().unwrap().recv());
+        Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, channels))
     }
 }
 

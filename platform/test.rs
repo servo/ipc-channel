@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use libc;
-use platform::{self, OsIpcSender, OsIpcOneShotServer};
+use platform::{self, OsIpcChannel, OsIpcSender, OsIpcOneShotServer};
 use std::iter;
 use std::thread;
 
@@ -23,14 +23,14 @@ fn simple() {
 }
 
 #[test]
-fn channel_transfer() {
+fn sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
-    super_tx.send(data, vec![sub_tx]).unwrap();
+    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap();
+    let sub_tx = received_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![]).unwrap();
     let (mut received_data, received_channels) = sub_rx.recv().unwrap();
     received_data.truncate(3);
@@ -38,22 +38,38 @@ fn channel_transfer() {
 }
 
 #[test]
-fn multichannel_transfer() {
+fn receiver_transfer() {
+    let (super_tx, super_rx) = platform::channel().unwrap();
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
+    let data: &[u8] = b"foo";
+    super_tx.send(data, vec![OsIpcChannel::Receiver(sub_rx)]).unwrap();
+    let (_, mut received_channels) = super_rx.recv().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let sub_rx = received_channels.pop().unwrap().to_receiver();
+    sub_tx.send(data, vec![]).unwrap();
+    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    received_data.truncate(3);
+    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+}
+
+#[test]
+fn multisender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub0_tx, sub0_rx) = platform::channel().unwrap();
     let (sub1_tx, sub1_rx) = platform::channel().unwrap();
     let data: &[u8] = b"asdfasdf";
-    super_tx.send(data, vec![sub0_tx, sub1_tx]).unwrap();
+    super_tx.send(data,
+                  vec![OsIpcChannel::Sender(sub0_tx), OsIpcChannel::Sender(sub1_tx)]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 2);
 
-    let sub0_tx = received_channels.remove(0);
+    let sub0_tx = received_channels.remove(0).to_sender();
     sub0_tx.send(data, vec![]).unwrap();
     let (mut received_data, received_subchannels) = sub0_rx.recv().unwrap();
     received_data.truncate(8);
     assert_eq!((&received_data[..], received_subchannels), (data, Vec::new()));
 
-    let sub1_tx = received_channels.remove(0);
+    let sub1_tx = received_channels.remove(0).to_sender();
     sub1_tx.send(data, vec![]).unwrap();
     let (mut received_data, received_subchannels) = sub1_rx.recv().unwrap();
     received_data.truncate(8);
@@ -72,15 +88,15 @@ fn big_data() {
 }
 
 #[test]
-fn big_data_with_channel_transfer() {
+fn big_data_with_sender_transfer() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
-    super_tx.send(data, vec![sub_tx]).unwrap();
+    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
     let (_, mut received_channels) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap();
+    let sub_tx = received_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![]).unwrap();
     let (mut received_data, received_channels) = sub_rx.recv().unwrap();
     received_data.truncate(65536);
@@ -121,7 +137,7 @@ fn cross_process() {
 }
 
 #[test]
-fn cross_process_channel_transfer() {
+fn cross_process_sender_transfer() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
     unsafe {
@@ -129,7 +145,7 @@ fn cross_process_channel_transfer() {
             let super_tx = OsIpcSender::connect(name).unwrap();
             let (sub_tx, sub_rx) = platform::channel().unwrap();
             let data: &[u8] = b"foo";
-            super_tx.send(data, vec![sub_tx]).unwrap();
+            super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
             sub_rx.recv().unwrap();
             let data: &[u8] = b"bar";
             super_tx.send(data, Vec::new()).unwrap();
@@ -139,7 +155,7 @@ fn cross_process_channel_transfer() {
 
     let (super_rx, _, mut received_channels) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap();
+    let sub_tx = received_channels.pop().unwrap().to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, Vec::new()).unwrap();
 

@@ -46,7 +46,7 @@ impl UnixReceiver {
         }
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnixSender>),c_int> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnknownUnixChannel>),c_int> {
         unsafe {
             let mut length_data: [usize; 2] = [0, 0];
             let result = libc::recv(self.fd,
@@ -57,8 +57,8 @@ impl UnixReceiver {
                 return Err(Error::last_os_error().raw_os_error().unwrap())
             }
 
-            let [data_length, sender_length] = length_data;
-            let cmsg_length = mem::size_of::<cmsghdr>() + sender_length * mem::size_of::<c_int>();
+            let [data_length, channel_length] = length_data;
+            let cmsg_length = mem::size_of::<cmsghdr>() + channel_length * mem::size_of::<c_int>();
             let cmsg_buffer: *mut cmsghdr = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
 
             let mut data_buffer: Vec<u8> = iter::repeat(0).take(data_length).collect();
@@ -84,8 +84,8 @@ impl UnixReceiver {
             }
 
             let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
-            let senders = (0..sender_length).map(|index| {
-                UnixSender::from_fd(*cmsg_fds.offset(index as isize))
+            let channels = (0..channel_length).map(|index| {
+                UnknownUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
             }).collect();
 
             Ok((data_buffer, senders))
@@ -123,7 +123,7 @@ impl UnixSender {
         }
     }
 
-    pub fn send(&self, data: &[u8], senders: Vec<UnixSender>) -> Result<(),c_int> {
+    pub fn send(&self, data: &[u8], channels: Vec<UnixChannel>) -> Result<(),c_int> {
         unsafe {
             let length_data: [usize; 2] = [data.len(), senders.len()];
             let result = libc::send(self.fd,
@@ -141,9 +141,9 @@ impl UnixSender {
             (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
             let mut fds = Vec::new();
-            for sender in senders.into_iter() {
-                fds.push(sender.fd);
-                mem::forget(sender);
+            for channel in channels.into_iter() {
+                fds.push(channel.fd());
+                mem::forget(channel);
             }
             ptr::copy_nonoverlapping(fds.as_ptr(),
                                      cmsg_buffer.offset(1) as *mut _ as *mut c_int,
@@ -195,6 +195,54 @@ impl UnixSender {
             Ok(UnixSender {
                 fd: fd,
             })
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub enum UnixChannel {
+    Sender(UnixSender),
+    Receiver(UnixReceiver),
+}
+
+impl UnixChannel {
+    fn fd(&self) -> c_int {
+        match *self {
+            UnixChannel::Sender(ref sender) => sender.fd,
+            UnixChannel::Receiver(ref receiver) => receiver.fd,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug)]
+pub struct UnknownUnixChannel {
+    fd: c_int,
+}
+
+impl Drop for UnknownUnixChannel {
+    fn drop(&mut self) {
+        unsafe {
+            libc::close(self.fd)
+        }
+    }
+}
+
+impl UnknownUnixChannel {
+    fn from_fd(fd: c_int) -> UnknownUnixChannel {
+        UnknownUnixChannel {
+            fd: fd,
+        }
+    }
+
+    pub fn to_sender(&mut self) -> UnixSender {
+        unsafe {
+            UnixSender::from_fd(libc::dup(self.fd))
+        }
+    }
+
+    pub fn to_receiver(&mut self) -> UnixReceiver {
+        unsafe {
+            UnixReceiver::from_fd(libc::dup(self.fd))
         }
     }
 }
