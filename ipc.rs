@@ -83,10 +83,18 @@ impl<T> Serialize for IpcReceiver<T> where T: Deserialize + Serialize {
     }
 }
 
-#[derive(Clone)]
 pub struct IpcSender<T> where T: Serialize {
     os_sender: OsIpcSender,
     phantom: PhantomData<T>,
+}
+
+impl<T> Clone for IpcSender<T> where T: Serialize {
+    fn clone(&self) -> IpcSender<T> {
+        IpcSender {
+            os_sender: self.os_sender.clone(),
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<T> IpcSender<T> where T: Serialize {
