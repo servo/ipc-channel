@@ -12,7 +12,9 @@ As much as possible, `ipc-channel` has been designed to be a drop-in replacement
 
 Note that both `IpcSender<T>` and `IpcReceiver<T>` implement `Serialize` and `Deserialize`, so you can send IPC channels over IPC channels freely, just as you can with Rust channels.
 
-In order to bootstrap an IPC connection across processes, you create an instance of the `IpcOneShotServer` type, register a global name, pass that name into the client process (perhaps with an environment variable or command line flag), and connect to the server in the client.
+The easiest way to make your types implement `Serialize` and `Deserialize` is to use the `serde_macros` crate from crates.io as a plugin and then annotate the types you want to send with `#[derive(Deserialize, Serialize])`. In many cases, that's all you need to do—the compiler generates all the tedious boilerplate code needed to save and restore instances of your types.
+
+In order to bootstrap an IPC connection across processes, you create an instance of the `IpcOneShotServer` type, register a global name, pass that name into the client process (perhaps with an environment variable or command line flag), and connect to the server in the client. See `cross_process_embedded_senders()` in `test.rs` for an example of how to do this using Unix `fork()` to spawn the process.
 
 ## Major missing features
 
