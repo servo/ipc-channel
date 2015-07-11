@@ -20,4 +20,4 @@ In order to bootstrap an IPC connection across processes, you create an instance
 
 * Servers only accept one client at a time. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service. An API for multiple clients may be added later if demand exists for it.
 
-* No Windows support exists yet. The right way to implement this will be with named pipes and `DuplicateHandle`.
+* No Windows support exists yet. The right way to implement this will likely be with named pipes and `DuplicateHandle`.
