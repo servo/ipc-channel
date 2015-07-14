@@ -353,7 +353,6 @@ struct iovec {
     iov_len: size_t,
 }
 
-#[cfg(target_os="linux")]
 #[repr(C)]
 struct cmsghdr {
     cmsg_len: size_t,
