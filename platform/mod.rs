@@ -7,17 +7,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::channel;
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixReceiver as OsIpcReceiver;
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixSender as OsIpcSender;
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixChannel as OsIpcChannel;
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnknownUnixChannel as OsUnknownIpcChannel;
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixOneShotServer as OsIpcOneShotServer;
 
 #[cfg(target_os="macos")]
@@ -33,7 +33,7 @@ pub use platform::macos::UnknownMachChannel as OsUnknownIpcChannel;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;
 
-#[cfg(target_os="linux")]
+#[cfg(any(target_os="linux", target_os="android"))]
 mod linux;
 #[cfg(target_os="macos")]
 mod macos;
