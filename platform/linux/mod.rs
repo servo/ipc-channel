@@ -134,7 +134,7 @@ impl UnixSender {
             let length_data: [usize; 2] = [data.len(), channels.len()];
             let result = libc::send(self.fd,
                                     &length_data[0] as *const _ as *const c_void,
-                                    mem::size_of::<[usize; 2]>() as u64,
+                                    mem::size_of::<[usize; 2]>() as size_t,
                                     0);
             if result <= 0 {
                 return Err(Error::last_os_error().raw_os_error().unwrap())
