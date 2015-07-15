@@ -128,17 +128,22 @@ fn receiver_set() {
 
     tx0.send(data, Vec::new()).unwrap();
     tx1.send(data, Vec::new()).unwrap();
-    let (received_id_0, mut received_data, _) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
-    received_data.truncate(7);
-    assert_eq!(received_data, data);
-    assert!(received_id_0 == rx0_id || received_id_0 == rx1_id);
-    let (received_id_1, mut received_data, _) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
-    received_data.truncate(7);
-    assert_eq!(received_data, data);
-    assert!(received_id_1 == rx0_id || received_id_1 == rx1_id);
-    assert!(received_id_0 != received_id_1);
+    let (mut received0, mut received1) = (false, false);
+    while !received0 || !received1 {
+        for result in rx_set.select().unwrap().into_iter() {
+            let (received_id, mut received_data, _) = result.unwrap();
+            received_data.truncate(7);
+            assert_eq!(received_data, data);
+            assert!(received_id == rx0_id || received_id == rx1_id);
+            if received_id == rx0_id {
+                assert!(!received0);
+                received0 = true;
+            } else if received_id == rx1_id {
+                assert!(!received1);
+                received1 = true;
+            }
+        }
+    }
 }
 
 #[test]

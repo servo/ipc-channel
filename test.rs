@@ -112,17 +112,22 @@ fn select() {
 
     tx0.send(person.clone()).unwrap();
     tx1.send(person.clone()).unwrap();
-    let (received_id_0, received_data) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
-    let received_person: Person = received_data.to().unwrap();
-    assert_eq!(received_person, person);
-    assert!(received_id_0 == rx0_id || received_id_0 == rx1_id);
-    let (received_id_1, received_data) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
-    let received_person: Person = received_data.to().unwrap();
-    assert_eq!(received_person, person);
-    assert!(received_id_1 == rx0_id || received_id_1 == rx1_id);
-    assert!(received_id_0 != received_id_1);
+    let (mut received0, mut received1) = (false, false);
+    while !received0 || !received1 {
+        for result in rx_set.select().unwrap().into_iter() {
+            let (received_id, received_data) = result.unwrap();
+            let received_person: Person = received_data.to().unwrap();
+            assert_eq!(received_person, person);
+            assert!(received_id == rx0_id || received_id == rx1_id);
+            if received_id == rx0_id {
+                assert!(!received0);
+                received0 = true;
+            } else if received_id == rx1_id {
+                assert!(!received1);
+                received1 = true;
+            }
+        }
+    }
 }
 
 #[test]

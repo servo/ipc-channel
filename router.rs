@@ -84,7 +84,14 @@ impl Router {
     }
 
     fn run(&mut self) {
-        while let Ok(results) = self.ipc_receiver_set.select() {
+        loop {
+            let results = match self.ipc_receiver_set.select() {
+                Ok(results) => results,
+                Err(err) => {
+                    println!("Aieeeee! {:?}", err);
+                    break
+                }
+            };
             for result in results.into_iter() {
                 match result {
                     IpcSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {

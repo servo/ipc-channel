@@ -7,21 +7,22 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use libc::{self, c_char, c_int, c_short, c_uint, c_ushort, c_void, size_t, sockaddr, sockaddr_un};
-use libc::{socklen_t, ssize_t};
+use libc::{self, c_char, c_int, c_short, c_uint, c_ulong, c_ushort, c_void, size_t, sockaddr};
+use libc::{sockaddr_un, socklen_t, ssize_t};
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::iter;
 use std::mem;
 use std::ptr;
 
-pub fn channel() -> Result<(UnixSender, UnixReceiver),c_int> {
+pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
     let mut results = [0, 0];
     unsafe {
         if socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut results[0]) >= 0 {
             Ok((UnixSender::from_fd(results[0]), UnixReceiver::from_fd(results[1])))
         } else {
-            Err(Error::last_os_error().raw_os_error().unwrap())
+            Err(UnixError::last())
         }
     }
 }
@@ -53,12 +54,10 @@ impl UnixReceiver {
     }
 
     pub fn consume(&self) -> UnixReceiver {
-        unsafe {
-            UnixReceiver::from_fd(self.consume_fd())
-        }
+        UnixReceiver::from_fd(self.consume_fd())
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),c_int> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
         recv(self.fd)
     }
 }
@@ -93,7 +92,7 @@ impl UnixSender {
         }
     }
 
-    pub fn send(&self, data: &[u8], channels: Vec<UnixChannel>) -> Result<(),c_int> {
+    pub fn send(&self, data: &[u8], channels: Vec<UnixChannel>) -> Result<(),UnixError> {
         unsafe {
             let length_data: [usize; 2] = [data.len(), channels.len()];
             let result = libc::send(self.fd,
@@ -101,7 +100,7 @@ impl UnixSender {
                                     mem::size_of::<[usize; 2]>() as size_t,
                                     0);
             if result <= 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
+                return Err(UnixError::last())
             }
 
             let cmsg_length = mem::size_of::<cmsghdr>() + channels.len() * mem::size_of::<c_int>();
@@ -140,12 +139,12 @@ impl UnixSender {
             if result > 0 {
                 Ok(())
             } else {
-                Err(Error::last_os_error().raw_os_error().unwrap())
+                Err(UnixError::last())
             }
         }
     }
 
-    pub fn connect(name: String) -> Result<UnixSender,c_int> {
+    pub fn connect(name: String) -> Result<UnixSender,UnixError> {
         let name = CString::new(name).unwrap();
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
@@ -188,6 +187,16 @@ pub struct UnixReceiverSet {
     pollfds: Vec<pollfd>,
 }
 
+impl Drop for UnixReceiverSet {
+    fn drop(&mut self) {
+        unsafe {
+            for pollfd in self.pollfds.iter() {
+                assert!(libc::close(pollfd.fd) >= 0);
+            }
+        }
+    }
+}
+
 impl UnixReceiverSet {
     pub fn new() -> Result<UnixReceiverSet,UnixError> {
         Ok(UnixReceiverSet {
@@ -197,7 +206,7 @@ impl UnixReceiverSet {
 
     pub fn add(&mut self, receiver: UnixReceiver) -> Result<i64,UnixError> {
         let fd = receiver.consume_fd();
-        pollfds.push(pollfd {
+        self.pollfds.push(pollfd {
             fd: fd,
             events: POLLIN,
             revents: 0,
@@ -208,28 +217,33 @@ impl UnixReceiverSet {
     pub fn select(&mut self) -> Result<Vec<UnixSelectionResult>,UnixError> {
         let mut selection_results = Vec::new();
         let result = unsafe {
-            poll(self.pollfds.as_mut_ptr(), self.pollfds.len() as libc::nfds_t, -1)
+            poll(self.pollfds.as_mut_ptr(), self.pollfds.len() as nfds_t, -1)
         };
         if result <= 0 {
             return Err(UnixError::last())
         }
 
-        let mut hangups_found = false;
-        for pollfd in self.pollfds.iter() {
-            if (pollfd.revents | POLLIN) != 0 {
-                let (data, channels) = try!(recv(pollfd.fd));
-                selection_results.push(UnixSelectionResult::DataReceived(pollfd.fd,
-                                                                         data,
-                                                                         channels));
+        let mut hangups = HashSet::new();
+        for pollfd in self.pollfds.iter_mut() {
+            if (pollfd.revents & POLLIN) != 0 {
+                match recv(pollfd.fd) {
+                    Ok((data, channels)) => {
+                        selection_results.push(UnixSelectionResult::DataReceived(pollfd.fd as i64,
+                                                                                 data,
+                                                                                 channels));
+                    }
+                    Err(err) if err.channel_is_closed() => {
+                        hangups.insert(pollfd.fd);
+                        selection_results.push(UnixSelectionResult::ChannelClosed(pollfd.fd as i64))
+                    }
+                    Err(err) => return Err(err),
+                }
                 pollfd.revents = pollfd.revents & !POLLIN
-            } else if (pollfd.revents | POLLHUP) != 0 {
-                hangups_found = true;
-                selection_results.push(UnixSelectionResult::ChannelClosed(pollfd.fd))
             }
         }
 
-        if hangups_found {
-            self.pollfds.retain(|pollfd| (pollfd.revents | POLLHUP) != 0);
+        if !hangups.is_empty() {
+            self.pollfds.retain(|pollfd| !hangups.contains(&pollfd.fd));
         }
 
         Ok(selection_results)
@@ -298,7 +312,7 @@ impl Drop for UnixOneShotServer {
 }
 
 impl UnixOneShotServer {
-    pub fn new() -> Result<(UnixOneShotServer, String),c_int> {
+    pub fn new() -> Result<(UnixOneShotServer, String),UnixError> {
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
             let mut path: Vec<u8>;
@@ -306,7 +320,7 @@ impl UnixOneShotServer {
                 let path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX" as &[u8]).unwrap();
                 path = path_string.as_bytes().iter().cloned().collect();
                 if mktemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
-                    return Err(Error::last_os_error().raw_os_error().unwrap())
+                    return Err(UnixError::last())
                 }
 
                 let mut sockaddr = sockaddr_un {
@@ -323,14 +337,14 @@ impl UnixOneShotServer {
                     break
                 }
 
-                let errno = Error::last_os_error().raw_os_error().unwrap();
-                if errno != libc::EINVAL {
+                let errno = UnixError::last();
+                if errno.0 != libc::EINVAL {
                     return Err(errno)
                 }
             }
 
             if libc::listen(fd, 10) != 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
+                return Err(UnixError::last())
             }
 
             Ok((UnixOneShotServer {
@@ -340,13 +354,13 @@ impl UnixOneShotServer {
         }
     }
 
-    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<OpaqueUnixChannel>),c_int> {
+    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
         unsafe {
             let mut sockaddr = mem::uninitialized();
             let mut sockaddr_len = mem::uninitialized();
             let client_fd = libc::accept(self.fd, &mut sockaddr, &mut sockaddr_len);
             if client_fd < 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
+                return Err(UnixError::last())
             }
 
             let receiver = UnixReceiver {
@@ -358,6 +372,7 @@ impl UnixOneShotServer {
     }
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct UnixError(c_int);
 
 impl UnixError {
@@ -374,12 +389,14 @@ impl UnixError {
 fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
     unsafe {
         let mut length_data: [usize; 2] = [0, 0];
-        let result = libc::recv(self.fd,
+        let result = libc::recv(fd,
                                 &mut length_data[0] as *mut _ as *mut c_void,
                                 mem::size_of::<[usize; 2]>() as size_t,
                                 MSG_WAITALL);
-        if result <= 0 {
-            return Err(Error::last_os_error().raw_os_error().unwrap())
+        if result < 0 {
+            return Err(UnixError::last())
+        } else if result == 0 {
+            return Err(UnixError(libc::ECONNRESET))
         }
 
         let [data_length, channel_length] = length_data;
@@ -402,10 +419,10 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
             msg_flags: 0,
         };
 
-        let result = recvmsg(self.fd, &mut msghdr, 0);
+        let result = recvmsg(fd, &mut msghdr, 0);
         libc::free(cmsg_buffer as *mut c_void);
         if result <= 0 {
-            return Err(Error::last_os_error().raw_os_error().unwrap())
+            return Err(UnixError::last())
         }
 
         let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
@@ -420,10 +437,15 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
 // FFI stuff follows:
 
 const MSG_WAITALL: c_int = 0x100;
+const POLLIN: c_short = 0x01;
 const SCM_RIGHTS: c_int = 0x01;
+
+#[allow(non_camel_case_types)]
+type nfds_t = c_ulong;
 
 extern {
     fn mktemp(template: *mut c_char) -> *mut c_char;
+    fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
     fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
     fn sendmsg(socket: c_int, message: *const msghdr, flags: c_int) -> ssize_t;
     fn socketpair(domain: c_int, socket_type: c_int, protocol: c_int, sv: *mut c_int) -> c_int;
