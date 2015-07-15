@@ -52,7 +52,7 @@ impl UnixReceiver {
         }
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnknownUnixChannel>),c_int> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),c_int> {
         unsafe {
             let mut length_data: [usize; 2] = [0, 0];
             let result = libc::recv(self.fd,
@@ -91,7 +91,7 @@ impl UnixReceiver {
 
             let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
             let channels = (0..channel_length).map(|index| {
-                UnknownUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
+                OpaqueUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
             }).collect();
 
             Ok((data_buffer, channels))
@@ -221,11 +221,11 @@ impl UnixChannel {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct UnknownUnixChannel {
+pub struct OpaqueUnixChannel {
     fd: c_int,
 }
 
-impl Drop for UnknownUnixChannel {
+impl Drop for OpaqueUnixChannel {
     fn drop(&mut self) {
         unsafe {
             debug_assert!(libc::close(self.fd) == 0)
@@ -233,9 +233,9 @@ impl Drop for UnknownUnixChannel {
     }
 }
 
-impl UnknownUnixChannel {
-    fn from_fd(fd: c_int) -> UnknownUnixChannel {
-        UnknownUnixChannel {
+impl OpaqueUnixChannel {
+    fn from_fd(fd: c_int) -> OpaqueUnixChannel {
+        OpaqueUnixChannel {
             fd: fd,
         }
     }
@@ -306,7 +306,7 @@ impl UnixOneShotServer {
         }
     }
 
-    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<UnknownUnixChannel>),c_int> {
+    pub fn accept(self) -> Result<(UnixReceiver, Vec<u8>, Vec<OpaqueUnixChannel>),c_int> {
         unsafe {
             let mut sockaddr = mem::uninitialized();
             let mut sockaddr_len = mem::uninitialized();

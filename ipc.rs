@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcSender, OsIpcOneShotServer};
-use platform::{OsUnknownIpcChannel};
+use platform::{OsOpaqueIpcChannel};
 
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -17,7 +17,7 @@ use std::marker::PhantomData;
 use std::mem;
 
 thread_local! {
-    static OS_IPC_CHANNELS_FOR_DESERIALIZATION: RefCell<Vec<OsUnknownIpcChannel>> =
+    static OS_IPC_CHANNELS_FOR_DESERIALIZATION: RefCell<Vec<OsOpaqueIpcChannel>> =
         RefCell::new(Vec::new())
 }
 thread_local! {
@@ -183,7 +183,7 @@ impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
     }
 }
 
-fn deserialize_received_data<T>(data: &[u8], mut os_ipc_channels: Vec<OsUnknownIpcChannel>)
+fn deserialize_received_data<T>(data: &[u8], mut os_ipc_channels: Vec<OsOpaqueIpcChannel>)
                                 -> Result<T,()>
                                 where T: Deserialize + Serialize {
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {

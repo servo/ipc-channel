@@ -16,7 +16,7 @@ pub use platform::linux::UnixSender as OsIpcSender;
 #[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixChannel as OsIpcChannel;
 #[cfg(any(target_os="linux", target_os="android"))]
-pub use platform::linux::UnknownUnixChannel as OsUnknownIpcChannel;
+pub use platform::linux::OpaqueUnixChannel as OsOpaqueIpcChannel;
 #[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixOneShotServer as OsIpcOneShotServer;
 
@@ -29,7 +29,7 @@ pub use platform::macos::MachSender as OsIpcSender;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachChannel as OsIpcChannel;
 #[cfg(target_os="macos")]
-pub use platform::macos::UnknownMachChannel as OsUnknownIpcChannel;
+pub use platform::macos::OpaqueMachChannel as OsOpaqueIpcChannel;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;
 

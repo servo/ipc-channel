@@ -189,7 +189,7 @@ impl MachReceiver {
         }
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<UnknownMachChannel>),kern_return_t> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -231,7 +231,7 @@ impl MachReceiver {
             let mut ports = Vec::new();
             let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
             for _ in 0..(*message).body.msgh_descriptor_count {
-                ports.push(UnknownMachChannel::from_name((*port_descriptor).name));
+                ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
                 port_descriptor = port_descriptor.offset(1);
             }
 
@@ -383,20 +383,20 @@ impl MachChannel {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct UnknownMachChannel {
+pub struct OpaqueMachChannel {
     port: mach_port_t,
 }
 
-impl Drop for UnknownMachChannel {
+impl Drop for OpaqueMachChannel {
     fn drop(&mut self) {
         // Make sure we don't leak!
         debug_assert!(self.port == MACH_PORT_NULL);
     }
 }
 
-impl UnknownMachChannel {
-    fn from_name(name: mach_port_t) -> UnknownMachChannel {
-        UnknownMachChannel {
+impl OpaqueMachChannel {
+    fn from_name(name: mach_port_t) -> OpaqueMachChannel {
+        OpaqueMachChannel {
             port: name,
         }
     }
@@ -434,7 +434,7 @@ impl MachOneShotServer {
     }
 
     pub fn accept(mut self)
-                  -> Result<(MachReceiver, Vec<u8>, Vec<UnknownMachChannel>),kern_return_t> {
+                  -> Result<(MachReceiver, Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
         let (bytes, channels) = try!(self.receiver.as_mut().unwrap().recv());
         Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, channels))
     }
