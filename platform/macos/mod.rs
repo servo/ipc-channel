@@ -42,6 +42,7 @@ const MACH_MSG_TYPE_MAKE_SEND: u8 = 20;
 const MACH_MSG_TYPE_PORT_SEND: u8 = MACH_MSG_TYPE_MOVE_SEND;
 const MACH_MSGH_BITS_COMPLEX: u32 = 0x80000000;
 const MACH_PORT_NULL: mach_port_t = 0;
+const MACH_PORT_RIGHT_PORT_SET: mach_port_right_t = 3;
 const MACH_PORT_RIGHT_RECEIVE: mach_port_right_t = 1;
 const MACH_PORT_RIGHT_SEND: mach_port_right_t = 0;
 const MACH_SEND_MSG: i32 = 1;
@@ -97,11 +98,15 @@ impl MachReceiver {
         }
     }
 
-    pub fn consume(&self) -> MachReceiver {
+    fn consume_port(&self) -> mach_port_t {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         self.port.set(MACH_PORT_NULL);
-        MachReceiver::from_name(port)
+        port
+    }
+
+    pub fn consume(&self) -> MachReceiver {
+        MachReceiver::from_name(self.consume_port())
     }
 
     fn sender(&self) -> Result<MachSender,kern_return_t> {
@@ -190,62 +195,7 @@ impl MachReceiver {
     }
 
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
-        let port = self.port.get();
-        debug_assert!(port != MACH_PORT_NULL);
-        unsafe {
-            let mut buffer = [0; SMALL_MESSAGE_SIZE];
-            let allocated_buffer = None;
-            setup_receive_buffer(&mut buffer, port);
-            let mut message = &mut buffer[0] as *mut _ as *mut Message;
-            match mach_sys::mach_msg(message as *mut _,
-                                     MACH_RCV_MSG | MACH_RCV_LARGE,
-                                     0,
-                                     (*message).header.msgh_size,
-                                     port,
-                                     MACH_MSG_TIMEOUT_NONE,
-                                     MACH_PORT_NULL) {
-                MACH_RCV_TOO_LARGE => {
-                    // For some reason the size reported by the kernel is too small by 8. Why?!
-                    let actual_size = (*message).header.msgh_size + 8;
-                    let allocated_buffer = Some(libc::malloc(actual_size as size_t));
-                    setup_receive_buffer(slice::from_raw_parts_mut(
-                                            allocated_buffer.unwrap() as *mut u8,
-                                            actual_size as usize),
-                                         port);
-                    message = allocated_buffer.unwrap() as *mut Message;
-                    match mach_sys::mach_msg(message as *mut _,
-                                             MACH_RCV_MSG | MACH_RCV_LARGE,
-                                             0,
-                                             actual_size,
-                                             port,
-                                             MACH_MSG_TIMEOUT_NONE,
-                                             MACH_PORT_NULL) {
-                        MACH_MSG_SUCCESS => {}
-                        os_result => return Err(os_result),
-                    }
-                }
-                MACH_MSG_SUCCESS => {}
-                os_result => return Err(os_result),
-            }
-
-            let mut ports = Vec::new();
-            let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
-            for _ in 0..(*message).body.msgh_descriptor_count {
-                ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
-                port_descriptor = port_descriptor.offset(1);
-            }
-
-            let payload_ptr = port_descriptor as *mut u8;
-            let payload_size = message as usize + ((*message).header.msgh_size as usize) -
-                (port_descriptor as usize);
-            let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
-
-            if let Some(allocated_buffer) = allocated_buffer {
-                libc::free(allocated_buffer)
-            }
-
-            Ok((payload, ports))
-        }
+        recv(self.port.get()).map(|(_, data, channels)| (data, channels))
     }
 }
 
@@ -409,6 +359,101 @@ impl OpaqueMachChannel {
 
     pub fn to_receiver(&mut self) -> MachReceiver {
         MachReceiver::from_name(mem::replace(&mut self.port, MACH_PORT_NULL))
+    }
+}
+
+pub struct MachReceiverSet {
+    port: Cell<mach_port_t>,
+}
+
+impl MachReceiverSet {
+    pub fn new() -> Result<MachReceiverSet,kern_return_t> {
+        let mut port: mach_port_t = 0;
+        let os_result = unsafe {
+            mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_PORT_SET, &mut port)
+        };
+        if os_result == KERN_SUCCESS {
+            Ok(MachReceiverSet {
+                port: Cell::new(port),
+            })
+        } else {
+            Err(os_result)
+        }
+    }
+
+    pub fn add(&self, receiver: MachReceiver) -> Result<i64,kern_return_t> {
+        let receiver_port = receiver.consume_port();
+        let os_result = unsafe {
+            mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
+        };
+        if os_result == KERN_SUCCESS {
+            Ok(receiver_port as i64)
+        } else {
+            Err(os_result)
+        }
+    }
+
+    pub fn recv(&self) -> Result<(i64, Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
+        recv(self.port.get()).map(|(port, data, channels)| (port as i64, data, channels))
+    }
+}
+
+fn recv(port: mach_port_t)
+        -> Result<(mach_port_t, Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
+    debug_assert!(port != MACH_PORT_NULL);
+    unsafe {
+        let mut buffer = [0; SMALL_MESSAGE_SIZE];
+        let allocated_buffer = None;
+        setup_receive_buffer(&mut buffer, port);
+        let mut message = &mut buffer[0] as *mut _ as *mut Message;
+        match mach_sys::mach_msg(message as *mut _,
+                                 MACH_RCV_MSG | MACH_RCV_LARGE,
+                                 0,
+                                 (*message).header.msgh_size,
+                                 port,
+                                 MACH_MSG_TIMEOUT_NONE,
+                                 MACH_PORT_NULL) {
+            MACH_RCV_TOO_LARGE => {
+                // For some reason the size reported by the kernel is too small by 8. Why?!
+                let actual_size = (*message).header.msgh_size + 8;
+                let allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                setup_receive_buffer(slice::from_raw_parts_mut(
+                                        allocated_buffer.unwrap() as *mut u8,
+                                        actual_size as usize),
+                                     port);
+                message = allocated_buffer.unwrap() as *mut Message;
+                match mach_sys::mach_msg(message as *mut _,
+                                         MACH_RCV_MSG | MACH_RCV_LARGE,
+                                         0,
+                                         actual_size,
+                                         port,
+                                         MACH_MSG_TIMEOUT_NONE,
+                                         MACH_PORT_NULL) {
+                    MACH_MSG_SUCCESS => {}
+                    os_result => return Err(os_result),
+                }
+            }
+            MACH_MSG_SUCCESS => {}
+            os_result => return Err(os_result),
+        }
+
+        let mut ports = Vec::new();
+        let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
+        for _ in 0..(*message).body.msgh_descriptor_count {
+            ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
+            port_descriptor = port_descriptor.offset(1);
+        }
+
+        let payload_ptr = port_descriptor as *mut u8;
+        let payload_size = message as usize + ((*message).header.msgh_size as usize) -
+            (port_descriptor as usize);
+        let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
+
+        if let Some(allocated_buffer) = allocated_buffer {
+            libc::free(allocated_buffer)
+        }
+
+        Ok(((*message).header.msgh_local_port, payload, ports))
     }
 }
 

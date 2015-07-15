@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcReceiver, IpcSender, IpcOneShotServer};
+use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender};
 
 use libc;
 
@@ -79,6 +79,43 @@ fn embedded_receivers() {
     sub_tx.send(person.clone()).unwrap();
     let received_person = received_person_and_receiver.receiver.recv().unwrap();
     assert_eq!(received_person, person);
+}
+
+#[test]
+fn select() {
+    let (tx0, rx0) = ipc::channel().unwrap();
+    let (tx1, rx1) = ipc::channel().unwrap();
+    let rx_set = IpcReceiverSet::new().unwrap();
+    let rx0_id = rx_set.add(rx0).unwrap();
+    let rx1_id = rx_set.add(rx1).unwrap();
+
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    tx0.send(person.clone()).unwrap();
+    let (received_id, received_data) = rx_set.recv().unwrap();
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_id, rx0_id);
+    assert_eq!(received_person, person);
+
+    tx1.send(person.clone()).unwrap();
+    let (received_id, received_data) = rx_set.recv().unwrap();
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_id, rx1_id);
+    assert_eq!(received_person, person);
+
+    tx0.send(person.clone()).unwrap();
+    tx1.send(person.clone()).unwrap();
+    let (received_id_0, received_data) = rx_set.recv().unwrap();
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_person, person);
+    assert!(received_id_0 == rx0_id || received_id_0 == rx1_id);
+    let (received_id_1, received_data) = rx_set.recv().unwrap();
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_person, person);
+    assert!(received_id_1 == rx0_id || received_id_1 == rx1_id);
+    assert!(received_id_0 != received_id_1);
 }
 
 #[test]
