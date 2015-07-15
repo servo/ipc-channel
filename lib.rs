@@ -10,12 +10,16 @@
 #![feature(custom_derive, plugin, slice_patterns)]
 #![plugin(serde_macros)]
 
+#[macro_use]
+extern crate lazy_static;
+
 extern crate libc;
 extern crate rand;
 extern crate serde;
 
 pub mod ipc;
 pub mod platform;
+pub mod router;
 
 #[cfg(test)]
 mod test;

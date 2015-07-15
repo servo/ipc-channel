@@ -39,9 +39,13 @@ const MACH_MSG_TYPE_MOVE_RECEIVE: u8 = 16;
 const MACH_MSG_TYPE_MOVE_SEND: u8 = 17;
 const MACH_MSG_TYPE_COPY_SEND: u8 = 19;
 const MACH_MSG_TYPE_MAKE_SEND: u8 = 20;
+const MACH_MSG_TYPE_MAKE_SEND_ONCE: u8 = 21;
 const MACH_MSG_TYPE_PORT_SEND: u8 = MACH_MSG_TYPE_MOVE_SEND;
 const MACH_MSGH_BITS_COMPLEX: u32 = 0x80000000;
+const MACH_NOTIFY_FIRST: i32 = 64;
+const MACH_NOTIFY_NO_SENDERS: i32 = MACH_NOTIFY_FIRST + 6;
 const MACH_PORT_NULL: mach_port_t = 0;
+const MACH_PORT_RIGHT_PORT_SET: mach_port_right_t = 3;
 const MACH_PORT_RIGHT_RECEIVE: mach_port_right_t = 1;
 const MACH_PORT_RIGHT_SEND: mach_port_right_t = 0;
 const MACH_SEND_MSG: i32 = 1;
@@ -53,9 +57,10 @@ const TASK_BOOTSTRAP_PORT: i32 = 4;
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
-pub fn channel() -> Result<(MachSender, MachReceiver),kern_return_t> {
+pub fn channel() -> Result<(MachSender, MachReceiver),MachError> {
     let receiver = try!(MachReceiver::new());
     let sender = try!(receiver.sender());
+    try!(receiver.request_no_senders_notification());
     Ok((sender, receiver))
 }
 
@@ -79,7 +84,7 @@ impl Drop for MachReceiver {
 }
 
 impl MachReceiver {
-    fn new() -> Result<MachReceiver,kern_return_t> {
+    fn new() -> Result<MachReceiver,MachError> {
         let mut port: mach_port_t = 0;
         let os_result = unsafe {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
@@ -87,7 +92,7 @@ impl MachReceiver {
         if os_result == KERN_SUCCESS {
             Ok(MachReceiver::from_name(port))
         } else {
-            Err(os_result)
+            Err(MachError(os_result))
         }
     }
 
@@ -97,14 +102,18 @@ impl MachReceiver {
         }
     }
 
-    pub fn consume(&self) -> MachReceiver {
+    fn consume_port(&self) -> mach_port_t {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         self.port.set(MACH_PORT_NULL);
-        MachReceiver::from_name(port)
+        port
     }
 
-    fn sender(&self) -> Result<MachSender,kern_return_t> {
+    pub fn consume(&self) -> MachReceiver {
+        MachReceiver::from_name(self.consume_port())
+    }
+
+    fn sender(&self) -> Result<MachSender,MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -118,12 +127,12 @@ impl MachReceiver {
                 debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
                 Ok(MachSender::from_name(right))
             } else {
-                Err(os_result)
+                Err(MachError(os_result))
             }
         }
     }
 
-    fn register_bootstrap_name(&self) -> Result<String,kern_return_t> {
+    fn register_bootstrap_name(&self) -> Result<String,MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -132,7 +141,7 @@ impl MachReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(os_result)
+                return Err(MachError(os_result))
             }
 
 
@@ -144,7 +153,7 @@ impl MachReceiver {
                                                               &mut right,
                                                               &mut acquired_right);
             if os_result != KERN_SUCCESS {
-                return Err(os_result)
+                return Err(MachError(os_result))
             }
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
@@ -158,7 +167,7 @@ impl MachReceiver {
                     continue
                 }
                 if os_result != BOOTSTRAP_SUCCESS {
-                    return Err(os_result)
+                    return Err(MachError(os_result))
                 }
                 break
             }
@@ -166,14 +175,14 @@ impl MachReceiver {
         }
     }
 
-    fn unregister_global_name(name: String) -> Result<(),kern_return_t> {
+    fn unregister_global_name(name: String) -> Result<(),MachError> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(os_result)
+                return Err(MachError(os_result))
             }
 
             let c_name = CString::new(name).unwrap();
@@ -184,68 +193,37 @@ impl MachReceiver {
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(())
             } else {
-                Err(os_result)
+                Err(MachError(os_result))
             }
         }
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
+    fn request_no_senders_notification(&self) -> Result<(),MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
-            let mut buffer = [0; SMALL_MESSAGE_SIZE];
-            let allocated_buffer = None;
-            setup_receive_buffer(&mut buffer, port);
-            let mut message = &mut buffer[0] as *mut _ as *mut Message;
-            match mach_sys::mach_msg(message as *mut _,
-                                     MACH_RCV_MSG | MACH_RCV_LARGE,
-                                     0,
-                                     (*message).header.msgh_size,
-                                     port,
-                                     MACH_MSG_TIMEOUT_NONE,
-                                     MACH_PORT_NULL) {
-                MACH_RCV_TOO_LARGE => {
-                    // For some reason the size reported by the kernel is too small by 8. Why?!
-                    let actual_size = (*message).header.msgh_size + 8;
-                    let allocated_buffer = Some(libc::malloc(actual_size as size_t));
-                    setup_receive_buffer(slice::from_raw_parts_mut(
-                                            allocated_buffer.unwrap() as *mut u8,
-                                            actual_size as usize),
-                                         port);
-                    message = allocated_buffer.unwrap() as *mut Message;
-                    match mach_sys::mach_msg(message as *mut _,
-                                             MACH_RCV_MSG | MACH_RCV_LARGE,
-                                             0,
-                                             actual_size,
-                                             port,
-                                             MACH_MSG_TIMEOUT_NONE,
-                                             MACH_PORT_NULL) {
-                        MACH_MSG_SUCCESS => {}
-                        os_result => return Err(os_result),
-                    }
-                }
-                MACH_MSG_SUCCESS => {}
-                os_result => return Err(os_result),
+            let os_result =
+                mach_sys::mach_port_request_notification(mach_task_self(),
+                                                         port,
+                                                         MACH_NOTIFY_NO_SENDERS,
+                                                         0,
+                                                         port,
+                                                         MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
+                                                         &mut 0);
+            if os_result != KERN_SUCCESS {
+                return Err(MachError(os_result))
             }
-
-            let mut ports = Vec::new();
-            let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
-            for _ in 0..(*message).body.msgh_descriptor_count {
-                ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
-                port_descriptor = port_descriptor.offset(1);
-            }
-
-            let payload_ptr = port_descriptor as *mut u8;
-            let payload_size = message as usize + ((*message).header.msgh_size as usize) -
-                (port_descriptor as usize);
-            let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
-
-            if let Some(allocated_buffer) = allocated_buffer {
-                libc::free(allocated_buffer)
-            }
-
-            Ok((payload, ports))
         }
+        Ok(())
+    }
+
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>),MachError> {
+        select(self.port.get()).and_then(|result| {
+            match result {
+                MachSelectionResult::DataReceived(_, data, channels) => Ok((data, channels)),
+                MachSelectionResult::ChannelClosed(_) => Err(MachError(MACH_NOTIFY_NO_SENDERS)),
+            }
+        })
     }
 }
 
@@ -291,14 +269,14 @@ impl MachSender {
         }
     }
 
-    pub fn connect(name: String) -> Result<MachSender,kern_return_t> {
+    pub fn connect(name: String) -> Result<MachSender,MachError> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(os_result)
+                return Err(MachError(os_result))
             }
 
             let mut port = 0;
@@ -307,12 +285,12 @@ impl MachSender {
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(MachSender::from_name(port))
             } else {
-                Err(os_result)
+                Err(MachError(os_result))
             }
         }
     }
 
-    pub fn send(&self, data: &[u8], ports: Vec<MachChannel>) -> Result<(),kern_return_t> {
+    pub fn send(&self, data: &[u8], ports: Vec<MachChannel>) -> Result<(),MachError> {
         unsafe {
             let size = Message::size_of(data.len(), ports.len());
             let message = libc::malloc(size as size_t) as *mut Message;
@@ -329,9 +307,8 @@ impl MachSender {
                 (*port_descriptor_dest).name = outgoing_port.port();
                 (*port_descriptor_dest).pad1 = 0;
 
-                // FIXME(pcwalton): MOVE_SEND maybe?
                 (*port_descriptor_dest).disposition = match outgoing_port {
-                    MachChannel::Sender(_) => MACH_MSG_TYPE_COPY_SEND,
+                    MachChannel::Sender(_) => MACH_MSG_TYPE_MOVE_SEND,
                     MachChannel::Receiver(_) => MACH_MSG_TYPE_MOVE_RECEIVE,
                 };
 
@@ -360,7 +337,7 @@ impl MachSender {
                                                MACH_MSG_TIMEOUT_NONE,
                                                MACH_PORT_NULL);
             if os_result != MACH_MSG_SUCCESS {
-                return Err(os_result)
+                return Err(MachError(os_result))
             }
             libc::free(message as *mut _);
             Ok(())
@@ -412,6 +389,121 @@ impl OpaqueMachChannel {
     }
 }
 
+pub struct MachReceiverSet {
+    port: Cell<mach_port_t>,
+}
+
+impl MachReceiverSet {
+    pub fn new() -> Result<MachReceiverSet,MachError> {
+        let mut port: mach_port_t = 0;
+        let os_result = unsafe {
+            mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_PORT_SET, &mut port)
+        };
+        if os_result == KERN_SUCCESS {
+            Ok(MachReceiverSet {
+                port: Cell::new(port),
+            })
+        } else {
+            Err(MachError(os_result))
+        }
+    }
+
+    pub fn add(&mut self, receiver: MachReceiver) -> Result<i64,MachError> {
+        let receiver_port = receiver.consume_port();
+        let os_result = unsafe {
+            mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
+        };
+        if os_result == KERN_SUCCESS {
+            Ok(receiver_port as i64)
+        } else {
+            Err(MachError(os_result))
+        }
+    }
+
+    pub fn select(&mut self) -> Result<Vec<MachSelectionResult>,MachError> {
+        select(self.port.get()).map(|result| vec![result])
+    }
+}
+
+pub enum MachSelectionResult {
+    DataReceived(i64, Vec<u8>, Vec<OpaqueMachChannel>),
+    ChannelClosed(i64),
+}
+
+impl MachSelectionResult {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueMachChannel>) {
+        match self {
+            MachSelectionResult::DataReceived(id, data, channels) => (id, data, channels),
+            MachSelectionResult::ChannelClosed(id) => {
+                panic!("MachSelectionResult::unwrap(): receiver ID {} was closed!", id)
+            }
+        }
+    }
+}
+
+fn select(port: mach_port_t) -> Result<MachSelectionResult,MachError> {
+    debug_assert!(port != MACH_PORT_NULL);
+    unsafe {
+        let mut buffer = [0; SMALL_MESSAGE_SIZE];
+        let allocated_buffer = None;
+        setup_receive_buffer(&mut buffer, port);
+        let mut message = &mut buffer[0] as *mut _ as *mut Message;
+        match mach_sys::mach_msg(message as *mut _,
+                                 MACH_RCV_MSG | MACH_RCV_LARGE,
+                                 0,
+                                 (*message).header.msgh_size,
+                                 port,
+                                 MACH_MSG_TIMEOUT_NONE,
+                                 MACH_PORT_NULL) {
+            MACH_RCV_TOO_LARGE => {
+                // For some reason the size reported by the kernel is too small by 8. Why?!
+                let actual_size = (*message).header.msgh_size + 8;
+                let allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                setup_receive_buffer(slice::from_raw_parts_mut(
+                                        allocated_buffer.unwrap() as *mut u8,
+                                        actual_size as usize),
+                                     port);
+                message = allocated_buffer.unwrap() as *mut Message;
+                match mach_sys::mach_msg(message as *mut _,
+                                         MACH_RCV_MSG | MACH_RCV_LARGE,
+                                         0,
+                                         actual_size,
+                                         port,
+                                         MACH_MSG_TIMEOUT_NONE,
+                                         MACH_PORT_NULL) {
+                    MACH_MSG_SUCCESS => {}
+                    os_result => return Err(MachError(os_result)),
+                }
+            }
+            MACH_MSG_SUCCESS => {}
+            os_result => return Err(MachError(os_result)),
+        }
+
+        let local_port = (*message).header.msgh_local_port;
+        if (*message).header.msgh_id == MACH_NOTIFY_NO_SENDERS {
+            return Ok(MachSelectionResult::ChannelClosed(local_port as i64))
+        }
+
+        let mut ports = Vec::new();
+        let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
+        for _ in 0..(*message).body.msgh_descriptor_count {
+            ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
+            port_descriptor = port_descriptor.offset(1);
+        }
+
+        let payload_ptr = port_descriptor as *mut u8;
+        let payload_size = message as usize + ((*message).header.msgh_size as usize) -
+            (port_descriptor as usize);
+        let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
+
+        if let Some(allocated_buffer) = allocated_buffer {
+            libc::free(allocated_buffer)
+        }
+
+        Ok(MachSelectionResult::DataReceived(local_port as i64, payload, ports))
+    }
+}
+
 pub struct MachOneShotServer {
     receiver: Option<MachReceiver>,
     name: String,
@@ -424,7 +516,7 @@ impl Drop for MachOneShotServer {
 }
 
 impl MachOneShotServer {
-    pub fn new() -> Result<(MachOneShotServer, String),kern_return_t> {
+    pub fn new() -> Result<(MachOneShotServer, String),MachError> {
         let receiver = try!(MachReceiver::new());
         let name = try!(receiver.register_bootstrap_name());
         Ok((MachOneShotServer {
@@ -434,7 +526,7 @@ impl MachOneShotServer {
     }
 
     pub fn accept(mut self)
-                  -> Result<(MachReceiver, Vec<u8>, Vec<OpaqueMachChannel>),kern_return_t> {
+                  -> Result<(MachReceiver, Vec<u8>, Vec<OpaqueMachChannel>),MachError> {
         let (bytes, channels) = try!(self.receiver.as_mut().unwrap().recv());
         Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, channels))
     }
@@ -467,6 +559,16 @@ impl Message {
         }
 
         size
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct MachError(pub kern_return_t);
+
+impl MachError {
+    #[allow(dead_code)]
+    pub fn channel_is_closed(&self) -> bool {
+        self.0 == MACH_NOTIFY_NO_SENDERS
     }
 }
 

@@ -7,8 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcSender, OsIpcOneShotServer};
-use platform::{OsOpaqueIpcChannel};
+use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
+use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsOpaqueIpcChannel};
 
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -48,8 +48,19 @@ pub struct IpcReceiver<T> where T: Deserialize + Serialize {
 impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
     pub fn recv(&self) -> Result<T,()> {
         match self.os_receiver.recv() {
-            Ok((data, os_ipc_senders)) => deserialize_received_data(&data[..], os_ipc_senders),
+            Ok((data, os_ipc_channels)) => {
+                OpaqueIpcMessage {
+                    data: data,
+                    os_ipc_channels: os_ipc_channels,
+                }.to()
+            }
             Err(_) => Err(()),
+        }
+    }
+
+    pub fn to_opaque(self) -> OpaqueIpcReceiver {
+        OpaqueIpcReceiver {
+            os_receiver: self.os_receiver,
         }
     }
 }
@@ -153,6 +164,105 @@ impl<T> Serialize for IpcSender<T> where T: Serialize {
     }
 }
 
+pub struct IpcReceiverSet {
+    os_receiver_set: OsIpcReceiverSet,
+}
+
+impl IpcReceiverSet {
+    pub fn new() -> Result<IpcReceiverSet,()> {
+        match OsIpcReceiverSet::new() {
+            Ok(os_receiver_set) => {
+                Ok(IpcReceiverSet {
+                    os_receiver_set: os_receiver_set,
+                })
+            }
+            Err(_) => Err(()),
+        }
+    }
+
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,()>
+                  where T: Deserialize + Serialize {
+        self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
+    }
+
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,()> {
+        self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
+    }
+
+    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,()> {
+        match self.os_receiver_set.select() {
+            Ok(results) => {
+                Ok(results.into_iter().map(|result| {
+                    match result {
+                        OsIpcSelectionResult::DataReceived(os_receiver_id,
+                                                           data,
+                                                           os_ipc_channels) => {
+                            IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
+                                data: data,
+                                os_ipc_channels: os_ipc_channels,
+                            })
+                        }
+                        OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                            IpcSelectionResult::ChannelClosed(os_receiver_id)
+                        }
+                    }
+                }).collect())
+            }
+            Err(err) => {
+                println!("Aieeee! {:?}", err);
+                Err(())
+            }
+        }
+    }
+}
+
+pub enum IpcSelectionResult {
+    MessageReceived(i64, OpaqueIpcMessage),
+    ChannelClosed(i64),
+}
+
+impl IpcSelectionResult {
+    pub fn unwrap(self) -> (i64, OpaqueIpcMessage) {
+        match self {
+            IpcSelectionResult::MessageReceived(id, message) => (id, message),
+            IpcSelectionResult::ChannelClosed(id) => {
+                panic!("IpcSelectionResult::unwrap(): channel {} closed", id)
+            }
+        }
+    }
+}
+
+pub struct OpaqueIpcMessage {
+    data: Vec<u8>,
+    os_ipc_channels: Vec<OsOpaqueIpcChannel>,
+}
+
+impl OpaqueIpcMessage {
+    pub fn to<T>(mut self) -> Result<T,()> where T: Deserialize + Serialize {
+        OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
+            mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(),
+                      &mut self.os_ipc_channels);
+            let mut deserializer = match json::Deserializer::new(self.data
+                                                                     .iter()
+                                                                     .map(|byte| Ok(*byte))) {
+                Ok(deserializer) => deserializer,
+                Err(_) => return Err(()),
+            };
+            let result = match Deserialize::deserialize(&mut deserializer) {
+                Ok(result) => result,
+                Err(_) => return Err(()),
+            };
+            mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(),
+                      &mut self.os_ipc_channels);
+            Ok(result)
+        })
+    }
+}
+
+pub struct OpaqueIpcReceiver {
+    os_receiver: OsIpcReceiver,
+}
+
 pub struct IpcOneShotServer<T> {
     os_server: OsIpcOneShotServer,
     phantom: PhantomData<T>,
@@ -175,30 +285,14 @@ impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
             Ok(result) => result,
             Err(_) => return Err(()),
         };
-        let value = try!(deserialize_received_data(&data[..], os_channels));
+        let value = try!(OpaqueIpcMessage {
+            data: data,
+            os_ipc_channels: os_channels,
+        }.to());
         Ok((IpcReceiver {
             os_receiver: os_receiver,
             phantom: PhantomData,
         }, value))
     }
-}
-
-fn deserialize_received_data<T>(data: &[u8], mut os_ipc_channels: Vec<OsOpaqueIpcChannel>)
-                                -> Result<T,()>
-                                where T: Deserialize + Serialize {
-    OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-        mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(), &mut os_ipc_channels);
-        let mut deserializer = match json::Deserializer::new(data.iter()
-                                                                 .map(|byte| Ok(*byte))) {
-            Ok(deserializer) => deserializer,
-            Err(_) => return Err(()),
-        };
-        let result = match Deserialize::deserialize(&mut deserializer) {
-            Ok(result) => result,
-            Err(_) => return Err(()),
-        };
-        mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(), &mut os_ipc_channels);
-        Ok(result)
-    })
 }
 
