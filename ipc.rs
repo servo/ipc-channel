@@ -57,6 +57,12 @@ impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
             Err(_) => Err(()),
         }
     }
+
+    pub fn to_opaque(self) -> OpaqueIpcReceiver {
+        OpaqueIpcReceiver {
+            os_receiver: self.os_receiver,
+        }
+    }
 }
 
 impl<T> Deserialize for IpcReceiver<T> where T: Deserialize + Serialize {
@@ -179,6 +185,10 @@ impl IpcReceiverSet {
         self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
     }
 
+    pub fn add_opaque(&self, receiver: OpaqueIpcReceiver) -> Result<i64,()> {
+        self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
+    }
+
     pub fn recv(&self) -> Result<(i64, OpaqueIpcMessage),()> {
         match self.os_receiver_set.recv() {
             Ok((os_receiver_id, data, os_ipc_channels)) => {
@@ -217,6 +227,10 @@ impl OpaqueIpcMessage {
             Ok(result)
         })
     }
+}
+
+pub struct OpaqueIpcReceiver {
+    os_receiver: OsIpcReceiver,
 }
 
 pub struct IpcOneShotServer<T> {

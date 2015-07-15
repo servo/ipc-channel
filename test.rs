@@ -8,8 +8,11 @@
 // except according to those terms.
 
 use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender};
+use router::ROUTER;
 
 use libc;
+use std::sync::mpsc;
+use std::thread;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Person {
@@ -141,5 +144,77 @@ fn cross_process_embedded_senders() {
     tx1.send(person.clone()).unwrap();
     let (_, received_person): (_, Person) = server2.accept().unwrap();
     assert_eq!(received_person, person);
+}
+
+#[test]
+fn router_simple() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person.clone()).unwrap();
+
+    let (callback_fired_sender, callback_fired_receiver) = mpsc::channel::<Person>();
+    ROUTER.add_route(rx.to_opaque(), Box::new(move |person| {
+        callback_fired_sender.send(person.to().unwrap()).unwrap()
+    }));
+    let received_person = callback_fired_receiver.recv().unwrap();
+    assert_eq!(received_person, person);
+}
+
+#[test]
+fn router_routing_to_mpsc_receiver() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person.clone()).unwrap();
+
+    let mpsc_receiver = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx);
+    let received_person = mpsc_receiver.recv().unwrap();
+    assert_eq!(received_person, person);
+}
+
+#[test]
+fn router_multiplexing() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (tx0, rx0) = ipc::channel().unwrap();
+    tx0.send(person.clone()).unwrap();
+    let (tx1, rx1) = ipc::channel().unwrap();
+    tx1.send(person.clone()).unwrap();
+
+    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx0);
+    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx1);
+    let received_person_0 = mpsc_rx_0.recv().unwrap();
+    let received_person_1 = mpsc_rx_1.recv().unwrap();
+    assert_eq!(received_person_0, person);
+    assert_eq!(received_person_1, person);
+}
+
+#[test]
+fn router_multithreaded_multiplexing() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+
+    let person_for_thread = person.clone();
+    let (tx0, rx0) = ipc::channel().unwrap();
+    thread::spawn(move || tx0.send(person_for_thread).unwrap());
+    let person_for_thread = person.clone();
+    let (tx1, rx1) = ipc::channel().unwrap();
+    thread::spawn(move || tx1.send(person_for_thread).unwrap());
+
+    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx0);
+    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx1);
+    let received_person_0 = mpsc_rx_0.recv().unwrap();
+    let received_person_1 = mpsc_rx_1.recv().unwrap();
+    assert_eq!(received_person_0, person);
+    assert_eq!(received_person_1, person);
 }
 
