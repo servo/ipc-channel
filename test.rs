@@ -11,7 +11,7 @@ use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender};
 use router::ROUTER;
 
 use libc;
-use std::sync::mpsc;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -97,24 +97,24 @@ fn select() {
         age: 29,
     };
     tx0.send(person.clone()).unwrap();
-    let (received_id, received_data) = rx_set.recv().unwrap();
+    let (received_id, received_data) = rx_set.select().unwrap().unwrap();
     let received_person: Person = received_data.to().unwrap();
     assert_eq!(received_id, rx0_id);
     assert_eq!(received_person, person);
 
     tx1.send(person.clone()).unwrap();
-    let (received_id, received_data) = rx_set.recv().unwrap();
+    let (received_id, received_data) = rx_set.select().unwrap().unwrap();
     let received_person: Person = received_data.to().unwrap();
     assert_eq!(received_id, rx1_id);
     assert_eq!(received_person, person);
 
     tx0.send(person.clone()).unwrap();
     tx1.send(person.clone()).unwrap();
-    let (received_id_0, received_data) = rx_set.recv().unwrap();
+    let (received_id_0, received_data) = rx_set.select().unwrap().unwrap();
     let received_person: Person = received_data.to().unwrap();
     assert_eq!(received_person, person);
     assert!(received_id_0 == rx0_id || received_id_0 == rx1_id);
-    let (received_id_1, received_data) = rx_set.recv().unwrap();
+    let (received_id_1, received_data) = rx_set.select().unwrap().unwrap();
     let received_person: Person = received_data.to().unwrap();
     assert_eq!(received_person, person);
     assert!(received_id_1 == rx0_id || received_id_1 == rx1_id);
@@ -216,5 +216,53 @@ fn router_multithreaded_multiplexing() {
     let received_person_1 = mpsc_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
     assert_eq!(received_person_1, person);
+}
+
+#[test]
+fn router_drops_callbacks_on_sender_shutdown() {
+    struct Dropper {
+        sender: Sender<i32>,
+    }
+
+    impl Drop for Dropper {
+        fn drop(&mut self) {
+            self.sender.send(42).unwrap()
+        }
+    }
+
+    let (tx0, rx0) = ipc::channel::<()>().unwrap();
+    let (drop_tx, drop_rx) = mpsc::channel();
+    let dropper = Dropper {
+        sender: drop_tx,
+    };
+
+    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    drop(tx0);
+    assert_eq!(drop_rx.recv(), Ok(42));
+}
+
+#[test]
+fn router_drops_callbacks_on_cloned_sender_shutdown() {
+    struct Dropper {
+        sender: Sender<i32>,
+    }
+
+    impl Drop for Dropper {
+        fn drop(&mut self) {
+            self.sender.send(42).unwrap()
+        }
+    }
+
+    let (tx0, rx0) = ipc::channel::<()>().unwrap();
+    let (drop_tx, drop_rx) = mpsc::channel();
+    let dropper = Dropper {
+        sender: drop_tx,
+    };
+
+    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
+    drop(txs);
+    drop(tx0);
+    assert_eq!(drop_rx.recv(), Ok(42));
 }
 

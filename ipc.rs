@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
-use platform::{OsIpcOneShotServer, OsOpaqueIpcChannel};
+use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsOpaqueIpcChannel};
 
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -189,15 +189,34 @@ impl IpcReceiverSet {
         self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
     }
 
-    pub fn recv(&self) -> Result<(i64, OpaqueIpcMessage),()> {
-        match self.os_receiver_set.recv() {
-            Ok((os_receiver_id, data, os_ipc_channels)) => {
-                Ok((os_receiver_id, OpaqueIpcMessage {
+    pub fn select(&self) -> Result<IpcSelectionResult,()> {
+        match self.os_receiver_set.select() {
+            Ok(OsIpcSelectionResult::DataReceived(os_receiver_id, data, os_ipc_channels)) => {
+                Ok(IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
                     data: data,
                     os_ipc_channels: os_ipc_channels,
                 }))
             }
+            Ok(OsIpcSelectionResult::ChannelClosed(os_receiver_id)) => {
+                Ok(IpcSelectionResult::ChannelClosed(os_receiver_id))
+            }
             Err(_) => Err(()),
+        }
+    }
+}
+
+pub enum IpcSelectionResult {
+    MessageReceived(i64, OpaqueIpcMessage),
+    ChannelClosed(i64),
+}
+
+impl IpcSelectionResult {
+    pub fn unwrap(self) -> (i64, OpaqueIpcMessage) {
+        match self {
+            IpcSelectionResult::MessageReceived(id, message) => (id, message),
+            IpcSelectionResult::ChannelClosed(id) => {
+                panic!("IpcSelectionResult::unwrap(): channel {} closed", id)
+            }
         }
     }
 }

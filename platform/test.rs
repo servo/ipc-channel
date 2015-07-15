@@ -113,24 +113,24 @@ fn receiver_set() {
 
     let data: &[u8] = b"1234567";
     tx0.send(data, Vec::new()).unwrap();
-    let (received_id, mut received_data, _) = rx_set.recv().unwrap();
+    let (received_id, mut received_data, _) = rx_set.select().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_id, rx0_id);
     assert_eq!(received_data, data);
 
     tx1.send(data, Vec::new()).unwrap();
-    let (received_id, mut received_data, _) = rx_set.recv().unwrap();
+    let (received_id, mut received_data, _) = rx_set.select().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_id, rx1_id);
     assert_eq!(received_data, data);
 
     tx0.send(data, Vec::new()).unwrap();
     tx1.send(data, Vec::new()).unwrap();
-    let (received_id_0, mut received_data, _) = rx_set.recv().unwrap();
+    let (received_id_0, mut received_data, _) = rx_set.select().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_data, data);
     assert!(received_id_0 == rx0_id || received_id_0 == rx1_id);
-    let (received_id_1, mut received_data, _) = rx_set.recv().unwrap();
+    let (received_id_1, mut received_data, _) = rx_set.select().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_data, data);
     assert!(received_id_1 == rx0_id || received_id_1 == rx1_id);
@@ -197,5 +197,14 @@ fn cross_process_sender_transfer() {
     let (mut received_data, received_channels) = super_rx.recv().unwrap();
     received_data.truncate(3);
     assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+}
+
+#[test]
+fn no_senders_notification() {
+    let (sender, receiver) = platform::channel().unwrap();
+    drop(sender);
+    let result = receiver.recv();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().channel_is_closed());
 }
 

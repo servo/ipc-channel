@@ -31,6 +31,8 @@ pub use platform::macos::MachReceiverSet as OsIpcReceiverSet;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachChannel as OsIpcChannel;
 #[cfg(target_os="macos")]
+pub use platform::macos::MachSelectionResult as OsIpcSelectionResult;
+#[cfg(target_os="macos")]
 pub use platform::macos::OpaqueMachChannel as OsOpaqueIpcChannel;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;

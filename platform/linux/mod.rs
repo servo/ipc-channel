@@ -7,8 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use libc::{self, c_char, c_int, c_short, c_uint, c_ushort, c_void, size_t, sockaddr, sockaddr_un, socklen_t};
-use libc::{ssize_t};
+use libc::{self, c_char, c_int, c_short, c_uint, c_ushort, c_void, size_t, sockaddr, sockaddr_un};
+use libc::{socklen_t, ssize_t};
 use std::ffi::{CStr, CString};
 use std::io::Error;
 use std::iter;
@@ -285,7 +285,8 @@ impl UnixOneShotServer {
                               path.as_ptr() as *const c_char,
                               sockaddr.sun_path.len() as size_t);
 
-                let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
+                let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
+                                                       usize);
                 if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) == 0 {
                     break
                 }
@@ -302,7 +303,8 @@ impl UnixOneShotServer {
 
             Ok((UnixOneShotServer {
                 fd: fd,
-            }, String::from_utf8(CStr::from_ptr(path.as_ptr() as *const c_char).to_bytes().to_owned()).unwrap()))
+            }, String::from_utf8(CStr::from_ptr(path.as_ptr() as
+                                                *const c_char).to_bytes().to_owned()).unwrap()))
         }
     }
 
