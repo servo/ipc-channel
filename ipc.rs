@@ -180,25 +180,33 @@ impl IpcReceiverSet {
         }
     }
 
-    pub fn add<T>(&self, receiver: IpcReceiver<T>) -> Result<i64,()>
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,()>
                   where T: Deserialize + Serialize {
         self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
     }
 
-    pub fn add_opaque(&self, receiver: OpaqueIpcReceiver) -> Result<i64,()> {
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,()> {
         self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
     }
 
-    pub fn select(&self) -> Result<IpcSelectionResult,()> {
+    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,()> {
         match self.os_receiver_set.select() {
-            Ok(OsIpcSelectionResult::DataReceived(os_receiver_id, data, os_ipc_channels)) => {
-                Ok(IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
-                    data: data,
-                    os_ipc_channels: os_ipc_channels,
-                }))
-            }
-            Ok(OsIpcSelectionResult::ChannelClosed(os_receiver_id)) => {
-                Ok(IpcSelectionResult::ChannelClosed(os_receiver_id))
+            Ok(results) => {
+                Ok(results.into_iter().map(|result| {
+                    match result {
+                        OsIpcSelectionResult::DataReceived(os_receiver_id,
+                                                           data,
+                                                           os_ipc_channels) => {
+                            IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
+                                data: data,
+                                os_ipc_channels: os_ipc_channels,
+                            })
+                        }
+                        OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                            IpcSelectionResult::ChannelClosed(os_receiver_id)
+                        }
+                    }
+                }).collect())
             }
             Err(_) => Err(()),
         }

@@ -408,7 +408,7 @@ impl MachReceiverSet {
         }
     }
 
-    pub fn add(&self, receiver: MachReceiver) -> Result<i64,MachError> {
+    pub fn add(&mut self, receiver: MachReceiver) -> Result<i64,MachError> {
         let receiver_port = receiver.consume_port();
         let os_result = unsafe {
             mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
@@ -420,8 +420,8 @@ impl MachReceiverSet {
         }
     }
 
-    pub fn select(&self) -> Result<MachSelectionResult,MachError> {
-        select(self.port.get())
+    pub fn select(&mut self) -> Result<Vec<MachSelectionResult>,MachError> {
+        select(self.port.get()).map(|result| vec![result])
     }
 }
 

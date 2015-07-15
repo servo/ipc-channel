@@ -46,56 +46,20 @@ impl UnixReceiver {
         }
     }
 
+    pub fn consume_fd(&self) -> c_int {
+        unsafe {
+            libc::dup(self.fd)
+        }
+    }
+
     pub fn consume(&self) -> UnixReceiver {
         unsafe {
-            UnixReceiver::from_fd(libc::dup(self.fd))
+            UnixReceiver::from_fd(self.consume_fd())
         }
     }
 
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),c_int> {
-        unsafe {
-            let mut length_data: [usize; 2] = [0, 0];
-            let result = libc::recv(self.fd,
-                                    &mut length_data[0] as *mut _ as *mut c_void,
-                                    mem::size_of::<[usize; 2]>() as size_t,
-                                    MSG_WAITALL);
-            if result <= 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
-            }
-
-            let [data_length, channel_length] = length_data;
-            let cmsg_length = mem::size_of::<cmsghdr>() + channel_length * mem::size_of::<c_int>();
-            let cmsg_buffer: *mut cmsghdr = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
-
-            let mut data_buffer: Vec<u8> = iter::repeat(0).take(data_length).collect();
-            let mut iovec = iovec {
-                iov_base: &mut data_buffer[0] as *mut _ as *mut i8,
-                iov_len: data_length as size_t,
-            };
-
-            let mut msghdr = msghdr {
-                msg_name: ptr::null_mut(),
-                msg_namelen: 0,
-                msg_iov: &mut iovec,
-                msg_iovlen: 1,
-                msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length as size_t,
-                msg_flags: 0,
-            };
-
-            let result = recvmsg(self.fd, &mut msghdr, 0);
-            libc::free(cmsg_buffer as *mut c_void);
-            if result <= 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
-            }
-
-            let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
-            let channels = (0..channel_length).map(|index| {
-                OpaqueUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
-            }).collect();
-
-            Ok((data_buffer, channels))
-        }
+        recv(self.fd)
     }
 }
 
@@ -195,7 +159,7 @@ impl UnixSender {
 
             let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
             if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) < 0 {
-                return Err(Error::last_os_error().raw_os_error().unwrap())
+                return Err(UnixError::last())
             }
 
             Ok(UnixSender {
@@ -216,6 +180,74 @@ impl UnixChannel {
         match *self {
             UnixChannel::Sender(ref sender) => sender.fd,
             UnixChannel::Receiver(ref receiver) => receiver.fd,
+        }
+    }
+}
+
+pub struct UnixReceiverSet {
+    pollfds: Vec<pollfd>,
+}
+
+impl UnixReceiverSet {
+    pub fn new() -> Result<UnixReceiverSet,UnixError> {
+        Ok(UnixReceiverSet {
+            pollfds: Vec::new(),
+        })
+    }
+
+    pub fn add(&mut self, receiver: UnixReceiver) -> Result<i64,UnixError> {
+        let fd = receiver.consume_fd();
+        pollfds.push(pollfd {
+            fd: fd,
+            events: POLLIN,
+            revents: 0,
+        });
+        Ok(fd as i64)
+    }
+
+    pub fn select(&mut self) -> Result<Vec<UnixSelectionResult>,UnixError> {
+        let mut selection_results = Vec::new();
+        let result = unsafe {
+            poll(self.pollfds.as_mut_ptr(), self.pollfds.len() as libc::nfds_t, -1)
+        };
+        if result <= 0 {
+            return Err(UnixError::last())
+        }
+
+        let mut hangups_found = false;
+        for pollfd in self.pollfds.iter() {
+            if (pollfd.revents | POLLIN) != 0 {
+                let (data, channels) = try!(recv(pollfd.fd));
+                selection_results.push(UnixSelectionResult::DataReceived(pollfd.fd,
+                                                                         data,
+                                                                         channels));
+                pollfd.revents = pollfd.revents & !POLLIN
+            } else if (pollfd.revents | POLLHUP) != 0 {
+                hangups_found = true;
+                selection_results.push(UnixSelectionResult::ChannelClosed(pollfd.fd))
+            }
+        }
+
+        if hangups_found {
+            self.pollfds.retain(|pollfd| (pollfd.revents | POLLHUP) != 0);
+        }
+
+        Ok(selection_results)
+    }
+}
+
+pub enum UnixSelectionResult {
+    DataReceived(i64, Vec<u8>, Vec<OpaqueUnixChannel>),
+    ChannelClosed(i64),
+}
+
+impl UnixSelectionResult {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueUnixChannel>) {
+        match self {
+            UnixSelectionResult::DataReceived(id, data, channels) => (id, data, channels),
+            UnixSelectionResult::ChannelClosed(id) => {
+                panic!("UnixSelectionResult::unwrap(): receiver ID {} was closed!", id)
+            }
         }
     }
 }
@@ -326,6 +358,65 @@ impl UnixOneShotServer {
     }
 }
 
+pub struct UnixError(c_int);
+
+impl UnixError {
+    fn last() -> UnixError {
+        UnixError(Error::last_os_error().raw_os_error().unwrap())
+    }
+
+    #[allow(dead_code)]
+    pub fn channel_is_closed(&self) -> bool {
+        self.0 == libc::ECONNRESET
+    }
+}
+
+fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
+    unsafe {
+        let mut length_data: [usize; 2] = [0, 0];
+        let result = libc::recv(self.fd,
+                                &mut length_data[0] as *mut _ as *mut c_void,
+                                mem::size_of::<[usize; 2]>() as size_t,
+                                MSG_WAITALL);
+        if result <= 0 {
+            return Err(Error::last_os_error().raw_os_error().unwrap())
+        }
+
+        let [data_length, channel_length] = length_data;
+        let cmsg_length = mem::size_of::<cmsghdr>() + channel_length * mem::size_of::<c_int>();
+        let cmsg_buffer: *mut cmsghdr = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
+
+        let mut data_buffer: Vec<u8> = iter::repeat(0).take(data_length).collect();
+        let mut iovec = iovec {
+            iov_base: &mut data_buffer[0] as *mut _ as *mut i8,
+            iov_len: data_length as size_t,
+        };
+
+        let mut msghdr = msghdr {
+            msg_name: ptr::null_mut(),
+            msg_namelen: 0,
+            msg_iov: &mut iovec,
+            msg_iovlen: 1,
+            msg_control: cmsg_buffer as *mut c_void,
+            msg_controllen: cmsg_length as size_t,
+            msg_flags: 0,
+        };
+
+        let result = recvmsg(self.fd, &mut msghdr, 0);
+        libc::free(cmsg_buffer as *mut c_void);
+        if result <= 0 {
+            return Err(Error::last_os_error().raw_os_error().unwrap())
+        }
+
+        let cmsg_fds = cmsg_buffer.offset(1) as *const u8 as *const c_int;
+        let channels = (0..channel_length).map(|index| {
+            OpaqueUnixChannel::from_fd(*cmsg_fds.offset(index as isize))
+        }).collect();
+
+        Ok((data_buffer, channels))
+    }
+}
+
 // FFI stuff follows:
 
 const MSG_WAITALL: c_int = 0x100;
@@ -360,5 +451,12 @@ struct cmsghdr {
     cmsg_len: size_t,
     cmsg_level: c_int,
     cmsg_type: c_int,
+}
+
+#[repr(C)]
+struct pollfd {
+    fd: c_int,
+    events: c_short,
+    revents: c_short,
 }
 

@@ -16,6 +16,8 @@ pub use platform::linux::UnixSender as OsIpcSender;
 #[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixChannel as OsIpcChannel;
 #[cfg(any(target_os="linux", target_os="android"))]
+pub use platform::linux::UnixSelectionResult as OsIpcSelectionResult;
+#[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::OpaqueUnixChannel as OsOpaqueIpcChannel;
 #[cfg(any(target_os="linux", target_os="android"))]
 pub use platform::linux::UnixOneShotServer as OsIpcOneShotServer;
