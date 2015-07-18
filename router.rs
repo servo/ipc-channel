@@ -43,18 +43,29 @@ impl RouterProxy {
         comm.wakeup_sender.send(()).unwrap();
     }
 
+    /// A convenience function to route an `IpcReceiver<T>` to an existing `Sender<T>`.
+    pub fn route_ipc_receiver_to_mpsc_sender<T>(&self,
+                                                ipc_receiver: IpcReceiver<T>,
+                                                mpsc_sender: Sender<T>)
+                                                where T: Deserialize +
+                                                         Serialize +
+                                                         Send +
+                                                         'static {
+        self.add_route(ipc_receiver.to_opaque(), Box::new(move |message| {
+            drop(mpsc_sender.send(message.to::<T>().unwrap()))
+        }))
+    }
+
     /// A convenience function to route an `IpcReceiver<T>` to a `Receiver<T>`: the most common
     /// use of a `Router`.
-    pub fn route_ipc_receiver_to_mpsc_receiver<T>(&self, ipc_receiver: IpcReceiver<T>)
+    pub fn route_ipc_receiver_to_new_mpsc_receiver<T>(&self, ipc_receiver: IpcReceiver<T>)
                                                   -> Receiver<T>
                                                   where T: Deserialize +
                                                            Serialize +
                                                            Send +
                                                            'static {
         let (mpsc_sender, mpsc_receiver) = mpsc::channel();
-        self.add_route(ipc_receiver.to_opaque(), Box::new(move |message| {
-            drop(mpsc_sender.send(message.to::<T>().unwrap()))
-        }));
+        self.route_ipc_receiver_to_mpsc_sender(ipc_receiver, mpsc_sender);
         mpsc_receiver
     }
 }
@@ -87,10 +98,7 @@ impl Router {
         loop {
             let results = match self.ipc_receiver_set.select() {
                 Ok(results) => results,
-                Err(err) => {
-                    println!("Aieeeee! {:?}", err);
-                    break
-                }
+                Err(_) => break,
             };
             for result in results.into_iter() {
                 match result {

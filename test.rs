@@ -173,7 +173,7 @@ fn router_simple() {
 }
 
 #[test]
-fn router_routing_to_mpsc_receiver() {
+fn router_routing_to_new_mpsc_receiver() {
     let person = Person {
         name: "Patrick Walton".to_owned(),
         age: 29,
@@ -181,7 +181,7 @@ fn router_routing_to_mpsc_receiver() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
-    let mpsc_receiver = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx);
+    let mpsc_receiver = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx);
     let received_person = mpsc_receiver.recv().unwrap();
     assert_eq!(received_person, person);
 }
@@ -197,8 +197,8 @@ fn router_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     tx1.send(person.clone()).unwrap();
 
-    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx0);
-    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx1);
+    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx0);
+    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx1);
     let received_person_0 = mpsc_rx_0.recv().unwrap();
     let received_person_1 = mpsc_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
@@ -219,8 +219,8 @@ fn router_multithreaded_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     thread::spawn(move || tx1.send(person_for_thread).unwrap());
 
-    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx0);
-    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_mpsc_receiver(rx1);
+    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx0);
+    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx1);
     let received_person_0 = mpsc_rx_0.recv().unwrap();
     let received_person_1 = mpsc_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
