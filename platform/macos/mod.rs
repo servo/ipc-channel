@@ -421,7 +421,12 @@ impl MachReceiverSet {
     }
 
     pub fn select(&mut self) -> Result<Vec<MachSelectionResult>,MachError> {
-        select(self.port.get()).map(|result| vec![result])
+        match select(self.port.get()).map(|result| vec![result]) {
+            Ok(results) => Ok(results),
+            Err(error) => {
+                Err(error)
+            }
+        }
     }
 }
 
@@ -456,23 +461,30 @@ fn select(port: mach_port_t) -> Result<MachSelectionResult,MachError> {
                                  MACH_MSG_TIMEOUT_NONE,
                                  MACH_PORT_NULL) {
             MACH_RCV_TOO_LARGE => {
-                // For some reason the size reported by the kernel is too small by 8. Why?!
-                let actual_size = (*message).header.msgh_size + 8;
-                let allocated_buffer = Some(libc::malloc(actual_size as size_t));
-                setup_receive_buffer(slice::from_raw_parts_mut(
-                                        allocated_buffer.unwrap() as *mut u8,
-                                        actual_size as usize),
-                                     port);
-                message = allocated_buffer.unwrap() as *mut Message;
-                match mach_sys::mach_msg(message as *mut _,
-                                         MACH_RCV_MSG | MACH_RCV_LARGE,
-                                         0,
-                                         actual_size,
-                                         port,
-                                         MACH_MSG_TIMEOUT_NONE,
-                                         MACH_PORT_NULL) {
-                    MACH_MSG_SUCCESS => {}
-                    os_result => return Err(MachError(os_result)),
+                // Do a loop. There's no way I know of to figure out precisely in advance how big
+                // the message actually is!
+                let mut extra_size = 8;
+                loop {
+                    let actual_size = (*message).header.msgh_size + extra_size;
+                    let allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                    setup_receive_buffer(slice::from_raw_parts_mut(
+                                            allocated_buffer.unwrap() as *mut u8,
+                                            actual_size as usize),
+                                         port);
+                    message = allocated_buffer.unwrap() as *mut Message;
+                    match mach_sys::mach_msg(message as *mut _,
+                                             MACH_RCV_MSG | MACH_RCV_LARGE,
+                                             0,
+                                             actual_size,
+                                             port,
+                                             MACH_MSG_TIMEOUT_NONE,
+                                             MACH_PORT_NULL) {
+                        MACH_MSG_SUCCESS => break,
+                        MACH_RCV_TOO_LARGE => {}
+                        os_result => return Err(MachError(os_result)),
+                    }
+
+                    extra_size *= 2;
                 }
             }
             MACH_MSG_SUCCESS => {}

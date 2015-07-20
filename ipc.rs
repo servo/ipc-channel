@@ -208,10 +208,7 @@ impl IpcReceiverSet {
                     }
                 }).collect())
             }
-            Err(err) => {
-                println!("Aieeee! {:?}", err);
-                Err(())
-            }
+            Err(_) => Err(()),
         }
     }
 }
