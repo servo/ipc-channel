@@ -7,6 +7,7 @@ name = "ipc_channel"
 path = "lib.rs"
 
 [dependencies]
+byteorder = "*"
 lazy_static = "*"
 libc = "*"
 rand = "*"

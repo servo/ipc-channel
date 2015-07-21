@@ -11,6 +11,7 @@ use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender};
 use router::ROUTER;
 
 use libc;
+use std::iter;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
@@ -273,5 +274,27 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     drop(txs);
     drop(tx0);
     assert_eq!(drop_rx.recv(), Ok(42));
+}
+
+#[test]
+fn router_big_data() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let people: Vec<_> = iter::repeat(person).take(64 * 1024).collect();
+    let (tx, rx) = ipc::channel().unwrap();
+    let people_for_subthread = people.clone();
+    let thread = thread::spawn(move || {
+        tx.send(people_for_subthread).unwrap();
+    });
+
+    let (callback_fired_sender, callback_fired_receiver) = mpsc::channel::<Vec<Person>>();
+    ROUTER.add_route(rx.to_opaque(), Box::new(move |people| {
+        callback_fired_sender.send(people.to().unwrap()).unwrap()
+    }));
+    let received_people = callback_fired_receiver.recv().unwrap();
+    assert_eq!(received_people, people);
+    thread.join().unwrap();
 }
 

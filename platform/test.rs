@@ -77,7 +77,7 @@ fn multisender_transfer() {
 }
 
 #[test]
-fn big_data() {
+fn medium_data() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
@@ -88,7 +88,7 @@ fn big_data() {
 }
 
 #[test]
-fn big_data_with_sender_transfer() {
+fn medium_data_with_sender_transfer() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
@@ -101,6 +101,51 @@ fn big_data_with_sender_transfer() {
     let (mut received_data, received_channels) = sub_rx.recv().unwrap();
     received_data.truncate(65536);
     assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+}
+
+#[test]
+fn big_data() {
+    let (tx, rx) = platform::channel().unwrap();
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: &[u8] = &data[..];
+        tx.send(data, Vec::new()).unwrap();
+    });
+    let (mut received_data, received_channels) = rx.recv().unwrap();
+    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: &[u8] = &data[..];
+    received_data.truncate(1024 * 1024);
+    assert_eq!(received_data.len(), data.len());
+    assert_eq!((&received_data[..], received_channels), (&data[..], Vec::new()));
+    thread.join().unwrap();
+}
+
+#[test]
+fn big_data_with_sender_transfer() {
+    let (super_tx, super_rx) = platform::channel().unwrap();
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: &[u8] = &data[..];
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
+    });
+    let (mut received_data, mut received_channels) = super_rx.recv().unwrap();
+    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: &[u8] = &data[..];
+    received_data.truncate(1024 * 1024);
+    assert_eq!(received_data.len(), data.len());
+    assert_eq!(&received_data[..], &data[..]);
+    assert_eq!(received_channels.len(), 1);
+
+    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: &[u8] = &data[..];
+    let sub_tx = received_channels[0].to_sender();
+    sub_tx.send(data, Vec::new()).unwrap();
+    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    received_data.truncate(1024 * 1024);
+    assert_eq!(received_data.len(), data.len());
+    assert_eq!((&received_data[..], received_channels), (&data[..], Vec::new()));
+    thread.join().unwrap();
 }
 
 #[test]

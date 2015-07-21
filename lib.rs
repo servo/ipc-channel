@@ -13,6 +13,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+extern crate byteorder;
 extern crate libc;
 extern crate rand;
 extern crate serde;
