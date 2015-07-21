@@ -52,6 +52,7 @@ impl RouterProxy {
                                                          Send +
                                                          'static {
         self.add_route(ipc_receiver.to_opaque(), Box::new(move |message| {
+            println!("router routing message to MPSC sender: {:?}", message);
             drop(mpsc_sender.send(message.to::<T>().unwrap()))
         }))
     }
@@ -113,6 +114,7 @@ impl Router {
                         }
                     }
                     IpcSelectionResult::MessageReceived(id, message) => {
+                        println!("received message on router: {:?}", message);
                         self.handlers.get(&id).unwrap()(message)
                     }
                     IpcSelectionResult::ChannelClosed(id) => {

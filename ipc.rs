@@ -13,6 +13,8 @@ use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsOpaqueIpcChannel};
 use serde::json;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
+use std::cmp::min;
+use std::fmt::{self, Debug, Formatter};
 use std::marker::PhantomData;
 use std::mem;
 
@@ -49,6 +51,7 @@ impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
     pub fn recv(&self) -> Result<T,()> {
         match self.os_receiver.recv() {
             Ok((data, os_ipc_channels)) => {
+                println!("received data: {}", String::from_utf8(data.clone()).unwrap());
                 OpaqueIpcMessage {
                     data: data,
                     os_ipc_channels: os_ipc_channels,
@@ -131,6 +134,11 @@ impl<T> IpcSender<T> where T: Serialize {
                 mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(),
                              old_os_ipc_channels)
             };
+            println!("sending IPC message: {:?}",
+                     String::from_utf8(bytes.clone()).unwrap()
+                                                     .chars()
+                                                     .take(256)
+                                                     .collect::<String>());
             self.os_sender.send(&bytes[..], os_ipc_channels).map_err(|_| ())
         })
     }
@@ -232,6 +240,15 @@ impl IpcSelectionResult {
 pub struct OpaqueIpcMessage {
     data: Vec<u8>,
     os_ipc_channels: Vec<OsOpaqueIpcChannel>,
+}
+
+impl Debug for OpaqueIpcMessage {
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
+        match String::from_utf8(self.data.clone()) {
+            Ok(string) => string.chars().take(256).collect::<String>().fmt(formatter),
+            Err(..) => self.data[0..min(self.data.len(), 256)].fmt(formatter),
+        }
+    }
 }
 
 impl OpaqueIpcMessage {
