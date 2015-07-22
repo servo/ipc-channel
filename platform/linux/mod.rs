@@ -20,7 +20,11 @@ use std::os::unix::io::AsRawFd;
 use std::ptr;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 
+#[cfg(all(any(target_arch="arm", target_arch="x86"), target_os="android"))]
+const DEV_NULL_RDEV: libc::c_ulonglong = 0x0103;
+#[cfg(not(all(any(target_arch="arm", target_arch="x86"), target_os="android")))]
 const DEV_NULL_RDEV: libc::dev_t = 0x0103;
+
 const MAX_FDS_IN_CMSG: u32 = 64;
 
 static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
