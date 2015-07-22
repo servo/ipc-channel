@@ -145,7 +145,7 @@ impl UnixSender {
             }
 
             let mut iovec = iovec {
-                iov_base: data_buffer.as_ptr() as *const i8 as *mut i8,
+                iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
                 iov_len: data_buffer.len() as size_t,
             };
 
@@ -209,7 +209,7 @@ impl UnixSender {
 
                     // Better reset this in case `data_buffer` moved around -- iterator
                     // invalidation!
-                    iovec.iov_base = data_buffer.as_ptr() as *const i8 as *mut i8;
+                    iovec.iov_base = data_buffer.as_ptr() as *const c_char as *mut c_char;
                     iovec.iov_len = bytes_to_send as size_t;
 
                     sendmsg(self.fd, &msghdr, 0)
@@ -580,7 +580,7 @@ impl UnixCmsg {
         let mut data_buffer: Vec<u8> = vec![0; data_length];
         let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
         let mut iovec = Box::new(iovec {
-            iov_base: &mut data_buffer[0] as *mut _ as *mut i8,
+            iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
             iov_len: data_length as size_t,
         });
         let iovec_ptr: *mut iovec = &mut *iovec;
