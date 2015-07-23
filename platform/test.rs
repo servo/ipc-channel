@@ -9,6 +9,7 @@
 
 use libc;
 use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
+use platform::{OsIpcSharedMemory};
 use std::iter;
 use std::thread;
 
@@ -16,10 +17,11 @@ use std::thread;
 fn simple() {
     let (tx, rx) = platform::channel().unwrap();
     let data: &[u8] = b"1234567";
-    tx.send(data, Vec::new()).unwrap();
-    let (mut received_data, received_channels) = rx.recv().unwrap();
+    tx.send(data, Vec::new(), Vec::new()).unwrap();
+    let (mut received_data, received_channels, received_shared_memory) = rx.recv().unwrap();
     received_data.truncate(7);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory),
+               (data, Vec::new(), Vec::new()));
 }
 
 #[test]
@@ -27,14 +29,16 @@ fn sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
-    let (_, mut received_channels) = super_rx.recv().unwrap();
+    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
-    sub_tx.send(data, vec![]).unwrap();
-    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    sub_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        sub_rx.recv().unwrap();
     received_data.truncate(3);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -42,14 +46,16 @@ fn receiver_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
-    super_tx.send(data, vec![OsIpcChannel::Receiver(sub_rx)]).unwrap();
-    let (_, mut received_channels) = super_rx.recv().unwrap();
+    super_tx.send(data, vec![OsIpcChannel::Receiver(sub_rx)], vec![]).unwrap();
+    let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_rx = received_channels.pop().unwrap().to_receiver();
-    sub_tx.send(data, vec![]).unwrap();
-    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    sub_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        sub_rx.recv().unwrap();
     received_data.truncate(3);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -59,21 +65,26 @@ fn multisender_transfer() {
     let (sub1_tx, sub1_rx) = platform::channel().unwrap();
     let data: &[u8] = b"asdfasdf";
     super_tx.send(data,
-                  vec![OsIpcChannel::Sender(sub0_tx), OsIpcChannel::Sender(sub1_tx)]).unwrap();
-    let (_, mut received_channels) = super_rx.recv().unwrap();
+                  vec![OsIpcChannel::Sender(sub0_tx), OsIpcChannel::Sender(sub1_tx)],
+                  vec![]).unwrap();
+    let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 2);
 
     let sub0_tx = received_channels.remove(0).to_sender();
-    sub0_tx.send(data, vec![]).unwrap();
-    let (mut received_data, received_subchannels) = sub0_rx.recv().unwrap();
+    sub0_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_subchannels, received_shared_memory_regions) =
+        sub0_rx.recv().unwrap();
     received_data.truncate(8);
-    assert_eq!((&received_data[..], received_subchannels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_subchannels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 
     let sub1_tx = received_channels.remove(0).to_sender();
-    sub1_tx.send(data, vec![]).unwrap();
-    let (mut received_data, received_subchannels) = sub1_rx.recv().unwrap();
+    sub1_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_subchannels, received_shared_memory_regions) =
+        sub1_rx.recv().unwrap();
     received_data.truncate(8);
-    assert_eq!((&received_data[..], received_subchannels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_subchannels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -81,10 +92,12 @@ fn medium_data() {
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
-    tx.send(data, Vec::new()).unwrap();
-    let (mut received_data, received_channels) = rx.recv().unwrap();
+    tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        rx.recv().unwrap();
     received_data.truncate(65536);
-    assert_eq!((&received_data[..], received_channels), (&data[..], Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (&data[..], vec![], vec![]));
 }
 
 #[test]
@@ -93,14 +106,16 @@ fn medium_data_with_sender_transfer() {
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
-    let (_, mut received_channels) = super_rx.recv().unwrap();
+    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
-    sub_tx.send(data, vec![]).unwrap();
-    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    sub_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        sub_rx.recv().unwrap();
     received_data.truncate(65536);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -109,14 +124,16 @@ fn big_data() {
     let thread = thread::spawn(move || {
         let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
         let data: &[u8] = &data[..];
-        tx.send(data, Vec::new()).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
     });
-    let (mut received_data, received_channels) = rx.recv().unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        rx.recv().unwrap();
     let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
-    assert_eq!((&received_data[..], received_channels), (&data[..], Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (&data[..], vec![], vec![]));
     thread.join().unwrap();
 }
 
@@ -127,24 +144,28 @@ fn big_data_with_sender_transfer() {
     let thread = thread::spawn(move || {
         let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
         let data: &[u8] = &data[..];
-        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
     });
-    let (mut received_data, mut received_channels) = super_rx.recv().unwrap();
+    let (mut received_data, mut received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
     let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
     assert_eq!(&received_data[..], &data[..]);
     assert_eq!(received_channels.len(), 1);
+    assert_eq!(received_shared_memory_regions.len(), 0);
 
     let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
     let data: &[u8] = &data[..];
     let sub_tx = received_channels[0].to_sender();
-    sub_tx.send(data, Vec::new()).unwrap();
-    let (mut received_data, received_channels) = sub_rx.recv().unwrap();
+    sub_tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        sub_rx.recv().unwrap();
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
-    assert_eq!((&received_data[..], received_channels), (&data[..], Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (&data[..], vec![], vec![]));
     thread.join().unwrap();
 }
 
@@ -157,26 +178,26 @@ fn receiver_set() {
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let data: &[u8] = b"1234567";
-    tx0.send(data, Vec::new()).unwrap();
-    let (received_id, mut received_data, _) =
+    tx0.send(data, vec![], vec![]).unwrap();
+    let (received_id, mut received_data, _, _) =
         rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_id, rx0_id);
     assert_eq!(received_data, data);
 
-    tx1.send(data, Vec::new()).unwrap();
-    let (received_id, mut received_data, _) =
+    tx1.send(data, vec![], vec![]).unwrap();
+    let (received_id, mut received_data, _, _) =
         rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
     received_data.truncate(7);
     assert_eq!(received_id, rx1_id);
     assert_eq!(received_data, data);
 
-    tx0.send(data, Vec::new()).unwrap();
-    tx1.send(data, Vec::new()).unwrap();
+    tx0.send(data, vec![], vec![]).unwrap();
+    tx1.send(data, vec![], vec![]).unwrap();
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
-            let (received_id, mut received_data, _) = result.unwrap();
+            let (received_id, mut received_data, _, _) = result.unwrap();
             received_data.truncate(7);
             assert_eq!(received_data, data);
             assert!(received_id == rx0_id || received_id == rx1_id);
@@ -198,12 +219,14 @@ fn server() {
 
     thread::spawn(move || {
         let tx = OsIpcSender::connect(name).unwrap();
-        tx.send(data, Vec::new()).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
     });
 
-    let (_, mut received_data, received_channels) = server.accept().unwrap();
+    let (_, mut received_data, received_channels, received_shared_memory_regions) =
+        server.accept().unwrap();
     received_data.truncate(7);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -214,14 +237,16 @@ fn cross_process() {
     unsafe {
         if libc::fork() == 0 {
             let tx = OsIpcSender::connect(name).unwrap();
-            tx.send(data, Vec::new()).unwrap();
+            tx.send(data, vec![], vec![]).unwrap();
             libc::exit(0);
         }
     }
 
-    let (_, mut received_data, received_channels) = server.accept().unwrap();
+    let (_, mut received_data, received_channels, received_shared_memory_regions) =
+        server.accept().unwrap();
     received_data.truncate(7);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -233,24 +258,26 @@ fn cross_process_sender_transfer() {
             let super_tx = OsIpcSender::connect(name).unwrap();
             let (sub_tx, sub_rx) = platform::channel().unwrap();
             let data: &[u8] = b"foo";
-            super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)]).unwrap();
+            super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
             sub_rx.recv().unwrap();
             let data: &[u8] = b"bar";
-            super_tx.send(data, Vec::new()).unwrap();
+            super_tx.send(data, vec![], vec![]).unwrap();
             libc::exit(0);
         }
     }
 
-    let (super_rx, _, mut received_channels) = server.accept().unwrap();
+    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
     let data: &[u8] = b"baz";
-    sub_tx.send(data, Vec::new()).unwrap();
+    sub_tx.send(data, vec![], vec![]).unwrap();
 
     let data: &[u8] = b"bar";
-    let (mut received_data, received_channels) = super_rx.recv().unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
     received_data.truncate(3);
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
 }
 
 #[test]
@@ -260,5 +287,18 @@ fn no_senders_notification() {
     let result = receiver.recv();
     assert!(result.is_err());
     assert!(result.unwrap_err().channel_is_closed());
+}
+
+#[test]
+fn shared_memory() {
+    let (tx, rx) = platform::channel().unwrap();
+    let data: &[u8] = b"1234567";
+    let shmem_data = OsIpcSharedMemory::from_byte(0xba, 1024 * 1024);
+    tx.send(data, vec![], vec![shmem_data]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory) = rx.recv().unwrap();
+    received_data.truncate(7);
+    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
+    assert_eq!(received_shared_memory[0].len(), 1024 * 1024);
+    assert!(received_shared_memory[0].iter().all(|byte| *byte == 0xba));
 }
 

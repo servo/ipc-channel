@@ -126,7 +126,7 @@ pub type mach_msg_bits_t = ::libc::c_uint;
 pub type mach_msg_size_t = natural_t;
 pub type mach_msg_id_t = integer_t;
 pub type mach_msg_type_name_t = ::libc::c_uint;
-pub type mach_msg_copy_options_t = ::libc::c_uint;
+pub type mach_msg_copy_options_t = u8;
 pub type mach_msg_descriptor_type_t = ::libc::c_uint;
 #[repr(C)]
 #[derive(Copy)]
@@ -197,10 +197,10 @@ pub type mach_msg_ool_descriptor64_t = Struct_Unnamed4;
 #[derive(Copy)]
 pub struct Struct_Unnamed5 {
     pub address: *mut ::libc::c_void,
-    pub _bindgen_bitfield_1_: boolean_t,
-    pub _bindgen_bitfield_2_: mach_msg_copy_options_t,
-    pub _bindgen_bitfield_3_: ::libc::c_uint,
-    pub _bindgen_bitfield_4_: mach_msg_descriptor_type_t,
+    pub deallocate: u8,
+    pub copy: u8,
+    pub disposition: u8,
+    pub type_: u8,
     pub size: mach_msg_size_t,
 }
 impl ::std::clone::Clone for Struct_Unnamed5 {
