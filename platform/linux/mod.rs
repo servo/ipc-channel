@@ -798,7 +798,7 @@ fn is_socket(fd: c_int) -> bool {
         if libc::fstat(fd, &mut st) != 0 {
             return false
         }
-        S_ISSOCK(st.st_mode)
+        S_ISSOCK(st.st_mode as mode_t)
     }
 }
 
