@@ -8,8 +8,8 @@
 // except according to those terms.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use libc::{self, c_char, c_int, c_short, c_uint, c_ulong, c_ushort, c_void, size_t, sockaddr};
-use libc::{sockaddr_un, socklen_t, ssize_t};
+use libc::{self, MAP_PRIVATE, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_uint, c_ulong};
+use libc::{c_ushort, c_void, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
@@ -75,7 +75,8 @@ impl UnixReceiver {
         UnixReceiver::from_fd(self.consume_fd())
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
+    pub fn recv(&self)
+                -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
         recv(self.fd)
     }
 }
@@ -110,7 +111,11 @@ impl UnixSender {
         }
     }
 
-    pub fn send(&self, data: &[u8], channels: Vec<UnixChannel>) -> Result<(),UnixError> {
+    pub fn send(&self,
+                data: &[u8],
+                channels: Vec<UnixChannel>,
+                shared_memory_regions: Vec<UnixSharedMemory>)
+                -> Result<(),UnixError> {
         let mut data_buffer = vec![0; data.len() + mem::size_of::<u32>() * 2];
         {
             let mut data_buffer = &mut data_buffer[..];
@@ -120,7 +125,8 @@ impl UnixSender {
         }
 
         unsafe {
-            let cmsg_length = channels.len() * mem::size_of::<c_int>();
+            let cmsg_length =
+                (channels.len() + shared_memory_regions.len()) * mem::size_of::<c_int>();
             let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length as size_t)) as *mut cmsghdr;
             (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length as size_t);
             (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
@@ -130,6 +136,10 @@ impl UnixSender {
             for channel in channels.into_iter() {
                 fds.push(channel.fd());
                 mem::forget(channel);
+            }
+            for shared_memory_region in shared_memory_regions.into_iter() {
+                fds.push(shared_memory_region.fd());
+                mem::forget(shared_memory_region);
             }
             ptr::copy_nonoverlapping(fds.as_ptr(),
                                      cmsg_buffer.offset(1) as *mut _ as *mut c_int,
@@ -318,10 +328,12 @@ impl UnixReceiverSet {
         for pollfd in self.pollfds.iter_mut() {
             if (pollfd.revents & POLLIN) != 0 {
                 match recv(pollfd.fd) {
-                    Ok((data, channels)) => {
-                        selection_results.push(UnixSelectionResult::DataReceived(pollfd.fd as i64,
-                                                                                 data,
-                                                                                 channels));
+                    Ok((data, channels, shared_memory_regions)) => {
+                        selection_results.push(UnixSelectionResult::DataReceived(
+                                pollfd.fd as i64,
+                                data,
+                                channels,
+                                shared_memory_regions));
                     }
                     Err(err) if err.channel_is_closed() => {
                         hangups.insert(pollfd.fd);
@@ -343,14 +355,16 @@ impl UnixReceiverSet {
 }
 
 pub enum UnixSelectionResult {
-    DataReceived(i64, Vec<u8>, Vec<OpaqueUnixChannel>),
+    DataReceived(i64, Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),
     ChannelClosed(i64),
 }
 
 impl UnixSelectionResult {
-    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueUnixChannel>) {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>) {
         match self {
-            UnixSelectionResult::DataReceived(id, data, channels) => (id, data, channels),
+            UnixSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
+                (id, data, channels, shared_memory_regions)
+            }
             UnixSelectionResult::ChannelClosed(id) => {
                 panic!("UnixSelectionResult::unwrap(): receiver ID {} was closed!", id)
             }
@@ -464,6 +478,119 @@ impl UnixOneShotServer {
     }
 }
 
+pub struct UnixSharedMemory {
+    ptr: Cell<*mut u8>,
+    length: usize,
+    fd: c_int,
+}
+
+impl Drop for UnixSharedMemory {
+    fn drop(&mut self) {
+        if !self.ptr.get().is_null() {
+            unsafe {
+                assert!(libc::munmap(self.ptr.get(), self.length) == 0);
+                assert!(libc::close(self.fd) == 0);
+            }
+        }
+    }
+}
+
+impl Clone for UnixSharedMemory {
+    fn clone(&self) -> UnixSharedMemory {
+        unsafe {
+            let new_shared_memory = UnixSharedMemory::new_uninitialized(self.length);
+            ptr::copy_nonoverlapping(self.ptr.get(), new_shared_memory.ptr.get(), self.length());
+            new_shared_memory
+        }
+    }
+}
+
+impl PartialEq for UnixSharedMemory {
+    fn eq(&self, other: &UnixSharedMemory) -> bool {
+        **self == **other
+    }
+}
+
+impl Debug for UnixSharedMemory {
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
+        (**self).fmt(formatter)
+    }
+}
+
+impl Deref for UnixSharedMemory {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        if self.ptr.get().is_null() {
+            panic!("attempted to access a consumed `UnixSharedMemory`")
+        }
+        unsafe {
+            slice::from_raw_parts(self.ptr.get(), self.length)
+        }
+    }
+}
+
+impl DerefMut for UnixSharedMemory {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [u8] {
+        if self.ptr.get().is_null() {
+            panic!("attempted to access a consumed `MachSharedMemory`")
+        }
+        unsafe {
+            slice::from_raw_parts_mut(self.ptr.get(), self.length)
+        }
+    }
+}
+
+impl UnixSharedMemory {
+    unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> UnixSharedMemory {
+        UnixSharedMemory {
+            ptr: Cell::new(ptr),
+            length: length,
+            fd: fd,
+        }
+    }
+
+    unsafe fn new_uninitialized(length: usize) -> UnixSharedMemory {
+        unsafe {
+            let mut string = CString::new("/tmp/ipc-channel-shared-memory.XXXXXX");
+            let fd = libc::mkstemp(string.as_mut_ptr());
+            assert!(fd >= 0);
+            assert!(libc::unlink(string.as_mut_ptr()) == 0);
+            assert!(libc::ftruncate(fd, length) == 0);
+            let address = libc::mmap(ptr::null_mut(),
+                                     length as size_t,
+                                     PROT_READ | PROT_WRITE,
+                                     MAP_PRIVATE,
+                                     fd,
+                                     0);
+            assert!(address != ptr::null_mut());
+            UnixSharedMemory {
+                ptr: Cell::new(address),
+                length: length,
+                fd: fd,
+            }
+        }
+    }
+
+    pub fn new(length: usize) -> UnixSharedMemory {
+        unsafe {
+            let mut shared_memory = UnixSharedMemory::new_uninitialized(length);
+            shared_memory.set_memory(0);
+            shared_memory
+        }
+    }
+
+    pub fn consume(&self) -> UnixSharedMemory {
+        let ptr = self.ptr.get();
+        self.ptr.set(ptr::null_mut());
+        unsafe {
+            UnixSharedMemory::from_raw_parts(ptr, self.length, self.fd)
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct UnixError(c_int);
 
@@ -478,7 +605,7 @@ impl UnixError {
     }
 }
 
-fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
+fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
     unsafe {
         let mut maximum_recv_size: usize = 0;
         let mut maximum_recv_size_len = mem::size_of::<usize>() as socklen_t;
@@ -500,12 +627,17 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
         } else {
             ((cmsg.cmsg_len() as usize) - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
         };
-        let mut channels = Vec::new();
+        let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
-            if !is_dev_null(fd) {
-                channels.push(OpaqueUnixChannel::from_fd(fd))
+            if is_dev_null(fd) {
+                continue
             }
+            if is_socket(fd) {
+                channels.push(OpaqueUnixChannel::from_fd(fd));
+                continue
+            }
+            shared_memory_regions.push(OpaqueUnixChannel::from_fd(fd));
         }
 
         // Separate out the fragmentation frame.
@@ -521,7 +653,7 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
                                                                 .unwrap();
         if next_fragment_id == 0 {
             // Fast path: no fragments.
-            return Ok((main_data_buffer, channels))
+            return Ok((main_data_buffer, channels, shared_memory_regions))
         }
 
         // Reassemble fragments.
@@ -552,7 +684,7 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>),UnixError> {
             try!(leftover_fragment.send(fd));
         }
 
-        Ok((main_data_buffer, channels))
+        Ok((main_data_buffer, channels, shared_memory_regions))
     }
 }
 
@@ -574,7 +706,8 @@ impl Drop for UnixCmsg {
 
 impl UnixCmsg {
     unsafe fn new(maximum_recv_size: usize) -> UnixCmsg {
-        let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) * mem::size_of::<c_int>();
+        let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
+            mem::size_of::<c_int>();
         assert!(maximum_recv_size > cmsg_length);
         let data_length = maximum_recv_size - cmsg_length;
         let mut data_buffer: Vec<u8> = vec![0; data_length];
@@ -642,6 +775,16 @@ fn is_dev_null(fd: c_int) -> bool {
     }
 }
 
+fn is_socket(fd: c_int) -> bool {
+    unsafe {
+        let mut st = mem::uninitialized();
+        if libc::fstat(fd, &mut st) != 0 {
+            return false
+        }
+        S_ISSOCK(st.st_mode)
+    }
+}
+
 // FFI stuff follows:
 
 const POLLIN: c_short = 0x01;
@@ -667,7 +810,11 @@ fn CMSG_SPACE(length: size_t) -> size_t {
 }
 
 extern {
-    fn getsockopt(sockfd: c_int, level: c_int, optname: c_int, optval: *mut c_void, optlen: *mut socklen_t)
+    fn getsockopt(sockfd: c_int,
+                  level: c_int,
+                  optname: c_int,
+                  optval: *mut c_void,
+                  optlen: *mut socklen_t)
                   -> c_int;
     fn mktemp(template: *mut c_char) -> *mut c_char;
     fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
