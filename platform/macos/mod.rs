@@ -8,16 +8,20 @@
 // except according to those terms.
 
 use platform::macos::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t};
-use platform::macos::mach_sys::{mach_msg_port_descriptor_t, mach_msg_timeout_t, mach_port_right_t};
-use platform::macos::mach_sys::{mach_port_t, mach_task_self_};
+use platform::macos::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
+use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_right_t, mach_port_t};
+use platform::macos::mach_sys::{mach_task_self_};
 
-use libc::{self, c_char, size_t};
+use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
 use std::ffi::CString;
+use std::fmt::{self, Debug, Formatter};
 use std::mem;
+use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::slice;
+use std::slice::bytes::MutableByteVector;
 
 mod mach_sys;
 
@@ -32,6 +36,7 @@ const BOOTSTRAP_SUCCESS: kern_return_t = 0;
 const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const KERN_SUCCESS: kern_return_t = 0;
 const KERN_INVALID_RIGHT: kern_return_t = 17;
+const MACH_MSG_OOL_DESCRIPTOR: u8 = 1;
 const MACH_MSG_PORT_DESCRIPTOR: u8 = 0;
 const MACH_MSG_SUCCESS: kern_return_t = 0;
 const MACH_MSG_TIMEOUT_NONE: mach_msg_timeout_t = 0;
@@ -41,6 +46,7 @@ const MACH_MSG_TYPE_COPY_SEND: u8 = 19;
 const MACH_MSG_TYPE_MAKE_SEND: u8 = 20;
 const MACH_MSG_TYPE_MAKE_SEND_ONCE: u8 = 21;
 const MACH_MSG_TYPE_PORT_SEND: u8 = MACH_MSG_TYPE_MOVE_SEND;
+const MACH_MSG_VIRTUAL_COPY: c_uint = 1;
 const MACH_MSGH_BITS_COMPLEX: u32 = 0x80000000;
 const MACH_NOTIFY_FIRST: i32 = 64;
 const MACH_NOTIFY_NO_SENDERS: i32 = MACH_NOTIFY_FIRST + 6;
@@ -217,10 +223,13 @@ impl MachReceiver {
         Ok(())
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>),MachError> {
+    pub fn recv(&self)
+                -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
         select(self.port.get()).and_then(|result| {
             match result {
-                MachSelectionResult::DataReceived(_, data, channels) => Ok((data, channels)),
+                MachSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
+                    Ok((data, channels, shared_memory_regions))
+                }
                 MachSelectionResult::ChannelClosed(_) => Err(MachError(MACH_NOTIFY_NO_SENDERS)),
             }
         })
@@ -290,9 +299,13 @@ impl MachSender {
         }
     }
 
-    pub fn send(&self, data: &[u8], ports: Vec<MachChannel>) -> Result<(),MachError> {
+    pub fn send(&self,
+                data: &[u8],
+                ports: Vec<MachChannel>,
+                shared_memory_regions: Vec<MachSharedMemory>)
+                -> Result<(),MachError> {
         unsafe {
-            let size = Message::size_of(data.len(), ports.len());
+            let size = Message::size_of(data.len(), ports.len(), shared_memory_regions.len());
             let message = libc::malloc(size as size_t) as *mut Message;
             (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
                 MACH_MSGH_BITS_COMPLEX;
@@ -301,7 +314,9 @@ impl MachSender {
             (*message).header.msgh_remote_port = self.port;
             (*message).header.msgh_reserved = 0;
             (*message).header.msgh_id = 0;
-            (*message).body.msgh_descriptor_count = ports.len() as u32;
+            (*message).body.msgh_descriptor_count =
+                (ports.len() + shared_memory_regions.len()) as u32;
+
             let mut port_descriptor_dest = message.offset(1) as *mut mach_msg_port_descriptor_t;
             for outgoing_port in ports.into_iter() {
                 (*port_descriptor_dest).name = outgoing_port.port();
@@ -317,10 +332,23 @@ impl MachSender {
                 mem::forget(outgoing_port);
             }
 
+            let mut shared_memory_descriptor_dest =
+                port_descriptor_dest as *mut mach_msg_ool_descriptor_t;
+            for shared_memory_region in shared_memory_regions.into_iter() {
+                (*shared_memory_descriptor_dest).address =
+                    shared_memory_region.as_ptr() as *const c_void as *mut c_void;
+                (*shared_memory_descriptor_dest).size = shared_memory_region.len() as u32;
+                (*shared_memory_descriptor_dest).deallocate = 1;
+                (*shared_memory_descriptor_dest).copy = MACH_MSG_VIRTUAL_COPY as u8;
+                (*shared_memory_descriptor_dest).type_ = MACH_MSG_OOL_DESCRIPTOR;
+                mem::forget(shared_memory_region);
+                shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
+            }
+
             // Zero out the last word for paranoia's sake.
             *((message as *mut u8).offset(size as isize - 4) as *mut u32) = 0;
 
-            let data_dest = port_descriptor_dest as *mut u8;
+            let data_dest = shared_memory_descriptor_dest as *mut u8;
             ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data.len());
 
             let mut ptr = message as *const u32;
@@ -431,14 +459,16 @@ impl MachReceiverSet {
 }
 
 pub enum MachSelectionResult {
-    DataReceived(i64, Vec<u8>, Vec<OpaqueMachChannel>),
+    DataReceived(i64, Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),
     ChannelClosed(i64),
 }
 
 impl MachSelectionResult {
-    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueMachChannel>) {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>) {
         match self {
-            MachSelectionResult::DataReceived(id, data, channels) => (id, data, channels),
+            MachSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
+                (id, data, channels, shared_memory_regions)
+            }
             MachSelectionResult::ChannelClosed(id) => {
                 panic!("MachSelectionResult::unwrap(): receiver ID {} was closed!", id)
             }
@@ -496,23 +526,41 @@ fn select(port: mach_port_t) -> Result<MachSelectionResult,MachError> {
             return Ok(MachSelectionResult::ChannelClosed(local_port as i64))
         }
 
-        let mut ports = Vec::new();
+        let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
         let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
-        for _ in 0..(*message).body.msgh_descriptor_count {
+        let mut descriptors_remaining = (*message).body.msgh_descriptor_count;
+        while descriptors_remaining > 0 {
+            if (*port_descriptor).type_ != MACH_MSG_PORT_DESCRIPTOR {
+                break
+            }
             ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
             port_descriptor = port_descriptor.offset(1);
+            descriptors_remaining -= 1;
         }
 
-        let payload_ptr = port_descriptor as *mut u8;
+        let mut shared_memory_descriptor = port_descriptor as *mut mach_msg_ool_descriptor_t;
+        while descriptors_remaining > 0 {
+            debug_assert!((*shared_memory_descriptor).type_ == MACH_MSG_OOL_DESCRIPTOR);
+            shared_memory_regions.push(MachSharedMemory::from_raw_parts(
+                    (*shared_memory_descriptor).address as *mut u8,
+                    (*shared_memory_descriptor).size as usize));
+            shared_memory_descriptor = shared_memory_descriptor.offset(1);
+            descriptors_remaining -= 1;
+        }
+
+        let payload_ptr = shared_memory_descriptor as *mut u8;
         let payload_size = message as usize + ((*message).header.msgh_size as usize) -
-            (port_descriptor as usize);
+            (shared_memory_descriptor as usize);
         let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
 
         if let Some(allocated_buffer) = allocated_buffer {
             libc::free(allocated_buffer)
         }
 
-        Ok(MachSelectionResult::DataReceived(local_port as i64, payload, ports))
+        Ok(MachSelectionResult::DataReceived(local_port as i64,
+                                             payload,
+                                             ports,
+                                             shared_memory_regions))
     }
 }
 
@@ -537,11 +585,115 @@ impl MachOneShotServer {
         }, name))
     }
 
-    pub fn accept(mut self)
-                  -> Result<(MachReceiver, Vec<u8>, Vec<OpaqueMachChannel>),MachError> {
-        let (bytes, channels) = try!(self.receiver.as_mut().unwrap().recv());
-        Ok((mem::replace(&mut self.receiver, None).unwrap(), bytes, channels))
+    pub fn accept(mut self) -> Result<(MachReceiver,
+                                       Vec<u8>,
+                                       Vec<OpaqueMachChannel>,
+                                       Vec<MachSharedMemory>),MachError> {
+        let (bytes, channels, shared_memory_regions) =
+            try!(self.receiver.as_mut().unwrap().recv());
+        Ok((mem::replace(&mut self.receiver, None).unwrap(),
+            bytes,
+            channels,
+            shared_memory_regions))
     }
+}
+
+pub struct MachSharedMemory {
+    ptr: Cell<*mut u8>,
+    length: usize,
+}
+
+unsafe impl Send for MachSharedMemory {}
+unsafe impl Sync for MachSharedMemory {}
+
+impl Drop for MachSharedMemory {
+    fn drop(&mut self) {
+        if !self.ptr.get().is_null() {
+            unsafe {
+                assert!(mach_sys::vm_deallocate(mach_task_self(),
+                                                self.ptr.get() as usize,
+                                                self.length) == KERN_SUCCESS);
+            }
+        }
+    }
+}
+
+impl Clone for MachSharedMemory {
+    fn clone(&self) -> MachSharedMemory {
+        unsafe {
+            let new_shared_memory = MachSharedMemory::new_uninitialized(self.length);
+            ptr::copy_nonoverlapping(self.ptr.get(), new_shared_memory.ptr.get(), self.length);
+            new_shared_memory
+        }
+    }
+}
+
+impl PartialEq for MachSharedMemory {
+    fn eq(&self, other: &MachSharedMemory) -> bool {
+        **self == **other
+    }
+}
+
+impl Debug for MachSharedMemory {
+    fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
+        (**self).fmt(formatter)
+    }
+}
+
+impl Deref for MachSharedMemory {
+    type Target = [u8];
+
+    #[inline]
+    fn deref(&self) -> &[u8] {
+        if self.ptr.get().is_null() {
+            panic!("attempted to access a consumed `MachSharedMemory`")
+        }
+        unsafe {
+            slice::from_raw_parts(self.ptr.get(), self.length)
+        }
+    }
+}
+
+impl MachSharedMemory {
+    unsafe fn from_raw_parts(ptr: *mut u8, length: usize) -> MachSharedMemory {
+        MachSharedMemory {
+            ptr: Cell::new(ptr),
+            length: length,
+        }
+    }
+
+    pub fn from_byte(byte: u8, length: usize) -> MachSharedMemory {
+        unsafe {
+            let address = allocate_vm_pages(bytes.len());
+            slice::from_raw_parts_mut(address, length).set_memory(byte);
+            MachSharedMemory::from_raw_parts(address, bytes.len())
+        }
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> MachSharedMemory {
+        unsafe {
+            let address = allocate_vm_pages(bytes.len());
+            ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            MachSharedMemory::from_raw_parts(address, bytes.len())
+        }
+    }
+
+    pub fn consume(&self) -> MachSharedMemory {
+        let ptr = self.ptr.get();
+        self.ptr.set(ptr::null_mut());
+        unsafe {
+            MachSharedMemory::from_raw_parts(ptr, self.length)
+        }
+    }
+}
+
+unsafe fn allocate_vm_pages(length: usize) -> *mut u8 {
+    let mut address = 0;
+    let result = mach_sys::vm_allocate(mach_task_self(), &mut address, length, 1);
+    if result != KERN_SUCCESS {
+        panic!("`vm_allocate()` failed: {}", result);
+    }
+    address as *mut u8
 }
 
 unsafe fn setup_receive_buffer(buffer: &mut [u8], port_name: mach_port_t) {
@@ -561,9 +713,11 @@ struct Message {
 }
 
 impl Message {
-    fn size_of(data_length: usize, port_length: usize) -> usize {
+    fn size_of(data_length: usize, port_length: usize, shared_memory_length: usize) -> usize {
         let mut size = mem::size_of::<Message>() +
-            mem::size_of::<mach_msg_port_descriptor_t>() * port_length + data_length;
+            mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
+            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
+            data_length;
 
         // Round up to the next 4 bytes.
         if (size & 0x3) != 0 {

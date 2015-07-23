@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender};
+use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use router::ROUTER;
 
 use libc;
@@ -31,6 +31,12 @@ struct PersonAndSender {
 struct PersonAndReceiver {
     person: Person,
     receiver: IpcReceiver<Person>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct PersonAndSharedMemory {
+    person: Person,
+    shared_memory: IpcSharedMemory,
 }
 
 #[test]
@@ -296,5 +302,23 @@ fn router_big_data() {
     let received_people = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_people, people);
     thread.join().unwrap();
+}
+
+#[test]
+fn shared_memory() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let person_and_shared_memory = PersonAndSharedMemory {
+        person: person,
+        shared_memory: IpcSharedMemory::from_byte(0xba, 1024 * 1024),
+    };
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person_and_shared_memory.clone()).unwrap();
+    let received_person_and_shared_memory = rx.recv().unwrap();
+    assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
+    assert!(person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
+    assert!(received_person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
 }
 
