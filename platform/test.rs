@@ -302,3 +302,10 @@ fn shared_memory() {
     assert!(received_shared_memory[0].iter().all(|byte| *byte == 0xba));
 }
 
+#[test]
+fn shared_memory_clone() {
+    let shmem_data_0 = OsIpcSharedMemory::from_byte(0xba, 1024 * 1024);
+    let shmem_data_1 = shmem_data_0.clone();
+    assert_eq!(&shmem_data_0[..], &shmem_data_1[..]);
+}
+

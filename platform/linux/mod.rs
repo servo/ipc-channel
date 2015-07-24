@@ -10,7 +10,6 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_uint, c_ulong};
 use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
-use std::cell::Cell;
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
@@ -487,7 +486,7 @@ impl UnixOneShotServer {
 }
 
 pub struct UnixSharedMemory {
-    ptr: Cell<*mut u8>,
+    ptr: *mut u8,
     length: usize,
     fd: c_int,
 }
@@ -497,9 +496,9 @@ unsafe impl Sync for UnixSharedMemory {}
 
 impl Drop for UnixSharedMemory {
     fn drop(&mut self) {
-        if !self.ptr.get().is_null() {
+        if !self.ptr.is_null() {
             unsafe {
-                assert!(libc::munmap(self.ptr.get() as *mut c_void, self.length as size_t) == 0);
+                assert!(libc::munmap(self.ptr as *mut c_void, self.length as size_t) == 0);
                 assert!(libc::close(self.fd) == 0);
             }
         }
@@ -508,9 +507,11 @@ impl Drop for UnixSharedMemory {
 
 impl Clone for UnixSharedMemory {
     fn clone(&self) -> UnixSharedMemory {
-        // TODO(pcwalton): Do something smarter: create another mapping of the same file and
-        // duplicate the FD. This avoids a copy.
-        UnixSharedMemory::from_bytes(&**self)
+        unsafe {
+            let new_fd = libc::dup(self.fd);
+            let (address, _) = map_file(new_fd, Some(self.length as size_t));
+            UnixSharedMemory::from_raw_parts(address, self.length, new_fd)
+        }
     }
 }
 
@@ -531,11 +532,11 @@ impl Deref for UnixSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        if self.ptr.get().is_null() {
+        if self.ptr.is_null() {
             panic!("attempted to access a consumed `UnixSharedMemory`")
         }
         unsafe {
-            slice::from_raw_parts(self.ptr.get(), self.length)
+            slice::from_raw_parts(self.ptr, self.length)
         }
     }
 }
@@ -543,7 +544,7 @@ impl Deref for UnixSharedMemory {
 impl UnixSharedMemory {
     unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> UnixSharedMemory {
         UnixSharedMemory {
-            ptr: Cell::new(ptr),
+            ptr: ptr,
             length: length,
             fd: fd,
         }
@@ -569,14 +570,6 @@ impl UnixSharedMemory {
             let (address, _) = map_file(fd, Some(bytes.len() as size_t));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
             UnixSharedMemory::from_raw_parts(address, bytes.len(), fd)
-        }
-    }
-
-    pub fn consume(&self) -> UnixSharedMemory {
-        let ptr = self.ptr.get();
-        self.ptr.set(ptr::null_mut());
-        unsafe {
-            UnixSharedMemory::from_raw_parts(ptr, self.length, self.fd)
         }
     }
 }

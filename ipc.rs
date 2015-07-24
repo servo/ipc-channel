@@ -287,7 +287,7 @@ impl Serialize for IpcSharedMemory {
                     os_ipc_shared_memory_regions_for_serialization.borrow_mut();
                 let index = os_ipc_shared_memory_regions_for_serialization.len();
                 os_ipc_shared_memory_regions_for_serialization.push(self.os_shared_memory
-                                                                        .consume());
+                                                                        .clone());
                 index
             });
         index.serialize(serializer)

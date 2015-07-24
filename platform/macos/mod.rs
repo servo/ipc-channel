@@ -10,7 +10,7 @@
 use platform::macos::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t};
 use platform::macos::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
 use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_right_t, mach_port_t};
-use platform::macos::mach_sys::{mach_task_self_};
+use platform::macos::mach_sys::{mach_task_self_, vm_inherit_t};
 
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
@@ -59,6 +59,7 @@ const MACH_RCV_MSG: i32 = 2;
 const MACH_RCV_LARGE: i32 = 4;
 const MACH_RCV_TOO_LARGE: i32 = 0x10004004;
 const TASK_BOOTSTRAP_PORT: i32 = 4;
+const VM_INHERIT_SHARE: vm_inherit_t = 0;
 
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
@@ -599,7 +600,7 @@ impl MachOneShotServer {
 }
 
 pub struct MachSharedMemory {
-    ptr: Cell<*mut u8>,
+    ptr: *mut u8,
     length: usize,
 }
 
@@ -608,10 +609,10 @@ unsafe impl Sync for MachSharedMemory {}
 
 impl Drop for MachSharedMemory {
     fn drop(&mut self) {
-        if !self.ptr.get().is_null() {
+        if !self.ptr.is_null() {
             unsafe {
                 assert!(mach_sys::vm_deallocate(mach_task_self(),
-                                                self.ptr.get() as usize,
+                                                self.ptr as usize,
                                                 self.length) == KERN_SUCCESS);
             }
         }
@@ -620,8 +621,21 @@ impl Drop for MachSharedMemory {
 
 impl Clone for MachSharedMemory {
     fn clone(&self) -> MachSharedMemory {
-        // TODO(pcwalton): Use `vm_remap()` or something to avoid a copy.
-        MachSharedMemory::from_bytes(&**self)
+        let mut address = 0;
+        unsafe {
+            assert!(mach_sys::vm_remap(mach_task_self(),
+                                       &mut address,
+                                       self.length,
+                                       0,
+                                       1,
+                                       mach_task_self(),
+                                       self.ptr as usize,
+                                       0,
+                                       &mut 0,
+                                       &mut 0,
+                                       VM_INHERIT_SHARE) == KERN_SUCCESS);
+            MachSharedMemory::from_raw_parts(address as *mut u8, self.length)
+        }
     }
 }
 
@@ -642,11 +656,11 @@ impl Deref for MachSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        if self.ptr.get().is_null() {
+        if self.ptr.is_null() {
             panic!("attempted to access a consumed `MachSharedMemory`")
         }
         unsafe {
-            slice::from_raw_parts(self.ptr.get(), self.length)
+            slice::from_raw_parts(self.ptr, self.length)
         }
     }
 }
@@ -654,7 +668,7 @@ impl Deref for MachSharedMemory {
 impl MachSharedMemory {
     unsafe fn from_raw_parts(ptr: *mut u8, length: usize) -> MachSharedMemory {
         MachSharedMemory {
-            ptr: Cell::new(ptr),
+            ptr: ptr,
             length: length,
         }
     }
@@ -672,14 +686,6 @@ impl MachSharedMemory {
             let address = allocate_vm_pages(bytes.len());
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
             MachSharedMemory::from_raw_parts(address, bytes.len())
-        }
-    }
-
-    pub fn consume(&self) -> MachSharedMemory {
-        let ptr = self.ptr.get();
-        self.ptr.set(ptr::null_mut());
-        unsafe {
-            MachSharedMemory::from_raw_parts(ptr, self.length)
         }
     }
 }

@@ -6,11 +6,13 @@ version = "0.1.0"
 name = "ipc_channel"
 path = "lib.rs"
 
+[dependencies.serde]
+opt_level = 2
+
 [dependencies]
 byteorder = "*"
 lazy_static = "*"
 libc = "*"
 rand = "*"
-serde = "*"
 serde_macros = "*"
 
