@@ -8,6 +8,7 @@
 // except according to those terms.
 
 use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use ipc::{OpaqueIpcSender};
 use router::ROUTER;
 
 use libc;
@@ -25,6 +26,12 @@ struct Person {
 struct PersonAndSender {
     person: Person,
     sender: IpcSender<Person>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct PersonAndOpaqueSender {
+    person: Person,
+    sender: OpaqueIpcSender,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -320,5 +327,39 @@ fn shared_memory() {
     assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
     assert!(person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
     assert!(received_person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
+}
+
+#[test]
+fn opaque_sender() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (tx, rx) = ipc::channel().unwrap();
+    let opaque_tx = tx.to_opaque();
+    let tx: IpcSender<Person> = opaque_tx.to();
+    tx.send(person.clone()).unwrap();
+    let received_person = rx.recv().unwrap();
+    assert_eq!(person, received_person);
+}
+
+#[test]
+fn embedded_opaque_senders() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (sub_tx, sub_rx) = ipc::channel::<Person>().unwrap();
+    let person_and_sender = PersonAndOpaqueSender {
+        person: person.clone(),
+        sender: sub_tx.to_opaque(),
+    };
+    let (super_tx, super_rx) = ipc::channel().unwrap();
+    super_tx.send(person_and_sender).unwrap();
+    let received_person_and_sender = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_sender.person, person);
+    received_person_and_sender.sender.to::<Person>().send(person.clone()).unwrap();
+    let received_person = sub_rx.recv().unwrap();
+    assert_eq!(received_person, person);
 }
 

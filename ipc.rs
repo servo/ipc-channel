@@ -164,16 +164,17 @@ impl<T> IpcSender<T> where T: Serialize {
             })
         })
     }
+
+    pub fn to_opaque(self) -> OpaqueIpcSender {
+        OpaqueIpcSender {
+            os_sender: self.os_sender,
+        }
+    }
 }
 
 impl<T> Deserialize for IpcSender<T> where T: Serialize {
     fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
-        let index: usize = try!(Deserialize::deserialize(deserializer));
-        let os_sender =
-            OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-                // FIXME(pcwalton): This could panic. Return some sort of nice error.
-                os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender()
-            });
+        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
         Ok(IpcSender {
             os_sender: os_sender,
             phantom: PhantomData,
@@ -183,14 +184,7 @@ impl<T> Deserialize for IpcSender<T> where T: Serialize {
 
 impl<T> Serialize for IpcSender<T> where T: Serialize {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
-        let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
-            let mut os_ipc_channels_for_serialization =
-                os_ipc_channels_for_serialization.borrow_mut();
-            let index = os_ipc_channels_for_serialization.len();
-            os_ipc_channels_for_serialization.push(OsIpcChannel::Sender(self.os_sender.clone()));
-            index
-        });
-        index.serialize(serializer)
+        serialize_os_ipc_sender(&self.os_sender, serializer)
     }
 }
 
@@ -368,6 +362,35 @@ impl OpaqueIpcMessage {
     }
 }
 
+#[derive(Clone)]
+pub struct OpaqueIpcSender {
+    os_sender: OsIpcSender,
+}
+
+impl OpaqueIpcSender {
+    pub fn to<T>(self) -> IpcSender<T> where T: Deserialize + Serialize {
+        IpcSender {
+            os_sender: self.os_sender,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl Deserialize for OpaqueIpcSender {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
+        Ok(OpaqueIpcSender {
+            os_sender: os_sender,
+        })
+    }
+}
+
+impl Serialize for OpaqueIpcSender {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+        serialize_os_ipc_sender(&self.os_sender, serializer)
+    }
+}
+
 pub struct OpaqueIpcReceiver {
     os_receiver: OsIpcReceiver,
 }
@@ -408,5 +431,26 @@ impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
             phantom: PhantomData,
         }, value))
     }
+}
+
+fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender, serializer: &mut S)
+                              -> Result<(),S::Error> where S: Serializer {
+    let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
+        let mut os_ipc_channels_for_serialization =
+            os_ipc_channels_for_serialization.borrow_mut();
+        let index = os_ipc_channels_for_serialization.len();
+        os_ipc_channels_for_serialization.push(OsIpcChannel::Sender(os_ipc_sender.clone()));
+        index
+    });
+    index.serialize(serializer)
+}
+
+fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
+                                -> Result<OsIpcSender, D::Error> where D: Deserializer {
+    let index: usize = try!(Deserialize::deserialize(deserializer));
+    OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
+        // FIXME(pcwalton): This could panic. Return some sort of nice error.
+        Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
+    })
 }
 
