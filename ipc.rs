@@ -60,15 +60,16 @@ impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
     pub fn recv(&self) -> Result<T,()> {
         match self.os_receiver.recv() {
             Ok((data, os_ipc_channels, os_ipc_shared_memory_regions)) => {
-                OpaqueIpcMessage {
-                    data: data,
-                    os_ipc_channels: os_ipc_channels,
-                    os_ipc_shared_memory_regions:
-                        os_ipc_shared_memory_regions.into_iter()
-                                                    .map(|os_ipc_shared_memory_region| {
-                            Some(os_ipc_shared_memory_region)
-                        }).collect(),
-                }.to()
+                OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
+            }
+            Err(_) => Err(()),
+        }
+    }
+
+    pub fn try_recv(&self) -> Result<T,()> {
+        match self.os_receiver.try_recv() {
+            Ok((data, os_ipc_channels, os_ipc_shared_memory_regions)) => {
+                OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
             }
             Err(_) => Err(()),
         }
@@ -334,6 +335,21 @@ impl Debug for OpaqueIpcMessage {
 }
 
 impl OpaqueIpcMessage {
+    fn new(data: Vec<u8>,
+           os_ipc_channels: Vec<OsOpaqueIpcChannel>,
+           os_ipc_shared_memory_regions: Vec<OsIpcSharedMemory>)
+           -> OpaqueIpcMessage {
+        OpaqueIpcMessage {
+            data: data,
+            os_ipc_channels: os_ipc_channels,
+            os_ipc_shared_memory_regions:
+                os_ipc_shared_memory_regions.into_iter()
+                                            .map(|os_ipc_shared_memory_region| {
+                    Some(os_ipc_shared_memory_region)
+                }).collect(),
+        }
+    }
+
     pub fn to<T>(mut self) -> Result<T,()> where T: Deserialize + Serialize {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(

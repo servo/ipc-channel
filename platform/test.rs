@@ -309,3 +309,16 @@ fn shared_memory_clone() {
     assert_eq!(&shmem_data_0[..], &shmem_data_1[..]);
 }
 
+#[test]
+fn try_recv() {
+    let (tx, rx) = platform::channel().unwrap();
+    assert!(rx.try_recv().is_err());
+    let data: &[u8] = b"1234567";
+    tx.send(data, Vec::new(), Vec::new()).unwrap();
+    let (mut received_data, received_channels, received_shared_memory) = rx.try_recv().unwrap();
+    received_data.truncate(7);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory),
+               (data, Vec::new(), Vec::new()));
+    assert!(rx.try_recv().is_err());
+}
+

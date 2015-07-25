@@ -363,3 +363,17 @@ fn embedded_opaque_senders() {
     assert_eq!(received_person, person);
 }
 
+#[test]
+fn try_recv() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (tx, rx) = ipc::channel().unwrap();
+    assert!(rx.try_recv().is_err());
+    tx.send(person.clone()).unwrap();
+    let received_person = rx.try_recv().unwrap();
+    assert_eq!(person, received_person);
+    assert!(rx.try_recv().is_err());
+}
+
