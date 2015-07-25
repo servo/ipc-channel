@@ -57,6 +57,7 @@ const MACH_PORT_RIGHT_SEND: mach_port_right_t = 0;
 const MACH_SEND_MSG: i32 = 1;
 const MACH_RCV_MSG: i32 = 2;
 const MACH_RCV_LARGE: i32 = 4;
+const MACH_RCV_TIMEOUT: i32 = 0x100;
 const MACH_RCV_TOO_LARGE: i32 = 0x10004004;
 const TASK_BOOTSTRAP_PORT: i32 = 4;
 const VM_INHERIT_SHARE: vm_inherit_t = 0;
@@ -224,9 +225,10 @@ impl MachReceiver {
         Ok(())
     }
 
-    pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
-        select(self.port.get()).and_then(|result| {
+    fn recv_with_blocking_mode(&self, blocking_mode: BlockingMode)
+                               -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),
+                                         MachError> {
+        select(self.port.get(), blocking_mode).and_then(|result| {
             match result {
                 MachSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
                     Ok((data, channels, shared_memory_regions))
@@ -234,6 +236,16 @@ impl MachReceiver {
                 MachSelectionResult::ChannelClosed(_) => Err(MachError(MACH_NOTIFY_NO_SENDERS)),
             }
         })
+    }
+
+    pub fn recv(&self)
+                -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
+        self.recv_with_blocking_mode(BlockingMode::Blocking)
+    }
+
+    pub fn try_recv(&self)
+                    -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
+        self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 }
 
@@ -450,7 +462,7 @@ impl MachReceiverSet {
     }
 
     pub fn select(&mut self) -> Result<Vec<MachSelectionResult>,MachError> {
-        match select(self.port.get()).map(|result| vec![result]) {
+        match select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result]) {
             Ok(results) => Ok(results),
             Err(error) => {
                 Err(error)
@@ -477,19 +489,30 @@ impl MachSelectionResult {
     }
 }
 
-fn select(port: mach_port_t) -> Result<MachSelectionResult,MachError> {
+#[derive(Copy, Clone)]
+enum BlockingMode {
+    Blocking,
+    Nonblocking,
+}
+
+fn select(port: mach_port_t, blocking_mode: BlockingMode)
+          -> Result<MachSelectionResult,MachError> {
     debug_assert!(port != MACH_PORT_NULL);
     unsafe {
         let mut buffer = [0; SMALL_MESSAGE_SIZE];
         let allocated_buffer = None;
         setup_receive_buffer(&mut buffer, port);
         let mut message = &mut buffer[0] as *mut _ as *mut Message;
+        let (flags, timeout) = match blocking_mode {
+            BlockingMode::Blocking => (MACH_RCV_MSG | MACH_RCV_LARGE, MACH_MSG_TIMEOUT_NONE),
+            BlockingMode::Nonblocking => (MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT, 0),
+        };
         match mach_sys::mach_msg(message as *mut _,
-                                 MACH_RCV_MSG | MACH_RCV_LARGE,
+                                 flags,
                                  0,
                                  (*message).header.msgh_size,
                                  port,
-                                 MACH_MSG_TIMEOUT_NONE,
+                                 timeout,
                                  MACH_PORT_NULL) {
             MACH_RCV_TOO_LARGE => {
                 // Do a loop. There's no way I know of to figure out precisely in advance how big
@@ -504,11 +527,11 @@ fn select(port: mach_port_t) -> Result<MachSelectionResult,MachError> {
                                          port);
                     message = allocated_buffer.unwrap() as *mut Message;
                     match mach_sys::mach_msg(message as *mut _,
-                                             MACH_RCV_MSG | MACH_RCV_LARGE,
+                                             flags,
                                              0,
                                              actual_size,
                                              port,
-                                             MACH_MSG_TIMEOUT_NONE,
+                                             timeout,
                                              MACH_PORT_NULL) {
                         MACH_MSG_SUCCESS => break,
                         MACH_RCV_TOO_LARGE => {}

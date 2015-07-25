@@ -81,7 +81,12 @@ impl UnixReceiver {
 
     pub fn recv(&self)
                 -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
-        recv(self.fd)
+        recv(self.fd, BlockingMode::Blocking)
+    }
+
+    pub fn try_recv(&self)
+                    -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+        recv(self.fd, BlockingMode::Nonblocking)
     }
 }
 
@@ -331,7 +336,7 @@ impl UnixReceiverSet {
         let mut hangups = HashSet::new();
         for pollfd in self.pollfds.iter_mut() {
             if (pollfd.revents & POLLIN) != 0 {
-                match recv(pollfd.fd) {
+                match recv(pollfd.fd, BlockingMode::Blocking) {
                     Ok((data, channels, shared_memory_regions)) => {
                         selection_results.push(UnixSelectionResult::DataReceived(
                                 pollfd.fd as i64,
@@ -588,7 +593,14 @@ impl UnixError {
     }
 }
 
-fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+#[derive(Copy, Clone)]
+enum BlockingMode {
+    Blocking,
+    Nonblocking,
+}
+
+fn recv(fd: c_int, blocking_mode: BlockingMode)
+        -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
     unsafe {
         let mut maximum_recv_size: usize = 0;
         let mut maximum_recv_size_len = mem::size_of::<usize>() as socklen_t;
@@ -601,7 +613,7 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMem
         }
 
         let mut cmsg = UnixCmsg::new(maximum_recv_size);
-        let bytes_read = try!(cmsg.recv(fd)) as usize;
+        let bytes_read = try!(cmsg.recv(fd, blocking_mode)) as usize;
 
         let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
@@ -643,7 +655,7 @@ fn recv(fd: c_int) -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMem
         let mut leftover_fragments = Vec::new();
         while next_fragment_id != 0 {
             let mut cmsg = UnixCmsg::new(maximum_recv_size);
-            let bytes_read = try!(cmsg.recv(fd)) as usize;
+            let bytes_read = try!(cmsg.recv(fd, blocking_mode)) as usize;
 
             let this_fragment_id =
                 (&cmsg.data_buffer[0..mem::size_of::<u32>()]).read_u32::<LittleEndian>().unwrap();
@@ -743,15 +755,29 @@ impl UnixCmsg {
         }
     }
 
-    unsafe fn recv(&mut self, fd: c_int) -> Result<ssize_t, UnixError> {
+    unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
+                   -> Result<ssize_t, UnixError> {
+        if let BlockingMode::Nonblocking = blocking_mode {
+            if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
+                return Err(UnixError::last())
+            }
+        }
+
         let result = recvmsg(fd, &mut self.msghdr, 0);
-        if result > 0 {
+        let result = if result > 0 {
             Ok(result)
         } else if result == 0 {
             Err(UnixError(libc::ECONNRESET))
         } else {
             Err(UnixError::last())
+        };
+
+        if let BlockingMode::Nonblocking = blocking_mode {
+            if libc::fcntl(fd, libc::F_SETFL, 0) < 0 {
+                return Err(UnixError::last())
+            }
         }
+        result
     }
 
     unsafe fn send(&mut self, fd: c_int) -> Result<(), UnixError> {
