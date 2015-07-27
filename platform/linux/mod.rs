@@ -142,13 +142,11 @@ impl UnixSender {
             (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
             let mut fds = Vec::new();
-            for channel in channels.into_iter() {
+            for channel in channels.iter() {
                 fds.push(channel.fd());
-                mem::forget(channel);
             }
-            for shared_memory_region in shared_memory_regions.into_iter() {
+            for shared_memory_region in shared_memory_regions.iter() {
                 fds.push(shared_memory_region.fd);
-                mem::forget(shared_memory_region);
             }
             ptr::copy_nonoverlapping(fds.as_ptr(),
                                      cmsg_buffer.offset(1) as *mut _ as *mut c_int,
