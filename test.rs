@@ -10,9 +10,9 @@
 use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use ipc::{OpaqueIpcSender};
 use router::ROUTER;
-
 use libc;
 use std::iter;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
@@ -375,5 +375,35 @@ fn try_recv() {
     let received_person = rx.try_recv().unwrap();
     assert_eq!(person, received_person);
     assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn multiple_paths_to_a_sender() {
+    let person = Person {
+        name: "Patrick Walton".to_owned(),
+        age: 29,
+    };
+    let (sub_tx, sub_rx) = ipc::channel().unwrap();
+    let person_and_sender = Arc::new(PersonAndSender {
+        person: person.clone(),
+        sender: sub_tx,
+    });
+    let send_data = vec![
+        person_and_sender.clone(),
+        person_and_sender.clone(),
+        person_and_sender.clone()
+    ];
+    let (super_tx, super_rx) = ipc::channel().unwrap();
+    super_tx.send(send_data).unwrap();
+    let received_data = super_rx.recv().unwrap();
+    assert_eq!(received_data[0].person, person);
+    assert_eq!(received_data[1].person, person);
+    assert_eq!(received_data[2].person, person);
+    received_data[0].sender.send(person.clone()).unwrap();
+    let received_person = sub_rx.recv().unwrap();
+    assert_eq!(received_person, person);
+    received_data[1].sender.send(person.clone()).unwrap();
+    let received_person = sub_rx.recv().unwrap();
+    assert_eq!(received_person, person);
 }
 
