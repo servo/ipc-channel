@@ -622,6 +622,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
             if is_dev_null(fd) {
+                libc::close(fd);
                 continue
             }
             if is_socket(fd) {
