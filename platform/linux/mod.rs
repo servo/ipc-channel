@@ -269,9 +269,7 @@ impl UnixSender {
                 return Err(UnixError::last())
             }
 
-            Ok(UnixSender {
-                fd: fd,
-            })
+            Ok(UnixSender::from_fd(fd))
         }
     }
 }
