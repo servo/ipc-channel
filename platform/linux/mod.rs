@@ -69,7 +69,7 @@ impl UnixReceiver {
         }
     }
 
-    pub fn consume_fd(&self) -> c_int {
+    fn consume_fd(&self) -> c_int {
         unsafe {
             libc::dup(self.fd)
         }
