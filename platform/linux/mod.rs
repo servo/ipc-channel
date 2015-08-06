@@ -680,12 +680,32 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     }
 }
 
+#[cfg(target_os="android")]
+const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
+
+#[cfg(not(target_os="android"))]
+const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
+
+#[cfg(target_os="android")]
+fn maybe_unlink(_: *const c_char) -> c_int {
+    // Calling `unlink` on a file stored on an sdcard immediately deletes it.
+    // FIXME: use a better temporary directory than the sdcard via the Java APIs
+    // and threading that value into Servo.
+    // https://code.google.com/p/android/issues/detail?id=19017
+    0
+}
+
+#[cfg(not(target_os="android"))]
+fn maybe_unlink(c: *const c_char) -> c_int {
+    libc::unlink(c)
+}
+
 unsafe fn create_memory_backing_store(length: usize) -> c_int {
-    let string = CString::new("/tmp/ipc-channel-shared-memory.XXXXXX").unwrap();
+    let string = CString::new(TEMP_FILE_TEMPLATE).unwrap();
     let string_buffer = strdup(string.as_ptr());
     let fd = mkstemp(string_buffer);
     assert!(fd >= 0);
-    assert!(libc::unlink(string_buffer) == 0);
+    assert!(maybe_unlink(string_buffer) == 0);
     libc::free(string_buffer as *mut c_void);
     assert!(libc::ftruncate(fd, length as off_t) == 0);
     fd
