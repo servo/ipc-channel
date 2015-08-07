@@ -696,7 +696,7 @@ fn maybe_unlink(_: *const c_char) -> c_int {
 }
 
 #[cfg(not(target_os="android"))]
-fn maybe_unlink(c: *const c_char) -> c_int {
+unsafe fn maybe_unlink(c: *const c_char) -> c_int {
     libc::unlink(c)
 }
 
