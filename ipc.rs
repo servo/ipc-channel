@@ -10,7 +10,7 @@
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
-use serde::json;
+use bincode::{self, SizeLimit};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -150,7 +150,7 @@ impl<T> IpcSender<T> where T: Serialize {
                 let os_ipc_shared_memory_regions;
                 let os_ipc_channels;
                 {
-                    let mut serializer = json::Serializer::new(&mut bytes);
+                    let mut serializer = bincode::serde::Serializer::new(&mut bytes);
                     data.serialize(&mut serializer).unwrap();
                     os_ipc_channels =
                         mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(),
@@ -358,12 +358,9 @@ impl OpaqueIpcMessage {
                           &mut self.os_ipc_channels);
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_shared_memory_regions);
-                let mut deserializer = match json::Deserializer::new(self.data
-                                                                         .iter()
-                                                                         .map(|byte| Ok(*byte))) {
-                    Ok(deserializer) => deserializer,
-                    Err(_) => return Err(()),
-                };
+                let mut data = &*self.data;
+                let mut deserializer = bincode::serde::Deserializer::new(&mut data,
+                                                                         SizeLimit::Infinite);
                 let result = match Deserialize::deserialize(&mut deserializer) {
                     Ok(result) => result,
                     Err(_) => return Err(()),

@@ -9,6 +9,9 @@ path = "lib.rs"
 [dependencies.serde]
 opt_level = 2
 
+[dependencies.bincode]
+git = "https://github.com/TyOverby/bincode"
+
 [dependencies]
 byteorder = "*"
 lazy_static = "*"
