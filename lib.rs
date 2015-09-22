@@ -8,6 +8,7 @@
 // except according to those terms.
 
 #![feature(custom_derive, plugin, slice_bytes, slice_patterns)]
+#![feature(mpsc_select, arc_unique)]
 #![plugin(serde_macros)]
 
 #[macro_use]
@@ -18,6 +19,7 @@ extern crate byteorder;
 extern crate libc;
 extern crate rand;
 extern crate serde;
+extern crate uuid;
 
 pub mod ipc;
 pub mod platform;
