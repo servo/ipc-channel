@@ -21,30 +21,26 @@ use uuid::Uuid;
 
 struct SenderRecord {
     sender: MpscSender,
-    lock: Mutex<bool>,
-    condvar: Condvar,
+    conn_sender: mpsc::Sender<bool>,
+    conn_receiver: Mutex<mpsc::Receiver<bool>>,
 }
 
 impl SenderRecord {
     fn new(sender: MpscSender) -> SenderRecord {
+        let (tx, rx) = mpsc::channel::<bool>();
         SenderRecord {
             sender: sender,
-            lock: Mutex::new(false),
-            condvar: Condvar::new(),
+            conn_sender: tx,
+            conn_receiver: Mutex::new(rx),
         }
     }
 
-    fn wait_for_acquire(&self) {
-        let mut started = self.lock.lock().unwrap();
-        while !*started {
-            started = self.condvar.wait(started).unwrap();
-        }
+    fn accept(&self) {
+        self.conn_receiver.lock().unwrap().recv().unwrap();
     }
 
-    fn signal_acquisition(&self) {
-        let mut notified = self.lock.lock().unwrap();
-        *notified = true;
-        self.condvar.notify_one();
+    fn connect(&self) {
+        self.conn_sender.send(true).unwrap();
     }
 }
 
@@ -116,7 +112,7 @@ impl MpscSender {
 
     pub fn connect(name: String) -> Result<MpscSender,MpscError> {
         let record = ONE_SHOT_SENDERS.lock().unwrap().remove(&name).unwrap();
-        record.signal_acquisition();
+        record.connect();
         Ok(record.sender)
     }
 
@@ -242,7 +238,7 @@ impl MpscOneShotServer {
                                     Vec<OpaqueMpscChannel>,
                                     Vec<MpscSharedMemory>),MpscError>
     {
-        ONE_SHOT_SENDERS.lock().unwrap().get(&self.name).unwrap().wait_for_acquire();
+        ONE_SHOT_SENDERS.lock().unwrap().get(&self.name).unwrap().accept();
         let receiver = self.receiver.borrow_mut().take().unwrap();
         let (data, channels, shmems) = receiver.recv().unwrap();
         Ok((receiver, data, channels, shmems))
