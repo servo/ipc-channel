@@ -9,8 +9,8 @@
 
 use platform::macos::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t};
 use platform::macos::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
-use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_right_t, mach_port_t};
-use platform::macos::mach_sys::{mach_task_self_, vm_inherit_t};
+use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
+use platform::macos::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
@@ -50,7 +50,10 @@ const MACH_MSG_VIRTUAL_COPY: c_uint = 1;
 const MACH_MSGH_BITS_COMPLEX: u32 = 0x80000000;
 const MACH_NOTIFY_FIRST: i32 = 64;
 const MACH_NOTIFY_NO_SENDERS: i32 = MACH_NOTIFY_FIRST + 6;
+const MACH_PORT_LIMITS_INFO: i32 = 1;
 const MACH_PORT_NULL: mach_port_t = 0;
+const MACH_PORT_QLIMIT_LARGE: mach_port_msgcount_t = 1024;
+const MACH_PORT_QLIMIT_MAX: mach_port_msgcount_t = MACH_PORT_QLIMIT_LARGE;
 const MACH_PORT_RIGHT_PORT_SET: mach_port_right_t = 3;
 const MACH_PORT_RIGHT_RECEIVE: mach_port_right_t = 1;
 const MACH_PORT_RIGHT_SEND: mach_port_right_t = 0;
@@ -96,6 +99,19 @@ impl MachReceiver {
         let mut port: mach_port_t = 0;
         let os_result = unsafe {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
+        };
+        if os_result != KERN_SUCCESS {
+            return Err(MachError(os_result))
+        }
+        let limits = mach_port_limits_t {
+            mpl_qlimit: MACH_PORT_QLIMIT_MAX,
+        };
+        let os_result = unsafe {
+            mach_sys::mach_port_set_attributes(mach_task_self(),
+                                               port,
+                                               MACH_PORT_LIMITS_INFO,
+                                               mem::transmute(&limits),
+                                               1)
         };
         if os_result == KERN_SUCCESS {
             Ok(MachReceiver::from_name(port))
