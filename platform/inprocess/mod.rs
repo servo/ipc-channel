@@ -19,16 +19,16 @@ use std::mem;
 
 use uuid::Uuid;
 
-struct SenderRecord {
+struct ServerRecord {
     sender: MpscSender,
     conn_sender: mpsc::Sender<bool>,
     conn_receiver: Mutex<mpsc::Receiver<bool>>,
 }
 
-impl SenderRecord {
-    fn new(sender: MpscSender) -> SenderRecord {
+impl ServerRecord {
+    fn new(sender: MpscSender) -> ServerRecord {
         let (tx, rx) = mpsc::channel::<bool>();
-        SenderRecord {
+        ServerRecord {
             sender: sender,
             conn_sender: tx,
             conn_receiver: Mutex::new(rx),
@@ -45,7 +45,7 @@ impl SenderRecord {
 }
 
 lazy_static! {
-    static ref ONE_SHOT_SENDERS: Mutex<HashMap<String,SenderRecord>> = Mutex::new(HashMap::new());
+    static ref ONE_SHOT_SERVERS: Mutex<HashMap<String,ServerRecord>> = Mutex::new(HashMap::new());
 }
 
 struct MpscChannelMessage(Vec<u8>, Vec<MpscChannel>, Vec<MpscSharedMemory>);
@@ -111,7 +111,7 @@ impl MpscSender {
     }
 
     pub fn connect(name: String) -> Result<MpscSender,MpscError> {
-        let record = ONE_SHOT_SENDERS.lock().unwrap().remove(&name).unwrap();
+        let record = ONE_SHOT_SERVERS.lock().unwrap().remove(&name).unwrap();
         record.connect();
         Ok(record.sender)
     }
@@ -225,8 +225,8 @@ impl MpscOneShotServer {
         };
 
         let name = Uuid::new_v4().to_string();
-        let record = SenderRecord::new(sender);
-        ONE_SHOT_SENDERS.lock().unwrap().insert(name.clone(), record);
+        let record = ServerRecord::new(sender);
+        ONE_SHOT_SERVERS.lock().unwrap().insert(name.clone(), record);
         Ok((MpscOneShotServer {
             receiver: RefCell::new(Some(receiver)),
             name: name.clone(),
@@ -238,7 +238,7 @@ impl MpscOneShotServer {
                                     Vec<OpaqueMpscChannel>,
                                     Vec<MpscSharedMemory>),MpscError>
     {
-        ONE_SHOT_SENDERS.lock().unwrap().get(&self.name).unwrap().accept();
+        ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().accept();
         let receiver = self.receiver.borrow_mut().take().unwrap();
         let (data, channels, shmems) = receiver.recv().unwrap();
         Ok((receiver, data, channels, shmems))
