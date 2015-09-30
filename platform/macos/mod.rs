@@ -662,17 +662,20 @@ impl Clone for MachSharedMemory {
     fn clone(&self) -> MachSharedMemory {
         let mut address = 0;
         unsafe {
-            assert!(mach_sys::vm_remap(mach_task_self(),
-                                       &mut address,
-                                       self.length,
-                                       0,
-                                       1,
-                                       mach_task_self(),
-                                       self.ptr as usize,
-                                       0,
-                                       &mut 0,
-                                       &mut 0,
-                                       VM_INHERIT_SHARE) == KERN_SUCCESS);
+            if !self.ptr.is_null() {
+                let err = mach_sys::vm_remap(mach_task_self(),
+                                             &mut address,
+                                             self.length,
+                                             0,
+                                             1,
+                                             mach_task_self(),
+                                             self.ptr as usize,
+                                             0,
+                                             &mut 0,
+                                             &mut 0,
+                                             VM_INHERIT_SHARE);
+                assert!(err == KERN_SUCCESS);
+            }
             MachSharedMemory::from_raw_parts(address as *mut u8, self.length)
         }
     }
@@ -695,7 +698,7 @@ impl Deref for MachSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        if self.ptr.is_null() {
+        if self.ptr.is_null() && self.length > 0 {
             panic!("attempted to access a consumed `MachSharedMemory`")
         }
         unsafe {
