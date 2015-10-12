@@ -113,7 +113,7 @@ impl Router {
                         }
                     }
                     IpcSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get(&id).unwrap()(message)
+                        self.handlers.get_mut(&id).unwrap()(message)
                     }
                     IpcSelectionResult::ChannelClosed(id) => {
                         self.handlers.remove(&id).unwrap();
@@ -128,5 +128,5 @@ enum RouterMsg {
     AddRoute(OpaqueIpcReceiver, RouterHandler),
 }
 
-pub type RouterHandler = Box<Fn(OpaqueIpcMessage) + Send>;
+pub type RouterHandler = Box<FnMut(OpaqueIpcMessage) + Send>;
 
