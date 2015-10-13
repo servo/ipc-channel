@@ -18,4 +18,5 @@ lazy_static = "*"
 libc = "*"
 rand = "*"
 serde_macros = "*"
+uuid = "*"
 

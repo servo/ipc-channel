@@ -45,10 +45,32 @@ pub use platform::macos::OpaqueMachChannel as OsOpaqueIpcChannel;
 #[cfg(target_os="macos")]
 pub use platform::macos::MachOneShotServer as OsIpcOneShotServer;
 
+// Windows uses in-process mpsc channels IPC for now
+#[cfg(target_os="windows")]
+pub use platform::inprocess::channel;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscReceiver as OsIpcReceiver;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscSender as OsIpcSender;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscReceiverSet as OsIpcReceiverSet;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscSharedMemory as OsIpcSharedMemory;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscChannel as OsIpcChannel;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscSelectionResult as OsIpcSelectionResult;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::OpaqueMpscChannel as OsOpaqueIpcChannel;
+#[cfg(target_os="windows")]
+pub use platform::inprocess::MpscOneShotServer as OsIpcOneShotServer;
+
 #[cfg(any(target_os="linux", target_os="android"))]
 mod linux;
 #[cfg(target_os="macos")]
 mod macos;
+#[cfg(target_os="windows")]
+mod inprocess;
 
 #[cfg(test)]
 mod test;

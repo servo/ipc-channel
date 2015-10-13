@@ -229,6 +229,7 @@ fn server() {
                (data, vec![], vec![]));
 }
 
+#[cfg(not(windows))]
 #[test]
 fn cross_process() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
@@ -249,6 +250,7 @@ fn cross_process() {
                (data, vec![], vec![]));
 }
 
+#[cfg(not(windows))]
 #[test]
 fn cross_process_sender_transfer() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
