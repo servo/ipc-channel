@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_uint, c_ulong};
+use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_ulong};
 use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
 use std::cmp;
 use std::collections::HashSet;
@@ -265,7 +265,7 @@ impl UnixSender {
 
             let len = mem::size_of::<c_short>() +
                 (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
-            if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) < 0 {
+            if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) < 0 {
                 return Err(UnixError::last())
             }
 
@@ -444,7 +444,7 @@ impl UnixOneShotServer {
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
-                if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as c_uint) == 0 {
+                if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) == 0 {
                     break
                 }
 
