@@ -589,6 +589,12 @@ impl UnixError {
     }
 }
 
+impl From<UnixError> for Error {
+    fn from(unix_error: UnixError) -> Error {
+        Error::from_raw_os_error(unix_error.0)
+    }
+}
+
 #[derive(Copy, Clone)]
 enum BlockingMode {
     Blocking,

@@ -15,6 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::fmt::{self, Debug, Formatter};
+use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -35,11 +36,9 @@ thread_local! {
         RefCell::new(Vec::new())
 }
 
-pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),()> where T: Deserialize + Serialize {
-    let (os_sender, os_receiver) = match platform::channel() {
-        Ok((os_sender, os_receiver)) => (os_sender, os_receiver),
-        Err(_) => return Err(()),
-    };
+pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
+                  where T: Deserialize + Serialize {
+    let (os_sender, os_receiver) = try!(platform::channel());
     let ipc_receiver = IpcReceiver {
         os_receiver: os_receiver,
         phantom: PhantomData,
@@ -57,22 +56,15 @@ pub struct IpcReceiver<T> where T: Deserialize + Serialize {
 }
 
 impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
-    pub fn recv(&self) -> Result<T,()> {
-        match self.os_receiver.recv() {
-            Ok((data, os_ipc_channels, os_ipc_shared_memory_regions)) => {
-                OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
-            }
-            Err(_) => Err(()),
-        }
+    pub fn recv(&self) -> Result<T,Error> {
+        let (data, os_ipc_channels, os_ipc_shared_memory_regions) = try!(self.os_receiver.recv());
+        OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
-    pub fn try_recv(&self) -> Result<T,()> {
-        match self.os_receiver.try_recv() {
-            Ok((data, os_ipc_channels, os_ipc_shared_memory_regions)) => {
-                OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
-            }
-            Err(_) => Err(()),
-        }
+    pub fn try_recv(&self) -> Result<T,Error> {
+        let (data, os_ipc_channels, os_ipc_shared_memory_regions) =
+            try!(self.os_receiver.try_recv());
+        OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
     pub fn to_opaque(self) -> OpaqueIpcReceiver {
@@ -126,18 +118,14 @@ impl<T> Clone for IpcSender<T> where T: Serialize {
 }
 
 impl<T> IpcSender<T> where T: Serialize {
-    pub fn connect(name: String) -> Result<IpcSender<T>,()> {
-        let os_sender = match OsIpcSender::connect(name) {
-            Ok(os_sender) => os_sender,
-            Err(_) => return Err(()),
-        };
+    pub fn connect(name: String) -> Result<IpcSender<T>,Error> {
         Ok(IpcSender {
-            os_sender: os_sender,
+            os_sender: try!(OsIpcSender::connect(name)),
             phantom: PhantomData,
         })
     }
 
-    pub fn send(&self, data: T) -> Result<(),()> {
+    pub fn send(&self, data: T) -> Result<(),Error> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
@@ -163,7 +151,7 @@ impl<T> IpcSender<T> where T: Serialize {
                                     os_ipc_channels,
                                     os_ipc_shared_memory_regions).map_err(|_| ())
             })
-        })
+        }).map_err(|()| recursive_io_error())
     }
 
     pub fn to_opaque(self) -> OpaqueIpcSender {
@@ -194,53 +182,44 @@ pub struct IpcReceiverSet {
 }
 
 impl IpcReceiverSet {
-    pub fn new() -> Result<IpcReceiverSet,()> {
-        match OsIpcReceiverSet::new() {
-            Ok(os_receiver_set) => {
-                Ok(IpcReceiverSet {
-                    os_receiver_set: os_receiver_set,
-                })
-            }
-            Err(_) => Err(()),
-        }
+    pub fn new() -> Result<IpcReceiverSet,Error> {
+        Ok(IpcReceiverSet {
+            os_receiver_set: try!(OsIpcReceiverSet::new()),
+        })
     }
 
-    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,()>
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,Error>
                   where T: Deserialize + Serialize {
-        self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
+        Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
-    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,()> {
-        self.os_receiver_set.add(receiver.os_receiver).map_err(|_| ())
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,Error> {
+        Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
-    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,()> {
-        match self.os_receiver_set.select() {
-            Ok(results) => {
-                Ok(results.into_iter().map(|result| {
-                    match result {
-                        OsIpcSelectionResult::DataReceived(os_receiver_id,
-                                                           data,
-                                                           os_ipc_channels,
-                                                           os_ipc_shared_memory_regions) => {
-                            IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
-                                data: data,
-                                os_ipc_channels: os_ipc_channels,
-                                os_ipc_shared_memory_regions:
-                                    os_ipc_shared_memory_regions.into_iter().map(
-                                        |os_ipc_shared_memory_region| {
-                                            Some(os_ipc_shared_memory_region)
-                                        }).collect(),
-                            })
-                        }
-                        OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
-                            IpcSelectionResult::ChannelClosed(os_receiver_id)
-                        }
-                    }
-                }).collect())
+    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,Error> {
+        let results = try!(self.os_receiver_set.select());
+        Ok(results.into_iter().map(|result| {
+            match result {
+                OsIpcSelectionResult::DataReceived(os_receiver_id,
+                                                   data,
+                                                   os_ipc_channels,
+                                                   os_ipc_shared_memory_regions) => {
+                    IpcSelectionResult::MessageReceived(os_receiver_id, OpaqueIpcMessage {
+                        data: data,
+                        os_ipc_channels: os_ipc_channels,
+                        os_ipc_shared_memory_regions:
+                            os_ipc_shared_memory_regions.into_iter().map(
+                                |os_ipc_shared_memory_region| {
+                                    Some(os_ipc_shared_memory_region)
+                                }).collect(),
+                    })
+                }
+                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                    IpcSelectionResult::ChannelClosed(os_receiver_id)
+                }
             }
-            Err(_) => Err(()),
-        }
+        }).collect())
     }
 }
 
@@ -350,7 +329,7 @@ impl OpaqueIpcMessage {
         }
     }
 
-    pub fn to<T>(mut self) -> Result<T,()> where T: Deserialize + Serialize {
+    pub fn to<T>(mut self) -> Result<T,Error> where T: Deserialize + Serialize {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
                     |os_ipc_shared_memory_regions_for_deserialization| {
@@ -371,7 +350,7 @@ impl OpaqueIpcMessage {
                           &mut self.os_ipc_channels);
                 Ok(result)
             })
-        })
+        }).map_err(|()| recursive_io_error())
     }
 }
 
@@ -414,23 +393,17 @@ pub struct IpcOneShotServer<T> {
 }
 
 impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
-    pub fn new() -> Result<(IpcOneShotServer<T>, String),()> {
-        let (os_server, name) = match OsIpcOneShotServer::new() {
-            Ok(result) => result,
-            Err(_) => return Err(()),
-        };
+    pub fn new() -> Result<(IpcOneShotServer<T>, String),Error> {
+        let (os_server, name) = try!(OsIpcOneShotServer::new());
         Ok((IpcOneShotServer {
             os_server: os_server,
             phantom: PhantomData,
         }, name))
     }
 
-    pub fn accept(self) -> Result<(IpcReceiver<T>,T),()> {
+    pub fn accept(self) -> Result<(IpcReceiver<T>,T),Error> {
         let (os_receiver, data, os_channels, os_shared_memory_regions) =
-            match self.os_server.accept() {
-                Ok(result) => result,
-                Err(_) => return Err(()),
-            };
+            try!(self.os_server.accept());
         let value = try!(OpaqueIpcMessage {
             data: data,
             os_ipc_channels: os_channels,
@@ -465,5 +438,9 @@ fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
         // FIXME(pcwalton): This could panic. Return some sort of nice error.
         Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
     })
+}
+
+fn recursive_io_error() -> Error {
+    Error::new(ErrorKind::Other, "recursive IPC channel use during serialization")
 }
 
