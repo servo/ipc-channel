@@ -11,6 +11,7 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex, Condvar};
 use std::collections::hash_map::HashMap;
 use std::cell::{RefCell};
+use std::io::{Error, ErrorKind};
 use std::slice;
 use std::fmt::{self, Debug, Formatter};
 use std::cmp::{PartialEq};
@@ -345,5 +346,16 @@ impl MpscSharedMemory {
 pub enum MpscError {
     ChannelClosedError,
     UnknownError,
+}
+
+impl From<MpscError> for Error {
+    fn from(mpsc_error: MpscError) -> Error {
+        match mpsc_error {
+            MpscError::ChannelClosedError => {
+                Error::new(ErrorKind::BrokenPipe, "MPSC channel closed")
+            }
+            MpscError::UnknownError => Error::new(ErrorKind::Other, "Other MPSC channel error"),
+        }
+    }
 }
 
