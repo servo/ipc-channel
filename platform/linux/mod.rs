@@ -23,6 +23,7 @@ use std::ptr;
 use std::slice::bytes::MutableByteVector;
 use std::slice;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
+use std::thread;
 
 #[cfg(all(any(target_arch="arm", target_arch="x86"), target_os="android"))]
 const DEV_NULL_RDEV: libc::c_ulonglong = 0x0103;
@@ -98,7 +99,8 @@ pub struct UnixSender {
 impl Drop for UnixSender {
     fn drop(&mut self) {
         unsafe {
-            assert!(libc::close(self.fd) == 0)
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -297,7 +299,8 @@ impl Drop for UnixReceiverSet {
     fn drop(&mut self) {
         unsafe {
             for pollfd in self.pollfds.iter() {
-                assert!(libc::close(pollfd.fd) >= 0);
+                let result = libc::close(pollfd.fd);
+                assert!(thread::panicking() || result == 0);
             }
         }
     }
@@ -417,7 +420,8 @@ pub struct UnixOneShotServer {
 impl Drop for UnixOneShotServer {
     fn drop(&mut self) {
         unsafe {
-            assert!(libc::close(self.fd) == 0)
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -499,8 +503,10 @@ impl Drop for UnixSharedMemory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe {
-                assert!(libc::munmap(self.ptr as *mut c_void, self.length as size_t) == 0);
-                assert!(libc::close(self.fd) == 0);
+                let result = libc::munmap(self.ptr as *mut c_void, self.length as size_t);
+                assert!(thread::panicking() || result == 0);
+                let result = libc::close(self.fd);
+                assert!(thread::panicking() || result == 0);
             }
         }
     }
