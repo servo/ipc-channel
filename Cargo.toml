@@ -13,10 +13,9 @@ opt_level = 2
 git = "https://github.com/TyOverby/bincode"
 
 [dependencies]
-byteorder = "*"
-lazy_static = "*"
-libc = "*"
-rand = "*"
-serde_macros = "*"
-uuid = "*"
-
+byteorder = "0.4"
+lazy_static = "0.1"
+libc = "0.2"
+rand = "0.3"
+serde_macros = "0.6"
+uuid = "0.1"
