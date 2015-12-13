@@ -50,6 +50,7 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
     Ok((ipc_sender, ipc_receiver))
 }
 
+#[derive(Debug)]
 pub struct IpcReceiver<T> where T: Deserialize + Serialize {
     os_receiver: OsIpcReceiver,
     phantom: PhantomData<T>,
@@ -103,6 +104,7 @@ impl<T> Serialize for IpcReceiver<T> where T: Deserialize + Serialize {
     }
 }
 
+#[derive(Debug)]
 pub struct IpcSender<T> where T: Serialize {
     os_sender: OsIpcSender,
     phantom: PhantomData<T>,
@@ -354,7 +356,7 @@ impl OpaqueIpcMessage {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OpaqueIpcSender {
     os_sender: OsIpcSender,
 }
@@ -383,6 +385,7 @@ impl Serialize for OpaqueIpcSender {
     }
 }
 
+#[derive(Debug)]
 pub struct OpaqueIpcReceiver {
     os_receiver: OsIpcReceiver,
 }
