@@ -60,6 +60,14 @@ pub struct MpscReceiver {
     receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
 }
 
+// Can't derive, as mpsc::Receiver doesn't implement Debug.
+impl fmt::Debug for MpscReceiver {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Not sure there is anything useful we could print here.
+        write!(f, "MpscReceiver {{ .. }}")
+    }
+}
+
 impl MpscReceiver {
     fn new(receiver: mpsc::Receiver<MpscChannelMessage>) -> MpscReceiver {
         MpscReceiver {
@@ -99,6 +107,14 @@ unsafe impl Sync for MpscReceiver { }
 #[derive(Clone)]
 pub struct MpscSender {
     sender: RefCell<mpsc::Sender<MpscChannelMessage>>,
+}
+
+// Can't derive, as mpsc::Sender doesn't implement Debug.
+impl fmt::Debug for MpscSender {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Not sure there is anything useful we could print here.
+        write!(f, "MpscSender {{ .. }}")
+    }
 }
 
 unsafe impl Send for MpscSender { }
