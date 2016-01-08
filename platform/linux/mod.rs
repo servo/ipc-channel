@@ -474,9 +474,9 @@ impl UnixOneShotServer {
                                    Vec<OpaqueUnixChannel>,
                                    Vec<UnixSharedMemory>),UnixError> {
         unsafe {
-            let mut sockaddr = mem::uninitialized();
-            let mut sockaddr_len = mem::uninitialized();
-            let client_fd = libc::accept(self.fd, &mut sockaddr, &mut sockaddr_len);
+            let sockaddr: *mut sockaddr = ptr::null_mut();
+            let sockaddr_len: *mut socklen_t = ptr::null_mut();
+            let client_fd = libc::accept(self.fd, sockaddr, sockaddr_len);
             if client_fd < 0 {
                 return Err(UnixError::last())
             }
