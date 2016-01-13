@@ -201,7 +201,7 @@ impl UnixSender {
                           &mut maximum_send_size_len as *mut socklen_t) < 0 {
                 return Err(UnixError::last())
             }
-            let bytes_per_fragment = maximum_send_size - (mem::size_of::<usize>() +
+            let bytes_per_fragment = maximum_send_size - (mem::size_of::<u32>() * 2 +
                 CMSG_SPACE(cmsg_length as size_t) as usize + 256);
 
             // Split up the packet into fragments.
