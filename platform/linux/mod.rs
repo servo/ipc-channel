@@ -480,6 +480,7 @@ impl UnixOneShotServer {
             if client_fd < 0 {
                 return Err(UnixError::last())
             }
+            try!(make_socket_lingering(client_fd));
 
             let receiver = UnixReceiver {
                 fd: client_fd,
@@ -488,6 +489,28 @@ impl UnixOneShotServer {
             Ok((receiver, data, channels, shared_memory_regions))
         }
     }
+}
+
+// Make sure that the kernel doesn't return errors to readers if there's still data left after we
+// close our end.
+//
+// See, for example, https://github.com/servo/ipc-channel/issues/29
+fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
+    let linger = linger {
+        l_onoff: 1,
+        l_linger: 30,
+    };
+    let err = unsafe {
+        setsockopt(sockfd,
+                   SOL_SOCKET,
+                   SO_LINGER,
+                   &linger as *const linger as *const c_void,
+                   mem::size_of::<linger>() as socklen_t)
+    };
+    if err < 0 {
+        return Err(UnixError::last())
+    }
+    Ok(())
 }
 
 pub struct UnixSharedMemory {
@@ -853,10 +876,12 @@ fn is_socket(fd: c_int) -> bool {
 // FFI stuff follows:
 
 const POLLIN: c_short = 0x01;
-const S_IFMT: mode_t = 0o00170000;
-const S_IFSOCK: mode_t = 0o0140000;
 const SCM_RIGHTS: c_int = 0x01;
 const SOCK_SEQPACKET: c_int = 0x05;
+const SOL_SOCKET: c_int = 1;
+const SO_LINGER: c_int = 13;
+const S_IFMT: mode_t = 0o00170000;
+const S_IFSOCK: mode_t = 0o0140000;
 
 #[allow(non_camel_case_types)]
 type nfds_t = c_ulong;
@@ -893,6 +918,12 @@ extern {
     fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
     fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
     fn sendmsg(socket: c_int, message: *const msghdr, flags: c_int) -> ssize_t;
+    fn setsockopt(socket: c_int,
+                  level: c_int,
+                  option_name: c_int,
+                  option_value: *const c_void,
+                  option_len: socklen_t)
+                  -> c_int;
     fn socketpair(domain: c_int, socket_type: c_int, protocol: c_int, sv: *mut c_int) -> c_int;
     fn strdup(string: *const c_char) -> *mut c_char;
 }
@@ -926,5 +957,11 @@ struct pollfd {
     fd: c_int,
     events: c_short,
     revents: c_short,
+}
+
+#[repr(C)]
+struct linger {
+    l_onoff: c_int,
+    l_linger: c_int,
 }
 
