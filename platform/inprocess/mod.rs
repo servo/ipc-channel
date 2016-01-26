@@ -60,6 +60,13 @@ pub struct MpscReceiver {
     receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
 }
 
+impl PartialEq for MpscReceiver {
+    fn eq(&self, other: &MpscReceiver) -> bool {
+        self.receiver.borrow().as_ref().map(|rx| rx as *const _) ==
+            other.receiver.borrow().as_ref().map(|rx| rx as *const _)
+    }
+}
+
 // Can't derive, as mpsc::Receiver doesn't implement Debug.
 impl fmt::Debug for MpscReceiver {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -107,6 +114,13 @@ unsafe impl Sync for MpscReceiver { }
 #[derive(Clone)]
 pub struct MpscSender {
     sender: RefCell<mpsc::Sender<MpscChannelMessage>>,
+}
+
+impl PartialEq for MpscSender {
+    fn eq(&self, other: &MpscSender) -> bool {
+        &*self.sender.borrow() as *const _ ==
+            &*other.sender.borrow() as *const _
+    }
 }
 
 // Can't derive, as mpsc::Sender doesn't implement Debug.
@@ -229,6 +243,19 @@ pub enum MpscSelectionResult {
     ChannelClosed(i64),
 }
 
+impl MpscSelectionResult {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueMpscChannel>, Vec<MpscSharedMemory>) {
+        match self {
+            MpscSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
+                (id, data, channels, shared_memory_regions)
+            }
+            MpscSelectionResult::ChannelClosed(id) => {
+                panic!("MpscSelectionResult::unwrap(): receiver ID {} was closed!", id)
+            }
+        }
+    }
+}
+
 pub struct MpscOneShotServer {
     receiver: RefCell<Option<MpscReceiver>>,
     name: String,
@@ -262,11 +289,13 @@ impl MpscOneShotServer {
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub enum MpscChannel {
     Sender(MpscSender),
     Receiver(MpscReceiver),
 }
 
+#[derive(PartialEq, Debug)]
 pub struct OpaqueMpscChannel {
     channel: RefCell<Option<MpscChannel>>,
 }
@@ -358,10 +387,17 @@ impl MpscSharedMemory {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum MpscError {
     ChannelClosedError,
     UnknownError,
+}
+
+impl MpscError {
+    #[allow(dead_code)]
+    pub fn channel_is_closed(&self) -> bool {
+        *self == MpscError::ChannelClosedError
+    }
 }
 
 impl From<MpscError> for Error {

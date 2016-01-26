@@ -145,6 +145,8 @@ fn select() {
 }
 
 #[test]
+///XXXjdm Windows' libc doesn't include fork.
+#[cfg(not(windows))]
 fn cross_process_embedded_senders() {
     let person = Person {
         name: "Patrick Walton".to_owned(),
