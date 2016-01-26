@@ -7,8 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use bincode::serde::DeserializeError;
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex, Condvar};
+use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;
 use std::cell::{RefCell};
 use std::io::{Error, ErrorKind};
@@ -397,6 +398,12 @@ impl MpscError {
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
         *self == MpscError::ChannelClosedError
+    }
+}
+
+impl From<MpscError> for DeserializeError {
+    fn from(mpsc_error: MpscError) -> DeserializeError {
+        DeserializeError::IoError(mpsc_error.into())
     }
 }
 

@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use bincode::serde::DeserializeError;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_ulong};
 use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
@@ -615,6 +616,12 @@ impl UnixError {
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
         self.0 == libc::ECONNRESET
+    }
+}
+
+impl From<UnixError> for DeserializeError {
+    fn from(unix_error: UnixError) -> DeserializeError {
+        DeserializeError::IoError(unix_error.into())
     }
 }
 
