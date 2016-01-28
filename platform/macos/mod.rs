@@ -12,6 +12,7 @@ use platform::macos::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descrip
 use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use platform::macos::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 
+use bincode::serde::DeserializeError;
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
@@ -817,6 +818,12 @@ impl MachError {
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
         self.0 == MACH_NOTIFY_NO_SENDERS
+    }
+}
+
+impl From<MachError> for DeserializeError {
+    fn from(mach_error: MachError) -> DeserializeError {
+        DeserializeError::IoError(mach_error.into())
     }
 }
 

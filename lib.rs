@@ -8,7 +8,7 @@
 // except according to those terms.
 
 #![feature(custom_derive, plugin, slice_bytes, slice_patterns)]
-#![feature(mpsc_select, arc_unique)]
+#![feature(mpsc_select, borrow_state)]
 #![plugin(serde_macros)]
 
 #[macro_use]
