@@ -713,9 +713,15 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
                     cmsg.data_buffer[(mem::size_of::<u32>() * 2)..bytes_read].iter().cloned())
         }
 
-        // Push back any leftovers.
-        for mut leftover_fragment in leftover_fragments.into_iter() {
-            try!(leftover_fragment.send(fd));
+        // Push back any leftovers. Do this in a separate thread to avoid deadlocks (e.g. #34).
+        if !leftover_fragments.is_empty() {
+            let fd_for_helper_thread = libc::dup(fd);
+            thread::spawn(move || {
+                for mut leftover_fragment in leftover_fragments.into_iter() {
+                    drop(leftover_fragment.send(fd_for_helper_thread));
+                }
+                libc::close(fd_for_helper_thread);
+            });
         }
 
         Ok((main_data_buffer, channels, shared_memory_regions))
@@ -776,6 +782,8 @@ struct UnixCmsg {
     iovec: Box<iovec>,
     msghdr: msghdr,
 }
+
+unsafe impl Send for UnixCmsg {}
 
 impl Drop for UnixCmsg {
     fn drop(&mut self) {
