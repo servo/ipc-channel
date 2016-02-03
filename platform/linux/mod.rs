@@ -435,9 +435,11 @@ impl UnixOneShotServer {
             loop {
                 let path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX" as &[u8]).unwrap();
                 path = path_string.as_bytes().iter().cloned().collect();
-                if mktemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
+                if mkdtemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
                     return Err(UnixError::last())
                 }
+
+                path.extend_from_slice(b"/b" as &[u8]); // add arbitrary character after folder path
 
                 let mut sockaddr = sockaddr_un {
                     sun_family: libc::AF_UNIX as c_ushort,
@@ -446,6 +448,7 @@ impl UnixOneShotServer {
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                               path.as_ptr() as *const c_char,
                               sockaddr.sun_path.len() as size_t);
+
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
@@ -929,7 +932,7 @@ extern {
                   optlen: *mut socklen_t)
                   -> c_int;
     fn mkstemp(template: *mut c_char) -> c_int;
-    fn mktemp(template: *mut c_char) -> *mut c_char;
+    fn mkdtemp(template: *mut c_char) -> *mut c_char;
     fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
     fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
     fn sendmsg(socket: c_int, message: *const msghdr, flags: c_int) -> ssize_t;
