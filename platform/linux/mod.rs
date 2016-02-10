@@ -242,6 +242,7 @@ impl UnixSender {
                 };
 
                 if result <= 0 {
+                    libc::free(cmsg_buffer as *mut c_void);
                     return Err(UnixError::last())
                 }
 
