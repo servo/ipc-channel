@@ -23,6 +23,7 @@ use std::mem;
 use std::ops::Deref;
 use std::ptr;
 use std::slice;
+use std::usize;
 
 mod mach_sys;
 
@@ -363,6 +364,10 @@ impl MachSender {
                 Err(MachError(os_result))
             }
         }
+    }
+
+    pub fn get_max_fragment_size(&self) -> Result<usize,()> {
+        Ok(usize::MAX)
     }
 
     pub fn send(&self,

@@ -18,6 +18,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::cmp::{PartialEq};
 use std::ops::Deref;
 use std::mem;
+use std::usize;
 
 use uuid::Uuid;
 
@@ -146,6 +147,10 @@ impl MpscSender {
         let record = ONE_SHOT_SERVERS.lock().unwrap().remove(&name).unwrap();
         record.connect();
         Ok(record.sender)
+    }
+
+    pub fn get_max_fragment_size(&self) -> Result<usize,()> {
+        Ok(usize::MAX)
     }
 
     pub fn send(&self,

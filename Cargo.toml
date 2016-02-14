@@ -15,3 +15,6 @@ rand = "0.3"
 serde = ">=0.6, <0.8"
 serde_macros = ">=0.6, <0.8"
 uuid = { version = "0.2", features = ["v4"] }
+
+[dev-dependencies]
+crossbeam = "0.2"
