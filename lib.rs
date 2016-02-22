@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(custom_derive, plugin, slice_bytes, slice_patterns)]
+#![feature(custom_derive, plugin, slice_patterns)]
 #![feature(mpsc_select, borrow_state)]
 #![plugin(serde_macros)]
 

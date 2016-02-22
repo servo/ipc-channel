@@ -21,7 +21,6 @@ use std::mem;
 use std::ops::Deref;
 use std::os::unix::io::AsRawFd;
 use std::ptr;
-use std::slice::bytes::MutableByteVector;
 use std::slice;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use std::thread;
@@ -591,7 +590,9 @@ impl UnixSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(length);
             let (address, _) = map_file(fd, Some(length as size_t));
-            slice::from_raw_parts_mut(address, length).set_memory(byte);
+            for element in slice::from_raw_parts_mut(address, length) {
+                *element = byte;
+            }
             UnixSharedMemory::from_raw_parts(address, length, fd)
         }
     }
