@@ -23,7 +23,6 @@ use std::mem;
 use std::ops::Deref;
 use std::ptr;
 use std::slice;
-use std::slice::bytes::MutableByteVector;
 
 mod mach_sys;
 
@@ -756,7 +755,9 @@ impl MachSharedMemory {
     pub fn from_byte(byte: u8, length: usize) -> MachSharedMemory {
         unsafe {
             let address = allocate_vm_pages(length);
-            slice::from_raw_parts_mut(address, length).set_memory(byte);
+            for element in slice::from_raw_parts_mut(address, length) {
+                *element = byte;
+            }
             MachSharedMemory::from_raw_parts(address, length)
         }
     }
