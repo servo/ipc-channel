@@ -10,7 +10,6 @@
 use libc;
 use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
 use platform::{OsIpcSharedMemory};
-use std::iter;
 use std::thread;
 
 #[test]
@@ -89,7 +88,7 @@ fn multisender_transfer() {
 
 #[test]
 fn medium_data() {
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
@@ -102,7 +101,7 @@ fn medium_data() {
 
 #[test]
 fn medium_data_with_sender_transfer() {
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
@@ -122,13 +121,13 @@ fn medium_data_with_sender_transfer() {
 fn big_data() {
     let (tx, rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
     let (mut received_data, received_channels, received_shared_memory_regions) =
         rx.recv().unwrap();
-    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
@@ -142,13 +141,13 @@ fn big_data_with_sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
     });
     let (mut received_data, mut received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
-    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
@@ -156,7 +155,7 @@ fn big_data_with_sender_transfer() {
     assert_eq!(received_channels.len(), 1);
     assert_eq!(received_shared_memory_regions.len(), 0);
 
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let sub_tx = received_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
@@ -178,7 +177,7 @@ fn concurrent_senders() {
     let threads: Vec<_> = (0..num_senders).map(|i| {
         let tx = tx.clone();
         thread::spawn(move || {
-            let data: Vec<u8> = iter::repeat(i).take(1024 * 1024).collect();
+            let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | i << 4).collect();
             let data: &[u8] = &data[..];
             tx.send(data, vec![], vec![]).unwrap();
         })
@@ -188,9 +187,9 @@ fn concurrent_senders() {
     for _ in 0..num_senders {
         let (mut received_data, received_channels, received_shared_memory_regions) =
             rx.recv().unwrap();
-        let val = received_data[0];
+        let val = received_data[0] >> 4;
         received_vals.push(val);
-        let data: Vec<u8> = iter::repeat(val).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | val << 4).collect();
         let data: &[u8] = &data[..];
         received_data.truncate(1024 * 1024);
         assert_eq!(received_data.len(), data.len());
