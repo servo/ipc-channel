@@ -32,6 +32,9 @@ const DEV_NULL_RDEV: libc::dev_t = 0x0103;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
+// Yes, really!
+const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
+
 static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
 
 lazy_static! {
@@ -584,9 +587,6 @@ impl Deref for UnixSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        if self.ptr.is_null() {
-            panic!("attempted to access a consumed `UnixSharedMemory`")
-        }
         unsafe {
             slice::from_raw_parts(self.ptr, self.length)
         }
@@ -775,6 +775,10 @@ unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
         assert!(libc::fstat(fd, &mut st) == 0);
         st.st_size as size_t
     });
+    if length == 0 {
+        // This will cause `mmap` to fail, so handle it explicitly.
+        return (ptr::null_mut(), length)
+    }
     let address = libc::mmap(ptr::null_mut(),
                              length,
                              PROT_READ | PROT_WRITE,
@@ -782,6 +786,7 @@ unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
                              fd,
                              0) as *mut u8;
     assert!(address != ptr::null_mut());
+    assert!(address != MAP_FAILED);
     (address, length)
 }
 
