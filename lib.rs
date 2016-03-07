@@ -9,6 +9,7 @@
 
 #![feature(custom_derive, plugin, slice_patterns)]
 #![feature(mpsc_select, borrow_state)]
+#![cfg_attr(test, feature(time2))]
 #![plugin(serde_macros)]
 
 #[macro_use]
