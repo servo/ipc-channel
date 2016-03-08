@@ -549,13 +549,13 @@ unsafe impl Sync for UnixSharedMemory {}
 
 impl Drop for UnixSharedMemory {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe {
+        unsafe {
+            if !self.ptr.is_null() {
                 let result = libc::munmap(self.ptr as *mut c_void, self.length as size_t);
                 assert!(thread::panicking() || result == 0);
-                let result = libc::close(self.fd);
-                assert!(thread::panicking() || result == 0);
             }
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
