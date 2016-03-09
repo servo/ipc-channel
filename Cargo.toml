@@ -1,22 +1,17 @@
 [package]
 name = "ipc-channel"
-version = "0.2.0"
+version = "0.2.1"
 
 [lib]
 name = "ipc_channel"
 path = "lib.rs"
 
-[dependencies.serde]
-version = "0.6"
-opt_level = 2
-
-[dependencies.bincode]
-git = "https://github.com/TyOverby/bincode"
-
 [dependencies]
+bincode = ">=0.4.1, <0.6"
 byteorder = "0.4"
 lazy_static = "0.1"
 libc = "0.2"
 rand = "0.3"
-serde_macros = "0.6"
+serde = ">=0.6, <0.8"
+serde_macros = ">=0.6, <0.8"
 uuid = "0.1"
