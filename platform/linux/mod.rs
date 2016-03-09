@@ -720,7 +720,10 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let dedicated_rx = channels.pop().unwrap().to_receiver();
         while next_fragment_id != 0 {
             let mut cmsg = UnixCmsg::new(maximum_recv_size);
-            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, blocking_mode)) as usize;
+            // Always use blocking mode for followup fragments,
+            // to make sure that once we start receiving a multi-fragment message,
+            // we don't abort in the middle of it...
+            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, BlockingMode::Blocking)) as usize;
 
             let this_fragment_id =
                 (&cmsg.data_buffer[0..mem::size_of::<u32>()]).read_u32::<LittleEndian>().unwrap();

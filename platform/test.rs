@@ -10,7 +10,8 @@
 use libc;
 use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
 use platform::{OsIpcSharedMemory};
-use std::iter;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use std::thread;
 
 #[test]
@@ -89,7 +90,7 @@ fn multisender_transfer() {
 
 #[test]
 fn medium_data() {
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
@@ -102,7 +103,7 @@ fn medium_data() {
 
 #[test]
 fn medium_data_with_sender_transfer() {
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
@@ -122,13 +123,13 @@ fn medium_data_with_sender_transfer() {
 fn big_data() {
     let (tx, rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
     let (mut received_data, received_channels, received_shared_memory_regions) =
         rx.recv().unwrap();
-    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
@@ -142,13 +143,13 @@ fn big_data_with_sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
     });
     let (mut received_data, mut received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
-    let data: Vec<u8> = iter::repeat(0xba).take(1024 * 1024).collect();
+    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     received_data.truncate(1024 * 1024);
     assert_eq!(received_data.len(), data.len());
@@ -156,7 +157,7 @@ fn big_data_with_sender_transfer() {
     assert_eq!(received_channels.len(), 1);
     assert_eq!(received_shared_memory_regions.len(), 0);
 
-    let data: Vec<u8> = iter::repeat(0xba).take(65536).collect();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let sub_tx = received_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
@@ -178,7 +179,7 @@ fn concurrent_senders() {
     let threads: Vec<_> = (0..num_senders).map(|i| {
         let tx = tx.clone();
         thread::spawn(move || {
-            let data: Vec<u8> = iter::repeat(i).take(1024 * 1024).collect();
+            let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | i << 4).collect();
             let data: &[u8] = &data[..];
             tx.send(data, vec![], vec![]).unwrap();
         })
@@ -188,9 +189,9 @@ fn concurrent_senders() {
     for _ in 0..num_senders {
         let (mut received_data, received_channels, received_shared_memory_regions) =
             rx.recv().unwrap();
-        let val = received_data[0];
+        let val = received_data[0] >> 4;
         received_vals.push(val);
-        let data: Vec<u8> = iter::repeat(val).take(1024 * 1024).collect();
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | val << 4).collect();
         let data: &[u8] = &data[..];
         received_data.truncate(1024 * 1024);
         assert_eq!(received_data.len(), data.len());
@@ -365,3 +366,105 @@ fn try_recv() {
     assert!(rx.try_recv().is_err());
 }
 
+#[test]
+fn try_recv_large() {
+    let (tx, rx) = platform::channel().unwrap();
+    assert!(rx.try_recv().is_err());
+
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let data: &[u8] = &data[..];
+        tx.send(data, vec![], vec![]).unwrap();
+    });
+
+    let mut result;
+    while {
+        result = rx.try_recv();
+        result.is_err()
+    } {}
+    thread.join().unwrap();
+    let (mut received_data, received_channels, received_shared_memory) = result.unwrap();
+
+    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let data: &[u8] = &data[..];
+    received_data.truncate(1024 * 1024);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory),
+               (data, vec![], vec![]));
+    assert!(rx.try_recv().is_err());
+}
+
+#[test]
+fn try_recv_large_delayed() {
+    // These settings work well on my system when doing cargo test --release.
+    // Haven't found a good way to test this with non-release builds...
+    let num_senders = 10;
+    let thread_delay = 50;
+    let msg_size = 512 * 1024;
+
+    let delay = {
+        fn delay_iterations(iterations: u64) {
+            // Let's hope rustc won't ever be able to optimise this away...
+            let mut v = vec![];
+            for _ in 0..iterations {
+                v.push(0);
+                v.pop();
+            }
+        }
+
+        let iterations_per_ms;
+        {
+            let (mut iterations, mut time_per_run) = (1u64, Duration::new(0, 0));
+            while time_per_run < Duration::new(0, 10_000_000) {
+                iterations *= 10;
+                let start = Instant::now();
+                delay_iterations(iterations);
+                time_per_run = start.elapsed();
+            }
+            // This assumes time_per_run stays below one second.
+            // Unless something weird happens, we shoud be safely within this margin...
+            iterations_per_ms = iterations * 1_000_000 / time_per_run.subsec_nanos() as u64;
+        }
+
+        Arc::new(move |ms: u64| delay_iterations(ms * iterations_per_ms))
+    };
+
+    let (tx, rx) = platform::channel().unwrap();
+    assert!(rx.try_recv().is_err());
+
+    let threads: Vec<_> = (0..num_senders).map(|i| {
+        let tx = tx.clone();
+        let delay = delay.clone();
+        thread::spawn(move || {
+            let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | i << 4).collect();
+            let data: &[u8] = &data[..];
+            delay(thread_delay);
+            tx.send(data, vec![], vec![]).unwrap();
+        })
+    }).collect();
+
+    let mut received_vals: Vec<u8> = vec![];
+    for _ in 0..num_senders {
+        let mut result;
+        while {
+            result = rx.try_recv();
+            result.is_err()
+        } {}
+        let (mut received_data, received_channels, received_shared_memory) = result.unwrap();
+        received_data.truncate(msg_size);
+
+        let val = received_data[0] >> 4;
+        received_vals.push(val);
+        let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | val << 4).collect();
+        let data: &[u8] = &data[..];
+        assert_eq!(received_data.len(), data.len());
+        assert_eq!((&received_data[..], received_channels, received_shared_memory),
+                   (data, vec![], vec![]));
+    }
+    assert!(rx.try_recv().is_err()); // There should be no further messages pending.
+    received_vals.sort();
+    assert_eq!(received_vals, (0..num_senders).collect::<Vec<_>>()); // Got exactly the values we sent.
+
+    for thread in threads {
+        thread.join().unwrap();
+    }
+}
