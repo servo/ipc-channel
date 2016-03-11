@@ -912,7 +912,7 @@ type nfds_t = c_ulong;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
-    CMSG_ALIGN((mem::size_of::<cmsghdr>() as size_t) + length)
+    CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t) + length
 }
 
 #[allow(non_snake_case)]
