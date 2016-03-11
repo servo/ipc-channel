@@ -163,7 +163,7 @@ fn big_data_with_sender_transfer() {
     sub_tx.send(data, vec![], vec![]).unwrap();
     let (mut received_data, received_channels, received_shared_memory_regions) =
         sub_rx.recv().unwrap();
-    received_data.truncate(1024 * 1024);
+    received_data.truncate(65536);
     assert_eq!(received_data.len(), data.len());
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (&data[..], vec![], vec![]));
