@@ -173,6 +173,55 @@ fn big_data_with_sender_transfer() {
     thread.join().unwrap();
 }
 
+macro_rules! create_big_data_with_n_fds {
+    ($name:ident, $n:expr) => (
+        #[test]
+        fn $name() {
+            let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..$n).map(|_| platform::channel().unwrap())
+                                                            .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
+                                                            .unzip();
+            let (super_tx, super_rx) = platform::channel().unwrap();
+            let thread = thread::spawn(move || {
+                let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+                let data: &[u8] = &data[..];
+                super_tx.send(data, sender_fds, vec![]).unwrap();
+            });
+            let (mut received_data, received_channels, received_shared_memory_regions) =
+                super_rx.recv().unwrap();
+            thread.join().unwrap();
+
+            let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+            let data: &[u8] = &data[..];
+            received_data.truncate(1024 * 1024);
+            assert_eq!(received_data.len(), data.len());
+            assert_eq!(&received_data[..], &data[..]);
+            assert_eq!(received_channels.len(), receivers.len());
+            assert_eq!(received_shared_memory_regions.len(), 0);
+
+            let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+            let data: &[u8] = &data[..];
+            for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
+                let sub_tx = sender_fd.to_sender();
+                sub_tx.send(data, vec![], vec![]).unwrap();
+                let (mut received_data, received_channels, received_shared_memory_regions) =
+                    sub_rx.recv().unwrap();
+                received_data.truncate(65536);
+                assert_eq!(received_data.len(), data.len());
+                assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+                           (&data[..], vec![], vec![]));
+            }
+        }
+    )
+}
+
+create_big_data_with_n_fds!(big_data_with_0_fds, 0);
+create_big_data_with_n_fds!(big_data_with_1_fds, 1);
+create_big_data_with_n_fds!(big_data_with_2_fds, 2);
+create_big_data_with_n_fds!(big_data_with_3_fds, 3);
+create_big_data_with_n_fds!(big_data_with_4_fds, 4);
+create_big_data_with_n_fds!(big_data_with_5_fds, 5);
+create_big_data_with_n_fds!(big_data_with_6_fds, 6);
+
 #[test]
 fn concurrent_senders() {
     let num_senders = 3;
