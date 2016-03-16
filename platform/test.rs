@@ -14,6 +14,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
+#[cfg(not(windows))]
+use test::{fork, Wait};
+
 #[test]
 fn simple() {
     let (tx, rx) = platform::channel().unwrap();
@@ -276,16 +279,15 @@ fn cross_process() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
-    unsafe {
-        if libc::fork() == 0 {
-            let tx = OsIpcSender::connect(name).unwrap();
-            tx.send(data, vec![], vec![]).unwrap();
-            libc::exit(0);
-        }
-    }
+    let child_pid = unsafe { fork(|| {
+        let tx = OsIpcSender::connect(name).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
+        libc::exit(0);
+    })};
 
     let (_, mut received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
+    child_pid.wait();
     received_data.truncate(7);
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (data, vec![], vec![]));
@@ -297,18 +299,16 @@ fn cross_process() {
 fn cross_process_sender_transfer() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
-    unsafe {
-        if libc::fork() == 0 {
-            let super_tx = OsIpcSender::connect(name).unwrap();
-            let (sub_tx, sub_rx) = platform::channel().unwrap();
-            let data: &[u8] = b"foo";
-            super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
-            sub_rx.recv().unwrap();
-            let data: &[u8] = b"bar";
-            super_tx.send(data, vec![], vec![]).unwrap();
-            libc::exit(0);
-        }
-    }
+    let child_pid = unsafe { fork(|| {
+        let super_tx = OsIpcSender::connect(name).unwrap();
+        let (sub_tx, sub_rx) = platform::channel().unwrap();
+        let data: &[u8] = b"foo";
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        sub_rx.recv().unwrap();
+        let data: &[u8] = b"bar";
+        super_tx.send(data, vec![], vec![]).unwrap();
+        libc::exit(0);
+    })};
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
@@ -319,6 +319,7 @@ fn cross_process_sender_transfer() {
     let data: &[u8] = b"bar";
     let (mut received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
+    child_pid.wait();
     received_data.truncate(3);
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (data, vec![], vec![]));

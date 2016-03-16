@@ -11,10 +11,37 @@ use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender, IpcSha
 use ipc::{OpaqueIpcSender};
 use router::ROUTER;
 use libc;
+use std::io::Error;
 use std::iter;
+use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
+
+///XXXjdm Windows' libc doesn't include fork.
+#[cfg(not(windows))]
+// I'm not actually sure invoking this is indeed unsafe -- but better safe than sorry...
+pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
+    match libc::fork() {
+        -1 => panic!("Fork failed: {}", Error::last_os_error()),
+        0 => { child_func(); unreachable!() },
+        pid => pid,
+    }
+}
+
+#[cfg(not(windows))]
+pub trait Wait {
+    fn wait(self);
+}
+
+#[cfg(not(windows))]
+impl Wait for libc::pid_t {
+    fn wait(self) {
+        unsafe {
+            libc::waitpid(self, ptr::null_mut(), 0);
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct Person {
@@ -154,20 +181,19 @@ fn cross_process_embedded_senders() {
     };
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();
     let (server2, server2_name) = IpcOneShotServer::new().unwrap();
-    unsafe {
-        if libc::fork() == 0 {
-            let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
-            let tx0 = IpcSender::connect(server0_name).unwrap();
-            tx0.send(tx1).unwrap();
-            rx1.recv().unwrap();
-            let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
-            tx2.send(person.clone()).unwrap();
-            libc::exit(0);
-        }
-    }
+    let child_pid = unsafe { fork(|| {
+        let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
+        let tx0 = IpcSender::connect(server0_name).unwrap();
+        tx0.send(tx1).unwrap();
+        rx1.recv().unwrap();
+        let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
+        tx2.send(person.clone()).unwrap();
+        libc::exit(0);
+    })};
     let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
     tx1.send(person.clone()).unwrap();
     let (_, received_person): (_, Person) = server2.accept().unwrap();
+    child_pid.wait();
     assert_eq!(received_person, person);
 }
 
