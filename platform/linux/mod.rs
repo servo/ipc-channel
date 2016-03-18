@@ -288,7 +288,7 @@ impl UnixSender {
             };
             libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                           name.as_ptr(),
-                          sockaddr.sun_path.len() as size_t);
+                          sockaddr.sun_path.len() as size_t - 1);
 
             let len = mem::size_of::<c_short>() +
                 (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
@@ -469,7 +469,7 @@ impl UnixOneShotServer {
                 };
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                               path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() as size_t);
+                              sockaddr.sun_path.len() as size_t - 1);
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
