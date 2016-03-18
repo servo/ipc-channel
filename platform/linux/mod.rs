@@ -288,7 +288,7 @@ impl UnixSender {
             };
             libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                           name.as_ptr(),
-                          sockaddr.sun_path.len() as size_t);
+                          sockaddr.sun_path.len() as size_t - 1);
 
             let len = mem::size_of::<c_short>() +
                 (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
@@ -458,8 +458,8 @@ impl UnixOneShotServer {
             let mut path: Vec<u8>;
             loop {
                 let path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX" as &[u8]).unwrap();
-                path = path_string.as_bytes().iter().cloned().collect();
-                if mktemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
+                path = path_string.as_bytes_with_nul().iter().cloned().collect();
+                if *mktemp(path.as_mut_ptr() as *mut c_char) == 0 {
                     return Err(UnixError::last())
                 }
 
@@ -469,7 +469,7 @@ impl UnixOneShotServer {
                 };
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                               path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() as size_t);
+                              sockaddr.sun_path.len() as size_t - 1);
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
