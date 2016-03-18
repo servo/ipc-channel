@@ -51,6 +51,17 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
     Ok((ipc_sender, ipc_receiver))
 }
 
+pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
+    let (os_sender, os_receiver) = try!(platform::channel());
+    let ipc_bytes_receiver = IpcBytesReceiver {
+        os_receiver: os_receiver,
+    };
+    let ipc_bytes_sender = IpcBytesSender {
+        os_sender: os_sender,
+    };
+    Ok((ipc_bytes_sender, ipc_bytes_receiver))
+}
+
 #[derive(Debug)]
 pub struct IpcReceiver<T> where T: Deserialize + Serialize {
     os_receiver: OsIpcReceiver,
@@ -81,7 +92,8 @@ impl<T> Deserialize for IpcReceiver<T> where T: Deserialize + Serialize {
         let index: usize = try!(Deserialize::deserialize(deserializer));
         let os_receiver =
             OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-                // FIXME(pcwalton): This could panic. Return some sort of nice error.
+                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
+                // of bounds. We should return an `Err` result instead.
                 os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver()
             });
         Ok(IpcReceiver {
@@ -253,7 +265,8 @@ impl Deserialize for IpcSharedMemory {
         let index: usize = try!(Deserialize::deserialize(deserializer));
         let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
             |os_ipc_shared_memory_regions_for_deserialization| {
-                // FIXME(pcwalton): This could panic. Return some sort of nice error.
+                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
+                // of bounds. We should return an `Err` result instead.
                 mem::replace(
                     &mut os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index],
                     None).unwrap()
@@ -436,6 +449,85 @@ impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
     }
 }
 
+#[derive(Debug)]
+pub struct IpcBytesReceiver {
+    os_receiver: OsIpcReceiver,
+}
+
+impl IpcBytesReceiver {
+    #[inline]
+    pub fn recv(&self) -> Result<Vec<u8>,DeserializeError> {
+        match self.os_receiver.recv() {
+            Ok((data, _, _)) => Ok(data),
+            Err(err) => Err(err.into()),
+        }
+    }
+}
+
+impl Deserialize for IpcBytesReceiver {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+        let index: usize = try!(Deserialize::deserialize(deserializer));
+        let os_receiver =
+            OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
+                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
+                // of bounds. We should return an `Err` result instead.
+                os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver()
+            });
+        Ok(IpcBytesReceiver {
+            os_receiver: os_receiver,
+        })
+    }
+}
+
+impl Serialize for IpcBytesReceiver {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+        let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
+            let mut os_ipc_channels_for_serialization =
+                os_ipc_channels_for_serialization.borrow_mut();
+            let index = os_ipc_channels_for_serialization.len();
+            os_ipc_channels_for_serialization.push(OsIpcChannel::Receiver(self.os_receiver
+                                                                              .consume()));
+            index
+        });
+        index.serialize(serializer)
+    }
+}
+
+#[derive(Debug)]
+pub struct IpcBytesSender {
+    os_sender: OsIpcSender,
+}
+
+impl Clone for IpcBytesSender {
+    fn clone(&self) -> IpcBytesSender {
+        IpcBytesSender {
+            os_sender: self.os_sender.clone(),
+        }
+    }
+}
+
+impl Deserialize for IpcBytesSender {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
+        Ok(IpcBytesSender {
+            os_sender: os_sender,
+        })
+    }
+}
+
+impl Serialize for IpcBytesSender {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+        serialize_os_ipc_sender(&self.os_sender, serializer)
+    }
+}
+
+impl IpcBytesSender {
+    #[inline]
+    pub fn send(&self, data: &[u8]) -> Result<(),Error> {
+        self.os_sender.send(data, vec![], vec![]).map_err(|e| Error::from(e))
+    }
+}
+
 fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender, serializer: &mut S)
                               -> Result<(),S::Error> where S: Serializer {
     let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
@@ -452,7 +544,8 @@ fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
                                 -> Result<OsIpcSender, D::Error> where D: Deserializer {
     let index: usize = try!(Deserialize::deserialize(deserializer));
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-        // FIXME(pcwalton): This could panic. Return some sort of nice error.
+        // FIXME(pcwalton): This could panic if the data was corrupt and the index was out of
+        // bounds. We should return an `Err` result instead.
         Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
     })
 }
