@@ -459,7 +459,7 @@ impl UnixOneShotServer {
             loop {
                 let path_string = CString::new(b"/tmp/rust-ipc-socket.XXXXXX" as &[u8]).unwrap();
                 path = path_string.as_bytes().iter().cloned().collect();
-                if mktemp(path.as_mut_ptr() as *mut c_char) == ptr::null_mut() {
+                if *mktemp(path.as_mut_ptr() as *mut c_char) == 0 {
                     return Err(UnixError::last())
                 }
 
