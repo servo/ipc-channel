@@ -765,15 +765,33 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         // The initial fragment carries the receive end of a dedicated channel
         // through which all the remaining fragments will be coming in.
         let dedicated_rx = channels.pop().unwrap().to_receiver();
+
+        // Extend the buffer to hold the entire message, without initialising the memory.
+        let len = main_data_buffer.len();
+        main_data_buffer.reserve(total_size - len);
+
+        // Receive followup fragments directly into the main buffer.
         while main_data_buffer.len() < total_size {
-            let mut cmsg = UnixCmsg::new(UnixSender::fragment_size(maximum_recv_size));
-            // Always use blocking mode for followup fragments,
+            let write_pos = main_data_buffer.len();
+            let end_pos = cmp::min(write_pos + UnixSender::fragment_size(maximum_recv_size),
+                                   total_size);
+            assert!(end_pos <= main_data_buffer.capacity());
+            main_data_buffer.set_len(end_pos);
+
+            // Note: we always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
-            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, BlockingMode::Blocking));
+            let result = libc::recv(dedicated_rx.fd,
+                                    main_data_buffer[write_pos..].as_mut_ptr() as *mut c_void,
+                                    end_pos - write_pos,
+                                    0);
+            main_data_buffer.set_len(write_pos + cmp::max(result, 0) as usize);
 
-            // Followup fragemnts do not have a header -- the entire buffer is payload.
-            main_data_buffer.extend_from_slice(&cmsg.data_buffer[0..bytes_read]);
+            if result == 0 {
+                return Err(UnixError(libc::ECONNRESET))
+            } else if result < 0 {
+                return Err(UnixError::last())
+            };
         }
 
         Ok((main_data_buffer, channels, shared_memory_regions))

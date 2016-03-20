@@ -65,26 +65,6 @@ fn bench_size(b: &mut test::Bencher, size: usize) {
     }
 }
 
-// It turns out the results have some crazy jumps between sizes,
-// probably related to some allocator alignment stuff.
-// What's more, these fluctuate strongly in seemingly random ways
-// in response to various changes to the test setup etc.
-//
-// Warming up the memory somewhat mitigates these issues.
-// The specific size used here was determined empirically
-// to produce comparatively sane results -- on my system at least.
-// (Maybe because it doesn't align well with 2's complements...
-// Or maybe it's just an entirely random effect.)
-//
-// There might be more elegant and/or more effective ways to do the warm-up,
-// using random allocations or something along these lines...
-// However, I don't think it's really *that* important --
-// and I already spent way too much time trying to figure this out :-(
-#[bench]
-fn _invoke_chaos(b: &mut test::Bencher) {
-    bench_size(b, 777_777); // 111-up the beast ;-)
-}
-
 #[bench]
 fn size_00_1(b: &mut test::Bencher) {
     bench_size(b, 1);
