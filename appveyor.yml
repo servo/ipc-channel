@@ -1,4 +1,5 @@
 environment:
+  PATH: '%PATH%;C:\Program Files (x86)\Rust\bin;C:\MinGW\bin'
   matrix:
   - TARGET: x86_64-pc-windows-msvc
   - TARGET: i686-pc-windows-msvc
@@ -6,8 +7,6 @@ environment:
 install:
   - ps: Start-FileDownload "https://static.rust-lang.org/dist/rust-nightly-${env:TARGET}.exe"
   - rust-nightly-%TARGET%.exe /VERYSILENT /NORESTART /DIR="C:\Program Files (x86)\Rust"
-  - SET PATH=%PATH%;C:\Program Files (x86)\Rust\bin
-  - SET PATH=%PATH%;C:\MinGW\bin
   - rustc -V
   - cargo -V
 
