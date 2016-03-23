@@ -15,20 +15,13 @@ use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
-use std::fs::File;
 use std::io::{Error, Write};
 use std::mem;
 use std::ops::Deref;
-use std::os::unix::io::AsRawFd;
 use std::ptr;
 use std::slice;
 use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use std::thread;
-
-#[cfg(all(any(target_arch="arm", target_arch="x86"), target_os="android"))]
-const DEV_NULL_RDEV: libc::c_ulonglong = 0x0103;
-#[cfg(not(all(any(target_arch="arm", target_arch="x86"), target_os="android")))]
-const DEV_NULL_RDEV: libc::dev_t = 0x0103;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -36,10 +29,6 @@ const MAX_FDS_IN_CMSG: u32 = 64;
 const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
 static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
-
-lazy_static! {
-    static ref DEV_NULL: c_int = open_dev_null();
-}
 
 pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
     let mut results = [0, 0];
@@ -160,15 +149,6 @@ impl UnixSender {
                 ptr::copy_nonoverlapping(fds.as_ptr(),
                                          cmsg_buffer.offset(1) as *mut _ as *mut c_int,
                                          fds.len());
-                let mut cmsg_padding_ptr =
-                    (cmsg_buffer.offset(1) as *mut _ as *mut c_int).offset(fds.len() as isize);
-                let cmsg_end =
-                    (cmsg_buffer as *mut _ as *mut u8).offset(CMSG_SPACE(cmsg_length as size_t) as
-                                                              isize);
-                while (cmsg_padding_ptr as *mut u8) < cmsg_end {
-                    *cmsg_padding_ptr = *DEV_NULL;
-                    cmsg_padding_ptr = cmsg_padding_ptr.offset(1);
-                }
 
                 // Put this on the heap so address remains stable across function return.
                 let mut iovec = Box::new(iovec {
@@ -686,10 +666,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
-            if is_dev_null(fd) {
-                libc::close(fd);
-                continue
-            }
             if is_socket(fd) {
                 channels.push(OpaqueUnixChannel::from_fd(fd));
                 continue
@@ -870,23 +846,6 @@ impl UnixCmsg {
     }
 }
 
-fn open_dev_null() -> c_int {
-    let file = File::open("/dev/null").unwrap();
-    let fd = file.as_raw_fd();
-    mem::forget(file);
-    fd
-}
-
-fn is_dev_null(fd: c_int) -> bool {
-    unsafe {
-        let mut st = mem::uninitialized();
-        if libc::fstat(fd, &mut st) != 0 {
-            return false
-        }
-        st.st_rdev == DEV_NULL_RDEV
-    }
-}
-
 fn is_socket(fd: c_int) -> bool {
     unsafe {
         let mut st = mem::uninitialized();
@@ -912,7 +871,7 @@ type nfds_t = c_ulong;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
-    CMSG_ALIGN((mem::size_of::<cmsghdr>() as size_t) + length)
+    CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t) + length
 }
 
 #[allow(non_snake_case)]
