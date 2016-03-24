@@ -430,10 +430,10 @@ impl MachSender {
                                                MACH_PORT_NULL,
                                                MACH_MSG_TIMEOUT_NONE,
                                                MACH_PORT_NULL);
+            libc::free(message as *mut _);
             if os_result != MACH_MSG_SUCCESS {
                 return Err(MachError(os_result))
             }
-            libc::free(message as *mut _);
             Ok(())
         }
     }
@@ -553,7 +553,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
     debug_assert!(port != MACH_PORT_NULL);
     unsafe {
         let mut buffer = [0; SMALL_MESSAGE_SIZE];
-        let allocated_buffer = None;
+        let mut allocated_buffer = None;
         setup_receive_buffer(&mut buffer, port);
         let mut message = &mut buffer[0] as *mut _ as *mut Message;
         let (flags, timeout) = match blocking_mode {
@@ -573,7 +573,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                 let mut extra_size = 8;
                 loop {
                     let actual_size = (*message).header.msgh_size + extra_size;
-                    let allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                    allocated_buffer = Some(libc::malloc(actual_size as size_t));
                     setup_receive_buffer(slice::from_raw_parts_mut(
                                             allocated_buffer.unwrap() as *mut u8,
                                             actual_size as usize),
@@ -587,11 +587,16 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                                              timeout,
                                              MACH_PORT_NULL) {
                         MACH_MSG_SUCCESS => break,
-                        MACH_RCV_TOO_LARGE => {}
-                        os_result => return Err(MachError(os_result)),
+                        MACH_RCV_TOO_LARGE => {
+                            libc::free(allocated_buffer.unwrap() as *mut _);
+                            allocated_buffer = None;
+                            extra_size *= 2;
+                        }
+                        os_result => {
+                            libc::free(allocated_buffer.unwrap() as *mut _);
+                            return Err(MachError(os_result))
+                        }
                     }
-
-                    extra_size *= 2;
                 }
             }
             MACH_MSG_SUCCESS => {}
