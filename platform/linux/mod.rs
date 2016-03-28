@@ -34,7 +34,20 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
     let mut results = [0, 0];
     unsafe {
         if socketpair(libc::AF_UNIX, SOCK_SEQPACKET, 0, &mut results[0]) >= 0 {
-            Ok((UnixSender::from_fd(results[0]), UnixReceiver::from_fd(results[1])))
+            let (a, b) = (results[0], results[1]);
+
+            // Limit the buffers to 32kB.
+            let buf_sz: c_int = 32 * 1024;
+            let set_sz = |sock, which| {
+                setsockopt(sock, libc::SOL_SOCKET, which,
+                           &buf_sz as *const c_int as *const c_void,
+                           mem::size_of::<c_int>() as socklen_t);
+            };
+            set_sz(a, libc::SO_SNDBUF);
+            set_sz(a, libc::SO_RCVBUF);
+            set_sz(b, libc::SO_SNDBUF);
+            set_sz(b, libc::SO_RCVBUF);
+            Ok((UnixSender::from_fd(a), UnixReceiver::from_fd(b)))
         } else {
             Err(UnixError::last())
         }
