@@ -456,3 +456,14 @@ fn embedded_bytes_receivers() {
     assert_eq!(&bytes, &received_bytes[..]);
 }
 
+#[test]
+fn test_so_linger() {
+    let (sender, receiver) = ipc::channel().unwrap();
+    sender.send(42).unwrap();
+    drop(sender);
+    let val = match receiver.recv() {
+        Ok(val) => val,
+        Err(e) => { panic!("err: `{}`", e); }
+    };
+    assert_eq!(val, 42);
+}
