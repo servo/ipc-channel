@@ -806,12 +806,11 @@ impl UnixCmsg {
         let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
             mem::size_of::<c_int>();
         assert!(maximum_recv_size > cmsg_length);
-        let data_length = maximum_recv_size - cmsg_length;
-        let mut data_buffer: Vec<u8> = vec![0; data_length];
+        let mut data_buffer: Vec<u8> = vec![0; maximum_recv_size];
         let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
         let mut iovec = Box::new(iovec {
             iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
-            iov_len: data_length as size_t,
+            iov_len: data_buffer.len(),
         });
         let iovec_ptr: *mut iovec = &mut *iovec;
         UnixCmsg {
