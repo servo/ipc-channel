@@ -45,9 +45,13 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
                            mem::size_of::<c_int>() as socklen_t);
             };
             set_size(a, libc::SO_SNDBUF);
-            set_size(a, libc::SO_RCVBUF);
             set_size(b, libc::SO_SNDBUF);
-            set_size(b, libc::SO_RCVBUF);
+
+            // These appear to break browser.html, by causing EPIPE.
+            // See https://github.com/servo/servo/issues/10260.
+            // set_size(a, libc::SO_RCVBUF);
+            // set_size(b, libc::SO_RCVBUF);
+
             Ok((UnixSender::from_fd(a), UnixReceiver::from_fd(b)))
         } else {
             Err(UnixError::last())
