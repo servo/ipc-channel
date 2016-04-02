@@ -114,6 +114,22 @@ impl UnixSender {
         }
     }
 
+    /// Maximum total data size that can be transferred over this channel in a single packet.
+    pub fn get_maximum_send_size(&self) -> Result<usize,UnixError> {
+        unsafe {
+            let mut maximum_send_size: usize = 0;
+            let mut maximum_send_size_len = mem::size_of::<usize>() as socklen_t;
+            if getsockopt(self.fd,
+                          libc::SOL_SOCKET,
+                          libc::SO_SNDBUF,
+                          &mut maximum_send_size as *mut usize as *mut c_void,
+                          &mut maximum_send_size_len as *mut socklen_t) < 0 {
+                return Err(UnixError::last())
+            }
+            Ok(maximum_send_size)
+        }
+    }
+
     pub fn send(&self,
                 data: &[u8],
                 mut channels: Vec<UnixChannel>,
@@ -197,17 +213,8 @@ impl UnixSender {
                 }
             }
 
-            // The packet is too big. Fragmentation time! First, determine our maximum sending size.
-            let mut maximum_send_size: usize = 0;
-            let mut maximum_send_size_len = mem::size_of::<usize>() as socklen_t;
-            if getsockopt(self.fd,
-                          libc::SOL_SOCKET,
-                          libc::SO_SNDBUF,
-                          &mut maximum_send_size as *mut usize as *mut c_void,
-                          &mut maximum_send_size_len as *mut socklen_t) < 0 {
-                return Err(UnixError::last())
-            }
-
+            // The packet is too big. Fragmentation time!
+            //
             // Create dedicated channel to send all but the first fragment.
             // This way we avoid fragments of different messages interleaving in the receiver.
             //
@@ -217,8 +224,9 @@ impl UnixSender {
             channels.push(UnixChannel::Receiver(dedicated_rx));
             let (msghdr, mut iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
 
-            let mut bytes_per_fragment = maximum_send_size - (mem::size_of::<u32>() * 2 +
-                msghdr.msg_controllen as usize + 256);
+            let mut bytes_per_fragment = try!(self.get_maximum_send_size())
+                                         - (mem::size_of::<u32>() * 2
+                                            + msghdr.msg_controllen as usize + 256);
 
             // Split up the packet into fragments.
             let mut byte_position = 0;
