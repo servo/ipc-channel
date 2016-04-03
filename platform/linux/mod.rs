@@ -190,11 +190,23 @@ impl UnixSender {
             let result = sendmsg(self.fd, &msghdr, 0);
             libc::free(msghdr.msg_control);
 
+            let mut downsize = false;
+
             if result > 0 {
                 return Ok(())
             } else {
                 let error = UnixError::last();
-                if error.0 != libc::EMSGSIZE {
+                if error.0 == libc::ENOBUFS {
+                    // If we get this error,
+                    // it means the message was small enough to fit the maximum send size,
+                    // but the kernel failed to allocate a buffer large enough
+                    // to actually transfer the message --
+                    // so we have to proceed with a fragmented send nevertheless.
+                    //
+                    // The flag indicates that packets need to be smaller
+                    // than the ordinary maximum send size.
+                    downsize = true;
+                } else if error.0 != libc::EMSGSIZE {
                     return Err(error)
                 }
             }
@@ -219,13 +231,19 @@ impl UnixSender {
             channels.push(UnixChannel::Receiver(dedicated_rx));
             let (msghdr, mut iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
 
-            let bytes_per_fragment = maximum_send_size - (mem::size_of::<u32>() * 2 +
+            let mut bytes_per_fragment = maximum_send_size - (mem::size_of::<u32>() * 2 +
                 msghdr.msg_controllen as usize + 256);
 
             // Split up the packet into fragments.
             let mut byte_position = 0;
             let mut this_fragment_id = 0;
             while byte_position < data.len() {
+                if downsize {
+                    // We got ENOBUFS. Retry send with half the packet size.
+                    bytes_per_fragment /= 2;
+                    downsize = false;
+                }
+
                 let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
                 let next_fragment_id = if end_byte_position == data.len() {
                     0
@@ -259,8 +277,22 @@ impl UnixSender {
                 };
 
                 if result <= 0 {
-                    libc::free(msghdr.msg_control);
-                    return Err(UnixError::last())
+                    let error = UnixError::last();
+                    if error.0 == libc::ENOBUFS && bytes_to_send > 2000 {
+                        // If the kernel failed to allocate a buffer large enough for the packet,
+                        // retry with a smaller size.
+                        //
+                        // (If the packet was already significantly smaller
+                        // than the memory page size though,
+                        // if means something else must have gone wrong;
+                        // so there is no point in further downsizing,
+                        // and we error out instead.)
+                        downsize = true;
+                        continue
+                    } else {
+                        libc::free(msghdr.msg_control);
+                        return Err(error)
+                    }
                 }
 
                 byte_position += bytes_per_fragment;
