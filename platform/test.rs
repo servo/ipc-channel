@@ -10,6 +10,7 @@
 use libc;
 use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
 use platform::{OsIpcSharedMemory};
+use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
@@ -171,6 +172,33 @@ fn big_data_with_sender_transfer() {
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (&data[..], vec![], vec![]));
     thread.join().unwrap();
+}
+
+#[test]
+// This test only applies to platforms that need fragmentation.
+#[cfg(target_os="linux")]
+fn full_packet() {
+    let (tx, rx) = platform::channel().unwrap();
+
+    // Should be the biggest size that just fits in a single packet.
+    //
+    // 32 is the empirical minimal size of the "control message" header,
+    // which we presently always send along with the data;
+    // the rest is for the fragment header.
+    //
+    // Note that this calculation might become imprecise
+    // when certain implementation details of the send() method change...
+    let size = tx.get_maximum_send_size().unwrap() - 32 - mem::size_of::<u32>() * 2;
+
+    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+    let data: &[u8] = &data[..];
+
+    tx.send(data, vec![], vec![]).unwrap();
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        rx.recv().unwrap();
+    received_data.truncate(size);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (&data[..], vec![], vec![]));
 }
 
 macro_rules! create_big_data_with_n_fds {
