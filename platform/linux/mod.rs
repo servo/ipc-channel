@@ -727,8 +727,29 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             return Err(UnixError::last())
         }
 
-        let mut cmsg = UnixCmsg::new(maximum_recv_size);
+        // First fragment begins with a header recording the total data length.
+        //
+        // We use this to determine whether we already got the entire message,
+        // or need to receive additional fragments -- and if so, how much.
+        let mut len_buffer = vec![0; mem::size_of::<usize>()];
+        // Allocate a buffer without initialising the memory.
+        let mut main_data_buffer = Vec::with_capacity(maximum_recv_size - len_buffer.len());
+        main_data_buffer.set_len(maximum_recv_size);
+
+        let iovec = [
+            iovec {
+                iov_base: len_buffer.as_mut_ptr() as *mut c_char,
+                iov_len: len_buffer.len(),
+            },
+            iovec {
+                iov_base: main_data_buffer.as_mut_ptr() as *mut c_char,
+                iov_len: main_data_buffer.len(),
+            },
+        ];
+        let mut cmsg = UnixCmsg::new(&iovec);
+
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
+        main_data_buffer.set_len(bytes_read - len_buffer.len());
 
         let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
@@ -747,14 +768,8 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             shared_memory_regions.push(UnixSharedMemory::from_fd(fd));
         }
 
-        // Separate out the header.
-        let (header, main_data_buffer) = cmsg.data_buffer.split_at(mem::size_of::<usize>());
-        let mut main_data_buffer: Vec<u8> =
-            main_data_buffer[0..(bytes_read - mem::size_of::<usize>())].iter()
-                                                                       .cloned()
-                                                                       .collect();
-        let total_size = (&header[..]).read_uint::<LittleEndian>(mem::size_of::<usize>())
-                                      .unwrap() as usize;
+        let total_size = (&len_buffer[..]).read_uint::<LittleEndian>(mem::size_of::<usize>())
+                                          .unwrap() as usize;
         if total_size == main_data_buffer.len() {
             // Fast path: no fragments.
             return Ok((main_data_buffer, channels, shared_memory_regions))
@@ -851,10 +866,7 @@ unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
 }
 
 struct UnixCmsg {
-    data_buffer: Vec<u8>,
     cmsg_buffer: *mut cmsghdr,
-    #[allow(dead_code)]
-    iovec: Box<iovec>,
     msghdr: msghdr,
 }
 
@@ -869,30 +881,17 @@ impl Drop for UnixCmsg {
 }
 
 impl UnixCmsg {
-    unsafe fn new(maximum_recv_size: usize) -> UnixCmsg {
+    unsafe fn new(iovec: &[iovec]) -> UnixCmsg {
         let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
             mem::size_of::<c_int>();
-        assert!(maximum_recv_size > cmsg_length);
-
-        // Allocate a buffer without initialising the memory.
-        let mut data_buffer = Vec::with_capacity(maximum_recv_size);
-        data_buffer.set_len(maximum_recv_size);
-
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
-        let iovec = Box::new(iovec {
-            iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
-            iov_len: data_buffer.len(),
-        });
-        let iovec_ptr: *const iovec = &*iovec;
         UnixCmsg {
-            data_buffer: data_buffer,
             cmsg_buffer: cmsg_buffer,
-            iovec: iovec,
             msghdr: msghdr {
                 msg_name: ptr::null_mut(),
                 msg_namelen: 0,
-                msg_iov: iovec_ptr,
-                msg_iovlen: 1,
+                msg_iov: iovec.as_ptr(),
+                msg_iovlen: iovec.len(),
                 msg_control: cmsg_buffer as *mut c_void,
                 msg_controllen: cmsg_length,
                 msg_flags: 0,
@@ -909,8 +908,6 @@ impl UnixCmsg {
         }
 
         let result = recvmsg(fd, &mut self.msghdr, 0);
-        self.data_buffer.set_len(cmp::max(result, 0) as usize);
-
         let result = if result > 0 {
             Ok(result as usize)
         } else if result == 0 {
