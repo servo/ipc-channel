@@ -855,7 +855,11 @@ impl UnixCmsg {
         let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
             mem::size_of::<c_int>();
         assert!(maximum_recv_size > cmsg_length);
-        let mut data_buffer: Vec<u8> = vec![0; maximum_recv_size];
+
+        // Allocate a buffer without initialising the memory.
+        let mut data_buffer = Vec::with_capacity(maximum_recv_size);
+        data_buffer.set_len(maximum_recv_size);
+
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
         let iovec = Box::new(iovec {
             iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
@@ -887,6 +891,8 @@ impl UnixCmsg {
         }
 
         let result = recvmsg(fd, &mut self.msghdr, 0);
+        self.data_buffer.set_len(cmp::max(result, 0) as usize);
+
         let result = if result > 0 {
             Ok(result as usize)
         } else if result == 0 {
