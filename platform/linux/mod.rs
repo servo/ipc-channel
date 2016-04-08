@@ -27,6 +27,13 @@ const MAX_FDS_IN_CMSG: u32 = 64;
 // Yes, really!
 const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
+lazy_static! {
+    static ref SYSTEM_SENDBUF_SIZE: usize = {
+        let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
+        tx.get_system_sendbuf_size().expect("Failed to obtain maximum send size for socket")
+    };
+}
+
 // The value Linux returns for SO_SNDBUF
 // is not the size we are actually allowed to use...
 // Empirically, we have to deduct 32 bytes from that.
@@ -144,7 +151,7 @@ impl UnixSender {
     /// and with the size of the fragment header also deducted from it.
     ///
     /// The `sendbuf_size` passed in should usually be the maximum kernel buffer size,
-    /// as obtained with `get_system_sendbuf_size()` --
+    /// i.e. the value of *SYSTEM_SENDBUF_SIZE --
     /// except after getting ENOBUFS, in which case it needs to be reduced.
     fn fragment_size(sendbuf_size: usize) -> usize {
         sendbuf_size - RESERVED_SIZE - mem::size_of::<usize>()
@@ -159,8 +166,8 @@ impl UnixSender {
     /// under normal circumstances.
     /// (It might still block if heavy memory pressure causes ENOBUFS,
     /// forcing us to reduce the packet size.)
-    pub fn get_max_fragment_size(&self) -> Result<usize,UnixError> {
-        Ok(Self::fragment_size(try!(self.get_system_sendbuf_size())))
+    pub fn get_max_fragment_size() -> usize {
+        Self::fragment_size(*SYSTEM_SENDBUF_SIZE)
     }
 
     pub fn send(&self,
@@ -255,7 +262,7 @@ impl UnixSender {
             }
         }
 
-        let mut sendbuf_size = try!(self.get_system_sendbuf_size());
+        let mut sendbuf_size = *SYSTEM_SENDBUF_SIZE;
 
         /// Reduce send buffer size after getting ENOBUFS,
         /// i.e. when the kernel failed to allocate a large enough buffer.
@@ -717,24 +724,14 @@ enum BlockingMode {
 fn recv(fd: c_int, blocking_mode: BlockingMode)
         -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
     unsafe {
-        let mut maximum_recv_size: usize = 0;
-        let mut maximum_recv_size_len = mem::size_of::<usize>() as socklen_t;
-        if getsockopt(fd,
-                      libc::SOL_SOCKET,
-                      libc::SO_RCVBUF,
-                      &mut maximum_recv_size as *mut usize as *mut c_void,
-                      &mut maximum_recv_size_len as *mut socklen_t) < 0 {
-            return Err(UnixError::last())
-        }
-
         // First fragment begins with a header recording the total data length.
         //
         // We use this to determine whether we already got the entire message,
         // or need to receive additional fragments -- and if so, how much.
         let mut len_buffer = vec![0; mem::size_of::<usize>()];
         // Allocate a buffer without initialising the memory.
-        let mut main_data_buffer = Vec::with_capacity(maximum_recv_size - len_buffer.len());
-        main_data_buffer.set_len(maximum_recv_size);
+        let mut main_data_buffer = Vec::with_capacity(*SYSTEM_SENDBUF_SIZE - len_buffer.len());
+        main_data_buffer.set_len(*SYSTEM_SENDBUF_SIZE - len_buffer.len());
 
         let iovec = [
             iovec {
@@ -788,8 +785,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         // Receive followup fragments directly into the main buffer.
         while main_data_buffer.len() < total_size {
             let write_pos = main_data_buffer.len();
-            let end_pos = cmp::min(write_pos + UnixSender::fragment_size(maximum_recv_size),
-                                   total_size);
+            let end_pos = cmp::min(write_pos + UnixSender::get_max_fragment_size(), total_size);
             assert!(end_pos <= main_data_buffer.capacity());
             main_data_buffer.set_len(end_pos);
 

@@ -211,7 +211,7 @@ mod fragment_tests {
 
     lazy_static! {
         static ref FRAGMENT_SIZE: usize = {
-            platform::channel().and_then(|(tx, _)| tx.get_max_fragment_size()).unwrap()
+            platform::OsIpcSender::get_max_fragment_size()
         };
     }
 

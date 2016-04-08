@@ -366,8 +366,8 @@ impl MachSender {
         }
     }
 
-    pub fn get_max_fragment_size(&self) -> Result<usize,()> {
-        Ok(usize::MAX)
+    pub fn get_max_fragment_size() -> usize {
+        usize::MAX
     }
 
     pub fn send(&self,
