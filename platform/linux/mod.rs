@@ -157,7 +157,7 @@ impl UnixSender {
 
         unsafe {
             unsafe fn construct_header(fds: &[c_int], data_buffer: &[u8]) -> (msghdr, Box<iovec>) {
-                let cmsg_length = fds.len() * mem::size_of::<c_int>();
+                let cmsg_length = mem::size_of_val(fds);
                 let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
                 (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
                 (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
