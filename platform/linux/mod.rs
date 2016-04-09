@@ -135,9 +135,18 @@ impl UnixSender {
 
     pub fn send(&self,
                 data: &[u8],
-                mut channels: Vec<UnixChannel>,
+                channels: Vec<UnixChannel>,
                 shared_memory_regions: Vec<UnixSharedMemory>)
                 -> Result<(),UnixError> {
+
+        let mut fds = Vec::new();
+        for channel in channels.iter() {
+            fds.push(channel.fd());
+        }
+        for shared_memory_region in shared_memory_regions.iter() {
+            fds.push(shared_memory_region.fd);
+        }
+
         let mut data_buffer = vec![0; data.len() + mem::size_of::<u32>() * 2];
         {
             let mut data_buffer = &mut data_buffer[..];
@@ -147,24 +156,13 @@ impl UnixSender {
         }
 
         unsafe {
-            unsafe fn construct_header(channels: &[UnixChannel],
-                                       shared_memory_regions: &[UnixSharedMemory],
-                                       data_buffer: &[u8])
-                                       -> (msghdr, Box<iovec>) {
-                let cmsg_length =
-                    (channels.len() + shared_memory_regions.len()) * mem::size_of::<c_int>();
+            unsafe fn construct_header(fds: &[c_int], data_buffer: &[u8]) -> (msghdr, Box<iovec>) {
+                let cmsg_length = fds.len() * mem::size_of::<c_int>();
                 let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
                 (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
                 (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
                 (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
-                let mut fds = Vec::new();
-                for channel in channels.iter() {
-                    fds.push(channel.fd());
-                }
-                for shared_memory_region in shared_memory_regions.iter() {
-                    fds.push(shared_memory_region.fd);
-                }
                 ptr::copy_nonoverlapping(fds.as_ptr(),
                                          cmsg_buffer.offset(1) as *mut _ as *mut c_int,
                                          fds.len());
@@ -190,7 +188,7 @@ impl UnixSender {
                 (msghdr, iovec)
             };
 
-            let (msghdr, _iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
+            let (msghdr, _iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             let result = sendmsg(self.fd, &msghdr, 0);
             libc::free(msghdr.msg_control);
@@ -224,8 +222,9 @@ impl UnixSender {
             // The receiver end of the channel is sent with the first fragment
             // along any other file descriptors that are to be transferred in the message.
             let (dedicated_tx, dedicated_rx) = try!(channel());
-            channels.push(UnixChannel::Receiver(dedicated_rx));
-            let (msghdr, mut iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
+            // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
+            fds.push(dedicated_rx.fd);
+            let (msghdr, mut iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
                                          - (mem::size_of::<u32>() * 2
