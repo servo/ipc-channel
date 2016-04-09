@@ -283,19 +283,24 @@ impl UnixSender {
             }
         }
 
-        match send_first_fragment(self.fd, &fds[..], data, data.len()) {
-            Ok(_) => return Ok(()),
-            Err(error) => {
-                if error.0 == libc::ENOBUFS && downsize(&mut sendbuf_size, data.len()).is_ok() {
-                    // If we get this error,
-                    // it means the message was small enough to fit the maximum send size,
-                    // but the kernel failed to allocate a buffer large enough
-                    // to actually transfer the message --
-                    // so we have to proceed with a fragmented send nevertheless.
-                } else if error.0 != libc::EMSGSIZE {
-                    return Err(error)
-                }
-            },
+        // If the message is small enough, try sending it in a single fragment.
+        if data.len() <= Self::get_max_fragment_size() {
+            match send_first_fragment(self.fd, &fds[..], data, data.len()) {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    // ENOBUFS means the kernel failed to allocate a buffer large enough
+                    // to actually transfer the message,
+                    // although the message was small enough to fit the maximum send size --
+                    // so we have to proceed with a fragmented send nevertheless,
+                    // using a reduced send buffer size.
+                    //
+                    // Any other errors we might get here are non-recoverable.
+                    if !(error.0 == libc::ENOBUFS
+                         && downsize(&mut sendbuf_size, data.len()).is_ok()) {
+                        return Err(error)
+                    }
+                },
+            }
         }
 
         // The packet is too big. Fragmentation time!
