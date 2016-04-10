@@ -182,13 +182,12 @@ fn full_packet() {
 
     // Should be the biggest size that just fits in a single packet.
     //
-    // 32 is the empirical minimal size of the "control message" header,
-    // which we presently always send along with the data;
+    // 32 is the empirical size reseved by the kernel;
     // the rest is for the fragment header.
     //
     // Note that this calculation might become imprecise
     // when certain implementation details of the send() method change...
-    let size = tx.get_maximum_send_size().unwrap() - 32 - mem::size_of::<u32>() * 2;
+    let size = tx.get_system_sendbuf_size().unwrap() - 32 - mem::size_of::<u32>() * 2;
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];

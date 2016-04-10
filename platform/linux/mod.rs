@@ -114,19 +114,22 @@ impl UnixSender {
         }
     }
 
-    /// Maximum total data size that can be transferred over this channel in a single packet.
-    pub fn get_maximum_send_size(&self) -> Result<usize,UnixError> {
+    /// Maximum size of the kernel buffer used for transfers over this channel.
+    ///
+    /// Note: This is *not* the actual maximal packet size we are allowed to use...
+    /// Some of it is reserved by the kernel for bookkeeping.
+    pub fn get_system_sendbuf_size(&self) -> Result<usize,UnixError> {
         unsafe {
-            let mut maximum_send_size: usize = 0;
-            let mut maximum_send_size_len = mem::size_of::<usize>() as socklen_t;
+            let mut socket_sendbuf_size: usize = 0;
+            let mut socket_sendbuf_size_len = mem::size_of::<usize>() as socklen_t;
             if getsockopt(self.fd,
                           libc::SOL_SOCKET,
                           libc::SO_SNDBUF,
-                          &mut maximum_send_size as *mut usize as *mut c_void,
-                          &mut maximum_send_size_len as *mut socklen_t) < 0 {
+                          &mut socket_sendbuf_size as *mut usize as *mut c_void,
+                          &mut socket_sendbuf_size_len as *mut socklen_t) < 0 {
                 return Err(UnixError::last())
             }
-            Ok(maximum_send_size)
+            Ok(socket_sendbuf_size)
         }
     }
 
@@ -224,7 +227,7 @@ impl UnixSender {
             channels.push(UnixChannel::Receiver(dedicated_rx));
             let (msghdr, mut iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
 
-            let mut bytes_per_fragment = try!(self.get_maximum_send_size())
+            let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
                                          - (mem::size_of::<u32>() * 2
                                             + msghdr.msg_controllen as usize + 256);
 
