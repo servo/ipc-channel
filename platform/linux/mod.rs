@@ -30,7 +30,8 @@ const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
 // The value Linux returns for SO_SNDBUF
 // is not the size we are actually allowed to use...
-const RESERVED_SIZE: usize = 256;
+// Empirically, we have to deduct 32 bytes from that.
+const RESERVED_SIZE: usize = 32;
 
 static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
 
