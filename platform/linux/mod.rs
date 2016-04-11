@@ -227,8 +227,7 @@ impl UnixSender {
             let (msghdr, mut iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
-                                         - (mem::size_of::<u32>() * 2
-                                            + msghdr.msg_controllen + 256);
+                                         - (mem::size_of::<u32>() * 2 + 256);
 
             // Split up the packet into fragments.
             let mut byte_position = 0;
