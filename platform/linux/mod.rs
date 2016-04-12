@@ -143,17 +143,20 @@ impl UnixSender {
 
     /// Calculate maximum payload data size per fragment.
     ///
-    /// This is the size of the main data chunk only --
-    /// it's independent of any auxiliary data (FDs) transferred along with it.
-    /// It is the total size of the kernel buffer,
-    /// minus the part reserved by the kernel,
-    /// and with the size of the fragment header also deducted from it.
+    /// It is the total size of the kernel buffer, minus the part reserved by the kernel.
     ///
     /// The `sendbuf_size` passed in should usually be the maximum kernel buffer size,
     /// i.e. the value of *SYSTEM_SENDBUF_SIZE --
     /// except after getting ENOBUFS, in which case it needs to be reduced.
     fn fragment_size(sendbuf_size: usize) -> usize {
-        (sendbuf_size - RESERVED_SIZE - mem::size_of::<usize>())
+        sendbuf_size - RESERVED_SIZE
+    }
+
+    /// Calculate maximum payload data size of first fragment.
+    ///
+    /// This one is smaller than regular fragments, because it carries the message (size) header.
+    fn first_fragment_size(sendbuf_size: usize) -> usize {
+        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>())
             & (!8usize + 1) // Ensure optimal alignment.
     }
 
@@ -167,7 +170,7 @@ impl UnixSender {
     /// (It might still block if heavy memory pressure causes ENOBUFS,
     /// forcing us to reduce the packet size.)
     pub fn get_max_fragment_size() -> usize {
-        Self::fragment_size(*SYSTEM_SENDBUF_SIZE)
+        Self::first_fragment_size(*SYSTEM_SENDBUF_SIZE)
     }
 
     pub fn send(&self,
@@ -309,16 +312,19 @@ impl UnixSender {
         // Split up the packet into fragments.
         let mut byte_position = 0;
         while byte_position < data.len() {
-            let bytes_per_fragment = Self::fragment_size(sendbuf_size);
-
-            let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
-
+            let end_byte_position;
             let result = if byte_position == 0 {
                 // First fragment. No offset; but contains message header (total size).
                 // The auxiliary data (FDs) is also sent along with this one.
+
+                // This fragment always uses the full allowable buffer size.
+                end_byte_position = Self::first_fragment_size(sendbuf_size);
                 send_first_fragment(self.fd, &fds[..], &data[..end_byte_position], data.len())
             } else {
                 // Followup fragment. No header; but offset by amount of data already sent.
+
+                end_byte_position = cmp::min(byte_position + Self::fragment_size(sendbuf_size),
+                                             data.len());
                 send_followup_fragment(dedicated_tx.fd, &data[byte_position..end_byte_position])
             };
 
@@ -783,7 +789,8 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         // Receive followup fragments directly into the main buffer.
         while main_data_buffer.len() < total_size {
             let write_pos = main_data_buffer.len();
-            let end_pos = cmp::min(write_pos + UnixSender::get_max_fragment_size(), total_size);
+            let end_pos = cmp::min(write_pos + UnixSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
+                                   total_size);
             assert!(end_pos <= main_data_buffer.capacity());
             main_data_buffer.set_len(end_pos);
 
