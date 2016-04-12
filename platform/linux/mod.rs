@@ -194,14 +194,19 @@ impl UnixSender {
                                -> Result<(),UnixError> {
             let result = unsafe {
                 let cmsg_length = mem::size_of_val(fds);
-                let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
-                (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
-                (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
-                (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
+                let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
+                    let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
+                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
+                    (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
+                    (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
-                ptr::copy_nonoverlapping(fds.as_ptr(),
-                                         cmsg_buffer.offset(1) as *mut _ as *mut c_int,
-                                         fds.len());
+                    ptr::copy_nonoverlapping(fds.as_ptr(),
+                                             cmsg_buffer.offset(1) as *mut _ as *mut c_int,
+                                             fds.len());
+                    (cmsg_buffer, CMSG_SPACE(cmsg_length))
+                } else {
+                    (ptr::null_mut(), 0)
+                };
 
                 // First fragment begins with a header recording the total data length.
                 //
@@ -231,7 +236,7 @@ impl UnixSender {
                     msg_iov: iovec.as_ptr(),
                     msg_iovlen: iovec.len(),
                     msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: CMSG_SPACE(cmsg_length),
+                    msg_controllen: cmsg_space,
                     msg_flags: 0,
                 };
 
