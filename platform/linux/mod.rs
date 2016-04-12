@@ -231,18 +231,18 @@ impl UnixSender {
             fds.push(dedicated_rx.fd);
             let (msghdr, mut iovec) = construct_header(&fds[..], &data_buffer[..]);
 
-            let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
-                                         - (mem::size_of::<u32>() * 2 + RESERVED_SIZE);
-
             // Split up the packet into fragments.
+            let mut sendbuf_size = try!(self.get_system_sendbuf_size());
             let mut byte_position = 0;
             let mut this_fragment_id = 0;
             while byte_position < data.len() {
                 if downsize {
                     // We got ENOBUFS. Retry send with half the packet size.
-                    bytes_per_fragment /= 2;
+                    sendbuf_size /= 2;
                     downsize = false;
                 }
+                let bytes_per_fragment = sendbuf_size
+                                         - (mem::size_of::<u32>() * 2 + RESERVED_SIZE);
 
                 let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
                 let next_fragment_id = if end_byte_position == data.len() {
