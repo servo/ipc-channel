@@ -154,7 +154,8 @@ impl UnixSender {
     /// i.e. the value of *SYSTEM_SENDBUF_SIZE --
     /// except after getting ENOBUFS, in which case it needs to be reduced.
     fn fragment_size(sendbuf_size: usize) -> usize {
-        sendbuf_size - RESERVED_SIZE - mem::size_of::<usize>()
+        (sendbuf_size - RESERVED_SIZE - mem::size_of::<usize>())
+            & (!8usize + 1) // Ensure optimal alignment.
     }
 
     /// Maximum data size that can be transferred over this channel in a single packet.
