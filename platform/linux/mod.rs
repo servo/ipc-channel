@@ -138,6 +138,21 @@ impl UnixSender {
         }
     }
 
+    /// Calculate maximum payload data size per fragment.
+    ///
+    /// This is the size of the main data chunk only --
+    /// it's independent of any auxiliary data (FDs) transferred along with it.
+    /// It is the total size of the kernel buffer,
+    /// minus the part reserved by the kernel,
+    /// and with the size of the fragment header also deducted from it.
+    ///
+    /// The `sendbuf_size` passed in should usually be the maximum kernel buffer size,
+    /// as obtained with `get_system_sendbuf_size()` --
+    /// except after getting ENOBUFS, in which case it needs to be reduced.
+    fn fragment_size(sendbuf_size: usize) -> usize {
+        sendbuf_size - RESERVED_SIZE - mem::size_of::<u32>() * 2
+    }
+
     pub fn send(&self,
                 data: &[u8],
                 channels: Vec<UnixChannel>,
@@ -249,8 +264,7 @@ impl UnixSender {
             let mut byte_position = 0;
             let mut this_fragment_id = 0;
             while byte_position < data.len() {
-                let bytes_per_fragment = sendbuf_size
-                                         - (mem::size_of::<u32>() * 2 + RESERVED_SIZE);
+                let bytes_per_fragment = Self::fragment_size(sendbuf_size);
 
                 let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
                 let next_fragment_id = if end_byte_position == data.len() {
