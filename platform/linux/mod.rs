@@ -123,7 +123,7 @@ impl UnixSender {
     ///
     /// Note: This is *not* the actual maximal packet size we are allowed to use...
     /// Some of it is reserved by the kernel for bookkeeping.
-    pub fn get_system_sendbuf_size(&self) -> Result<usize,UnixError> {
+    fn get_system_sendbuf_size(&self) -> Result<usize,UnixError> {
         unsafe {
             let mut socket_sendbuf_size: usize = 0;
             let mut socket_sendbuf_size_len = mem::size_of::<usize>() as socklen_t;
@@ -151,6 +151,19 @@ impl UnixSender {
     /// except after getting ENOBUFS, in which case it needs to be reduced.
     fn fragment_size(sendbuf_size: usize) -> usize {
         sendbuf_size - RESERVED_SIZE - mem::size_of::<u32>() * 2
+    }
+
+    /// Maximum data size that can be transferred over this channel in a single packet.
+    ///
+    /// This is the size of the main data chunk only --
+    /// it's independent of any auxiliary data (FDs) transferred along with it.
+    ///
+    /// A send on this channel won't block for transfers up to this size
+    /// under normal circumstances.
+    /// (It might still block if heavy memory pressure causes ENOBUFS,
+    /// forcing us to reduce the packet size.)
+    pub fn get_max_fragment_size(&self) -> Result<usize,UnixError> {
+        Ok(Self::fragment_size(try!(self.get_system_sendbuf_size())))
     }
 
     pub fn send(&self,
