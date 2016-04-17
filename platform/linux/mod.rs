@@ -28,6 +28,10 @@ const MAX_FDS_IN_CMSG: u32 = 64;
 // Yes, really!
 const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
+// The value Linux returns for SO_SNDBUF
+// is not the size we are actually allowed to use...
+const RESERVED_SIZE: usize = 256;
+
 static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
 
 pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
@@ -227,7 +231,7 @@ impl UnixSender {
             let (msghdr, mut iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
-                                         - (mem::size_of::<u32>() * 2 + 256);
+                                         - (mem::size_of::<u32>() * 2 + RESERVED_SIZE);
 
             // Split up the packet into fragments.
             let mut byte_position = 0;
