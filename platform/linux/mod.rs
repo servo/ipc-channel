@@ -242,98 +242,96 @@ impl UnixSender {
             }
         }
 
-        unsafe {
-            let mut sendbuf_size = try!(self.get_system_sendbuf_size());
+        let mut sendbuf_size = try!(self.get_system_sendbuf_size());
 
-            /// Reduce send buffer size after getting ENOBUFS,
-            /// i.e. when the kernel failed to allocate a large enough buffer.
-            ///
-            /// (If the buffer already was significantly smaller
-            /// than the memory page size though,
-            /// if means something else must have gone wrong;
-            /// so there is no point in further downsizing,
-            /// and we error out instead.)
-            fn downsize(sendbuf_size: &mut usize, sent_size: usize) -> Result<(),()> {
-                if sent_size > 2000 {
-                    *sendbuf_size /= 2;
-                    Ok(())
-                } else {
-                    Err(())
-                }
+        /// Reduce send buffer size after getting ENOBUFS,
+        /// i.e. when the kernel failed to allocate a large enough buffer.
+        ///
+        /// (If the buffer already was significantly smaller
+        /// than the memory page size though,
+        /// if means something else must have gone wrong;
+        /// so there is no point in further downsizing,
+        /// and we error out instead.)
+        fn downsize(sendbuf_size: &mut usize, sent_size: usize) -> Result<(),()> {
+            if sent_size > 2000 {
+                *sendbuf_size /= 2;
+                Ok(())
+            } else {
+                Err(())
             }
-
-            match send_first_fragment(self.fd, &fds[..], &data_buffer[..]) {
-                Ok(_) => return Ok(()),
-                Err(error) => {
-                    if error.0 == libc::ENOBUFS
-                       && downsize(&mut sendbuf_size, data_buffer.len()).is_ok() {
-                        // If we get this error,
-                        // it means the message was small enough to fit the maximum send size,
-                        // but the kernel failed to allocate a buffer large enough
-                        // to actually transfer the message --
-                        // so we have to proceed with a fragmented send nevertheless.
-                    } else if error.0 != libc::EMSGSIZE {
-                        return Err(error)
-                    }
-                },
-            }
-
-            // The packet is too big. Fragmentation time!
-            //
-            // Create dedicated channel to send all but the first fragment.
-            // This way we avoid fragments of different messages interleaving in the receiver.
-            //
-            // The receiver end of the channel is sent with the first fragment
-            // along any other file descriptors that are to be transferred in the message.
-            let (dedicated_tx, dedicated_rx) = try!(channel());
-            // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
-            fds.push(dedicated_rx.fd);
-
-            // Split up the packet into fragments.
-            let mut byte_position = 0;
-            let mut this_fragment_id = 0;
-            while byte_position < data.len() {
-                let bytes_per_fragment = Self::fragment_size(sendbuf_size);
-
-                let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
-                let next_fragment_id = if end_byte_position == data.len() {
-                    0
-                } else {
-                    (LAST_FRAGMENT_ID.fetch_add(1, Ordering::SeqCst) + 1) as u32
-                };
-
-                {
-                    let mut data_buffer = &mut data_buffer[..];
-                    data_buffer.write_u32::<LittleEndian>(this_fragment_id).unwrap();
-                    data_buffer.write_u32::<LittleEndian>(next_fragment_id).unwrap();
-                    data_buffer.write(&data[byte_position..end_byte_position]).unwrap();
-                }
-
-                let bytes_to_send = end_byte_position - byte_position + mem::size_of::<u32>() * 2;
-
-                let result = if byte_position == 0 {
-                    send_first_fragment(self.fd, &fds[..], &data_buffer[..bytes_to_send])
-                } else {
-                    send_followup_fragment(dedicated_tx.fd, &data_buffer[..bytes_to_send])
-                };
-
-                if let Err(error) = result {
-                    if error.0 == libc::ENOBUFS
-                       && downsize(&mut sendbuf_size, bytes_to_send).is_ok() {
-                        // If the kernel failed to allocate a buffer large enough for the packet,
-                        // retry with a smaller size (if possible).
-                        continue
-                    } else {
-                        return Err(error)
-                    }
-                }
-
-                byte_position += bytes_per_fragment;
-                this_fragment_id = next_fragment_id;
-            }
-
-            Ok(())
         }
+
+        match send_first_fragment(self.fd, &fds[..], &data_buffer[..]) {
+            Ok(_) => return Ok(()),
+            Err(error) => {
+                if error.0 == libc::ENOBUFS
+                   && downsize(&mut sendbuf_size, data_buffer.len()).is_ok() {
+                    // If we get this error,
+                    // it means the message was small enough to fit the maximum send size,
+                    // but the kernel failed to allocate a buffer large enough
+                    // to actually transfer the message --
+                    // so we have to proceed with a fragmented send nevertheless.
+                } else if error.0 != libc::EMSGSIZE {
+                    return Err(error)
+                }
+            },
+        }
+
+        // The packet is too big. Fragmentation time!
+        //
+        // Create dedicated channel to send all but the first fragment.
+        // This way we avoid fragments of different messages interleaving in the receiver.
+        //
+        // The receiver end of the channel is sent with the first fragment
+        // along any other file descriptors that are to be transferred in the message.
+        let (dedicated_tx, dedicated_rx) = try!(channel());
+        // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
+        fds.push(dedicated_rx.fd);
+
+        // Split up the packet into fragments.
+        let mut byte_position = 0;
+        let mut this_fragment_id = 0;
+        while byte_position < data.len() {
+            let bytes_per_fragment = Self::fragment_size(sendbuf_size);
+
+            let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
+            let next_fragment_id = if end_byte_position == data.len() {
+                0
+            } else {
+                (LAST_FRAGMENT_ID.fetch_add(1, Ordering::SeqCst) + 1) as u32
+            };
+
+            {
+                let mut data_buffer = &mut data_buffer[..];
+                data_buffer.write_u32::<LittleEndian>(this_fragment_id).unwrap();
+                data_buffer.write_u32::<LittleEndian>(next_fragment_id).unwrap();
+                data_buffer.write(&data[byte_position..end_byte_position]).unwrap();
+            }
+
+            let bytes_to_send = end_byte_position - byte_position + mem::size_of::<u32>() * 2;
+
+            let result = if byte_position == 0 {
+                send_first_fragment(self.fd, &fds[..], &data_buffer[..bytes_to_send])
+            } else {
+                send_followup_fragment(dedicated_tx.fd, &data_buffer[..bytes_to_send])
+            };
+
+            if let Err(error) = result {
+                if error.0 == libc::ENOBUFS
+                   && downsize(&mut sendbuf_size, bytes_to_send).is_ok() {
+                    // If the kernel failed to allocate a buffer large enough for the packet,
+                    // retry with a smaller size (if possible).
+                    continue
+                } else {
+                    return Err(error)
+                }
+            }
+
+            byte_position += bytes_per_fragment;
+            this_fragment_id = next_fragment_id;
+        }
+
+        Ok(())
     }
 
     pub fn connect(name: String) -> Result<UnixSender,UnixError> {
