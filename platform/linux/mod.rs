@@ -227,6 +227,21 @@ impl UnixSender {
             }
         };
 
+        fn send_followup_fragment(sender_fd: c_int, data_buffer: &[u8]) -> Result<(),UnixError> {
+            let result = unsafe {
+                libc::send(sender_fd,
+                           data_buffer.as_ptr() as *const c_void,
+                           data_buffer.len(),
+                           0)
+            };
+
+            if result > 0 {
+                Ok(())
+            } else {
+                Err(UnixError::last())
+            }
+        }
+
         unsafe {
             let mut sendbuf_size = try!(self.get_system_sendbuf_size());
 
@@ -299,16 +314,7 @@ impl UnixSender {
                 let result = if byte_position == 0 {
                     send_first_fragment(self.fd, &fds[..], &data_buffer[..bytes_to_send])
                 } else {
-                    // Trailing fragment.
-                    let result = libc::send(dedicated_tx.fd,
-                                            data_buffer.as_ptr() as *const c_void,
-                                            bytes_to_send,
-                                            0);
-                    if result > 0 {
-                        Ok(())
-                    } else {
-                        Err(UnixError::last())
-                    }
+                    send_followup_fragment(dedicated_tx.fd, &data_buffer[..bytes_to_send])
                 };
 
                 if let Err(error) = result {
