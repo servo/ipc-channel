@@ -188,8 +188,9 @@ impl UnixSender {
             data_buffer.write(data).unwrap();
         }
 
-        unsafe {
-            unsafe fn construct_header(fds: &[c_int], data_buffer: &[u8]) -> (msghdr, Box<iovec>) {
+        fn send_first_fragment(sender_fd: c_int, fds: &[c_int], data_buffer: &[u8])
+                               -> Result<(),UnixError> {
+            let result = unsafe {
                 let cmsg_length = mem::size_of_val(fds);
                 let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
                 (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
@@ -200,27 +201,33 @@ impl UnixSender {
                                          cmsg_buffer.offset(1) as *mut _ as *mut c_int,
                                          fds.len());
 
-                // Put this on the heap so address remains stable across function return.
-                let iovec = Box::new(iovec {
+                let iovec = iovec {
                     iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
                     iov_len: data_buffer.len(),
-                });
-
+                };
                 let msghdr = msghdr {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
-                    msg_iov: &*iovec,
+                    msg_iov: &iovec,
                     msg_iovlen: 1,
                     msg_control: cmsg_buffer as *mut c_void,
                     msg_controllen: CMSG_SPACE(cmsg_length),
                     msg_flags: 0,
                 };
 
-                // Be sure to always return iovec -- whether the caller uses it or not --
-                // to prevent premature deallocation!
-                (msghdr, iovec)
+                let result = sendmsg(sender_fd, &msghdr, 0);
+                libc::free(cmsg_buffer as *mut c_void);
+                result
             };
 
+            if result > 0 {
+                Ok(())
+            } else {
+                Err(UnixError::last())
+            }
+        };
+
+        unsafe {
             let mut sendbuf_size = try!(self.get_system_sendbuf_size());
 
             /// Reduce send buffer size after getting ENOBUFS,
@@ -240,25 +247,20 @@ impl UnixSender {
                 }
             }
 
-            let (msghdr, _iovec) = construct_header(&fds[..], &data_buffer[..]);
-
-            let result = sendmsg(self.fd, &msghdr, 0);
-            libc::free(msghdr.msg_control);
-
-            if result > 0 {
-                return Ok(())
-            } else {
-                let error = UnixError::last();
-                if error.0 == libc::ENOBUFS
-                   && downsize(&mut sendbuf_size, data_buffer.len()).is_ok() {
-                    // If we get this error,
-                    // it means the message was small enough to fit the maximum send size,
-                    // but the kernel failed to allocate a buffer large enough
-                    // to actually transfer the message --
-                    // so we have to proceed with a fragmented send nevertheless.
-                } else if error.0 != libc::EMSGSIZE {
-                    return Err(error)
-                }
+            match send_first_fragment(self.fd, &fds[..], &data_buffer[..]) {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    if error.0 == libc::ENOBUFS
+                       && downsize(&mut sendbuf_size, data_buffer.len()).is_ok() {
+                        // If we get this error,
+                        // it means the message was small enough to fit the maximum send size,
+                        // but the kernel failed to allocate a buffer large enough
+                        // to actually transfer the message --
+                        // so we have to proceed with a fragmented send nevertheless.
+                    } else if error.0 != libc::EMSGSIZE {
+                        return Err(error)
+                    }
+                },
             }
 
             // The packet is too big. Fragmentation time!
@@ -293,25 +295,23 @@ impl UnixSender {
                 }
 
                 let bytes_to_send = end_byte_position - byte_position + mem::size_of::<u32>() * 2;
+
                 let result = if byte_position == 0 {
-                    // First one. This fragment includes the file descriptors.
-
-                    let (msghdr, _iovec) = construct_header(&fds[..],
-                                                            &data_buffer[..bytes_to_send]);
-
-                    let result = sendmsg(self.fd, &msghdr, 0);
-                    libc::free(msghdr.msg_control);
-                    result
+                    send_first_fragment(self.fd, &fds[..], &data_buffer[..bytes_to_send])
                 } else {
                     // Trailing fragment.
-                    libc::send(dedicated_tx.fd,
-                               data_buffer.as_ptr() as *const c_void,
-                               bytes_to_send,
-                               0)
+                    let result = libc::send(dedicated_tx.fd,
+                                            data_buffer.as_ptr() as *const c_void,
+                                            bytes_to_send,
+                                            0);
+                    if result > 0 {
+                        Ok(())
+                    } else {
+                        Err(UnixError::last())
+                    }
                 };
 
-                if result <= 0 {
-                    let error = UnixError::last();
+                if let Err(error) = result {
                     if error.0 == libc::ENOBUFS
                        && downsize(&mut sendbuf_size, bytes_to_send).is_ok() {
                         // If the kernel failed to allocate a buffer large enough for the packet,
