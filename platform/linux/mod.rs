@@ -153,8 +153,8 @@ impl UnixSender {
                                        -> (msghdr, Box<iovec>) {
                 let cmsg_length =
                     (channels.len() + shared_memory_regions.len()) * mem::size_of::<c_int>();
-                let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length as size_t)) as *mut cmsghdr;
-                (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length as size_t);
+                let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
+                (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
                 (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
                 (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
@@ -172,7 +172,7 @@ impl UnixSender {
                 // Put this on the heap so address remains stable across function return.
                 let mut iovec = Box::new(iovec {
                     iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
-                    iov_len: data_buffer.len() as size_t,
+                    iov_len: data_buffer.len(),
                 });
 
                 let msghdr = msghdr {
@@ -181,7 +181,7 @@ impl UnixSender {
                     msg_iov: &mut *iovec,
                     msg_iovlen: 1,
                     msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: CMSG_SPACE(cmsg_length as size_t),
+                    msg_controllen: CMSG_SPACE(cmsg_length),
                     msg_flags: 0,
                 };
 
@@ -229,7 +229,7 @@ impl UnixSender {
 
             let mut bytes_per_fragment = try!(self.get_system_sendbuf_size())
                                          - (mem::size_of::<u32>() * 2
-                                            + msghdr.msg_controllen as usize + 256);
+                                            + msghdr.msg_controllen + 256);
 
             // Split up the packet into fragments.
             let mut byte_position = 0;
@@ -262,14 +262,14 @@ impl UnixSender {
                     // Better reset this in case `data_buffer` moved around -- iterator
                     // invalidation!
                     iovec.iov_base = data_buffer.as_ptr() as *const c_char as *mut c_char;
-                    iovec.iov_len = bytes_to_send as size_t;
+                    iovec.iov_len = bytes_to_send;
 
                     sendmsg(self.fd, &msghdr, 0)
                 } else {
                     // Trailing fragment.
                     libc::send(dedicated_tx.fd,
                                data_buffer.as_ptr() as *const c_void,
-                               bytes_to_send as size_t,
+                               bytes_to_send,
                                0)
                 };
 
@@ -311,10 +311,9 @@ impl UnixSender {
             };
             libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                           name.as_ptr(),
-                          sockaddr.sun_path.len() as size_t - 1);
+                          sockaddr.sun_path.len() - 1);
 
-            let len = mem::size_of::<c_short>() +
-                (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
+            let len = mem::size_of::<c_short>() + libc::strlen(sockaddr.sun_path.as_ptr());
             if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -492,7 +491,7 @@ impl UnixOneShotServer {
                 };
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                               path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() as size_t - 1);
+                              sockaddr.sun_path.len() - 1);
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
@@ -574,7 +573,7 @@ impl Drop for UnixSharedMemory {
     fn drop(&mut self) {
         unsafe {
             if !self.ptr.is_null() {
-                let result = libc::munmap(self.ptr as *mut c_void, self.length as size_t);
+                let result = libc::munmap(self.ptr as *mut c_void, self.length);
                 assert!(thread::panicking() || result == 0);
             }
             let result = libc::close(self.fd);
@@ -587,7 +586,7 @@ impl Clone for UnixSharedMemory {
     fn clone(&self) -> UnixSharedMemory {
         unsafe {
             let new_fd = libc::dup(self.fd);
-            let (address, _) = map_file(new_fd, Some(self.length as size_t));
+            let (address, _) = map_file(new_fd, Some(self.length));
             UnixSharedMemory::from_raw_parts(address, self.length, new_fd)
         }
     }
@@ -627,13 +626,13 @@ impl UnixSharedMemory {
 
     unsafe fn from_fd(fd: c_int) -> UnixSharedMemory {
         let (ptr, length) = map_file(fd, None);
-        UnixSharedMemory::from_raw_parts(ptr, length as usize, fd)
+        UnixSharedMemory::from_raw_parts(ptr, length, fd)
     }
 
     pub fn from_byte(byte: u8, length: usize) -> UnixSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(length);
-            let (address, _) = map_file(fd, Some(length as size_t));
+            let (address, _) = map_file(fd, Some(length));
             for element in slice::from_raw_parts_mut(address, length) {
                 *element = byte;
             }
@@ -644,7 +643,7 @@ impl UnixSharedMemory {
     pub fn from_bytes(bytes: &[u8]) -> UnixSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(bytes.len());
-            let (address, _) = map_file(fd, Some(bytes.len() as size_t));
+            let (address, _) = map_file(fd, Some(bytes.len()));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
             UnixSharedMemory::from_raw_parts(address, bytes.len(), fd)
         }
@@ -704,7 +703,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let channel_length = if cmsg_length == 0 {
             0
         } else {
-            ((cmsg.cmsg_len() as usize) - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
+            (cmsg.cmsg_len() - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
         };
         let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
         for index in 0..channel_length {
@@ -836,7 +835,7 @@ impl UnixCmsg {
             mem::size_of::<c_int>();
         assert!(maximum_recv_size > cmsg_length);
         let mut data_buffer: Vec<u8> = vec![0; maximum_recv_size];
-        let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
+        let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
         let mut iovec = Box::new(iovec {
             iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
             iov_len: data_buffer.len(),
@@ -852,7 +851,7 @@ impl UnixCmsg {
                 msg_iov: iovec_ptr,
                 msg_iovlen: 1,
                 msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length as size_t,
+                msg_controllen: cmsg_length,
                 msg_flags: 0,
             },
         }
@@ -913,17 +912,17 @@ type nfds_t = c_ulong;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
-    CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t) + length
+    CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
 }
 
 #[allow(non_snake_case)]
 fn CMSG_ALIGN(length: size_t) -> size_t {
-    (length + (mem::size_of::<size_t>() as size_t) - 1) & ((!(mem::size_of::<size_t>() - 1)) as size_t)
+    (length + mem::size_of::<size_t>() - 1) & !(mem::size_of::<size_t>() - 1)
 }
 
 #[allow(non_snake_case)]
 fn CMSG_SPACE(length: size_t) -> size_t {
-    CMSG_ALIGN(length) + CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t)
+    CMSG_ALIGN(length) + CMSG_ALIGN(mem::size_of::<cmsghdr>())
 }
 
 #[allow(non_snake_case)]
