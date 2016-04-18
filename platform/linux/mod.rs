@@ -696,7 +696,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         }
 
         let mut cmsg = UnixCmsg::new(maximum_recv_size);
-        let bytes_read = try!(cmsg.recv(fd, blocking_mode)) as usize;
+        let bytes_read = try!(cmsg.recv(fd, blocking_mode));
 
         let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
@@ -741,7 +741,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             // Always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
-            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, BlockingMode::Blocking)) as usize;
+            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, BlockingMode::Blocking));
 
             let this_fragment_id =
                 (&cmsg.data_buffer[0..mem::size_of::<u32>()]).read_u32::<LittleEndian>().unwrap();
@@ -858,7 +858,7 @@ impl UnixCmsg {
     }
 
     unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
-                   -> Result<ssize_t, UnixError> {
+                   -> Result<usize, UnixError> {
         if let BlockingMode::Nonblocking = blocking_mode {
             if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
                 return Err(UnixError::last())
@@ -867,7 +867,7 @@ impl UnixCmsg {
 
         let result = recvmsg(fd, &mut self.msghdr, 0);
         let result = if result > 0 {
-            Ok(result)
+            Ok(result as usize)
         } else if result == 0 {
             Err(UnixError(libc::ECONNRESET))
         } else {
