@@ -7,13 +7,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use bincode::serde::DeserializeError;
+use libc::{self, c_char, c_uint, c_void, size_t};
 use platform::macos::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t};
 use platform::macos::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
 use platform::macos::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use platform::macos::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
-
-use bincode::serde::DeserializeError;
-use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
 use std::ffi::CString;
@@ -105,7 +104,7 @@ const VM_INHERIT_SHARE: vm_inherit_t = 0;
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
-pub fn channel() -> Result<(MachSender, MachReceiver),MachError> {
+pub fn channel() -> Result<(MachSender, MachReceiver), MachError> {
     let receiver = try!(MachReceiver::new());
     let sender = try!(receiver.sender());
     try!(receiver.request_no_senders_notification());
@@ -132,17 +131,15 @@ impl Drop for MachReceiver {
 }
 
 impl MachReceiver {
-    fn new() -> Result<MachReceiver,MachError> {
+    fn new() -> Result<MachReceiver, MachError> {
         let mut port: mach_port_t = 0;
         let os_result = unsafe {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
         };
         if os_result != KERN_SUCCESS {
-            return Err(MachError(os_result))
+            return Err(MachError(os_result));
         }
-        let limits = mach_port_limits_t {
-            mpl_qlimit: MACH_PORT_QLIMIT_MAX,
-        };
+        let limits = mach_port_limits_t { mpl_qlimit: MACH_PORT_QLIMIT_MAX };
         let os_result = unsafe {
             mach_sys::mach_port_set_attributes(mach_task_self(),
                                                port,
@@ -158,9 +155,7 @@ impl MachReceiver {
     }
 
     fn from_name(port: mach_port_t) -> MachReceiver {
-        MachReceiver {
-            port: Cell::new(port),
-        }
+        MachReceiver { port: Cell::new(port) }
     }
 
     fn consume_port(&self) -> mach_port_t {
@@ -174,7 +169,7 @@ impl MachReceiver {
         MachReceiver::from_name(self.consume_port())
     }
 
-    fn sender(&self) -> Result<MachSender,MachError> {
+    fn sender(&self) -> Result<MachSender, MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -193,7 +188,7 @@ impl MachReceiver {
         }
     }
 
-    fn register_bootstrap_name(&self) -> Result<String,MachError> {
+    fn register_bootstrap_name(&self) -> Result<String, MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -202,7 +197,7 @@ impl MachReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
 
 
@@ -214,7 +209,7 @@ impl MachReceiver {
                                                               &mut right,
                                                               &mut acquired_right);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
@@ -225,32 +220,29 @@ impl MachReceiver {
                 let c_name = CString::new(name.clone()).unwrap();
                 os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), right, 0);
                 if os_result == BOOTSTRAP_NAME_IN_USE {
-                    continue
+                    continue;
                 }
                 if os_result != BOOTSTRAP_SUCCESS {
-                    return Err(MachError(os_result))
+                    return Err(MachError(os_result));
                 }
-                break
+                break;
             }
             Ok(name)
         }
     }
 
-    fn unregister_global_name(name: String) -> Result<(),MachError> {
+    fn unregister_global_name(name: String) -> Result<(), MachError> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
 
             let c_name = CString::new(name).unwrap();
-            let os_result = bootstrap_register2(bootstrap_port,
-                                                c_name.as_ptr(),
-                                                MACH_PORT_NULL,
-                                                0);
+            let os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), MACH_PORT_NULL, 0);
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(())
             } else {
@@ -259,7 +251,7 @@ impl MachReceiver {
         }
     }
 
-    fn request_no_senders_notification(&self) -> Result<(),MachError> {
+    fn request_no_senders_notification(&self) -> Result<(), MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -272,15 +264,16 @@ impl MachReceiver {
                                                          MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
                                                          &mut 0);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
         }
         Ok(())
     }
 
-    fn recv_with_blocking_mode(&self, blocking_mode: BlockingMode)
-                               -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),
-                                         MachError> {
+    fn recv_with_blocking_mode
+        (&self,
+         blocking_mode: BlockingMode)
+         -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>), MachError> {
         select(self.port.get(), blocking_mode).and_then(|result| {
             match result {
                 MachSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
@@ -291,13 +284,13 @@ impl MachReceiver {
         })
     }
 
-    pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>), MachError> {
         self.recv_with_blocking_mode(BlockingMode::Blocking)
     }
 
-    pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>),MachError> {
+    pub fn try_recv
+        (&self)
+         -> Result<(Vec<u8>, Vec<OpaqueMachChannel>, Vec<MachSharedMemory>), MachError> {
         self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 }
@@ -317,7 +310,9 @@ impl Drop for MachSender {
             // `KERN_INVALID_RIGHT` is returned if (as far as I can tell) the receiver already shut
             // down. This is fine.
             if error != KERN_SUCCESS && error != KERN_INVALID_RIGHT {
-                panic!("mach_port_mod_refs(-1, {}) failed: {:08x}", self.port, error)
+                panic!("mach_port_mod_refs(-1, {}) failed: {:08x}",
+                       self.port,
+                       error)
             }
         }
     }
@@ -331,27 +326,23 @@ impl Clone for MachSender {
                                                  MACH_PORT_RIGHT_SEND,
                                                  1) == KERN_SUCCESS);
         }
-        MachSender {
-            port: self.port,
-        }
+        MachSender { port: self.port }
     }
 }
 
 impl MachSender {
     fn from_name(port: mach_port_t) -> MachSender {
-        MachSender {
-            port: port,
-        }
+        MachSender { port: port }
     }
 
-    pub fn connect(name: String) -> Result<MachSender,MachError> {
+    pub fn connect(name: String) -> Result<MachSender, MachError> {
         unsafe {
             let mut bootstrap_port = 0;
             let os_result = mach_sys::task_get_special_port(mach_task_self(),
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
 
             let mut port = 0;
@@ -369,12 +360,11 @@ impl MachSender {
                 data: &[u8],
                 ports: Vec<MachChannel>,
                 shared_memory_regions: Vec<MachSharedMemory>)
-                -> Result<(),MachError> {
+                -> Result<(), MachError> {
         unsafe {
             let size = Message::size_of(data.len(), ports.len(), shared_memory_regions.len());
             let message = libc::malloc(size as size_t) as *mut Message;
-            (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
-                MACH_MSGH_BITS_COMPLEX;
+            (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) | MACH_MSGH_BITS_COMPLEX;
             (*message).header.msgh_size = size as u32;
             (*message).header.msgh_local_port = MACH_PORT_NULL;
             (*message).header.msgh_remote_port = self.port;
@@ -432,7 +422,7 @@ impl MachSender {
                                                MACH_PORT_NULL);
             libc::free(message as *mut _);
             if os_result != MACH_MSG_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError(os_result));
             }
             Ok(())
         }
@@ -467,15 +457,11 @@ impl Drop for OpaqueMachChannel {
 
 impl OpaqueMachChannel {
     fn from_name(name: mach_port_t) -> OpaqueMachChannel {
-        OpaqueMachChannel {
-            port: name,
-        }
+        OpaqueMachChannel { port: name }
     }
 
     pub fn to_sender(&mut self) -> MachSender {
-        MachSender {
-            port: mem::replace(&mut self.port, MACH_PORT_NULL),
-        }
+        MachSender { port: mem::replace(&mut self.port, MACH_PORT_NULL) }
     }
 
     pub fn to_receiver(&mut self) -> MachReceiver {
@@ -488,21 +474,19 @@ pub struct MachReceiverSet {
 }
 
 impl MachReceiverSet {
-    pub fn new() -> Result<MachReceiverSet,MachError> {
+    pub fn new() -> Result<MachReceiverSet, MachError> {
         let mut port: mach_port_t = 0;
         let os_result = unsafe {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_PORT_SET, &mut port)
         };
         if os_result == KERN_SUCCESS {
-            Ok(MachReceiverSet {
-                port: Cell::new(port),
-            })
+            Ok(MachReceiverSet { port: Cell::new(port) })
         } else {
             Err(MachError(os_result))
         }
     }
 
-    pub fn add(&mut self, receiver: MachReceiver) -> Result<i64,MachError> {
+    pub fn add(&mut self, receiver: MachReceiver) -> Result<i64, MachError> {
         let receiver_port = receiver.consume_port();
         let os_result = unsafe {
             mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
@@ -514,12 +498,10 @@ impl MachReceiverSet {
         }
     }
 
-    pub fn select(&mut self) -> Result<Vec<MachSelectionResult>,MachError> {
+    pub fn select(&mut self) -> Result<Vec<MachSelectionResult>, MachError> {
         match select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result]) {
             Ok(results) => Ok(results),
-            Err(error) => {
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -536,7 +518,8 @@ impl MachSelectionResult {
                 (id, data, channels, shared_memory_regions)
             }
             MachSelectionResult::ChannelClosed(id) => {
-                panic!("MachSelectionResult::unwrap(): receiver ID {} was closed!", id)
+                panic!("MachSelectionResult::unwrap(): receiver ID {} was closed!",
+                       id)
             }
         }
     }
@@ -548,8 +531,9 @@ enum BlockingMode {
     Nonblocking,
 }
 
-fn select(port: mach_port_t, blocking_mode: BlockingMode)
-          -> Result<MachSelectionResult,MachError> {
+fn select(port: mach_port_t,
+          blocking_mode: BlockingMode)
+          -> Result<MachSelectionResult, MachError> {
     debug_assert!(port != MACH_PORT_NULL);
     unsafe {
         let mut buffer = [0; SMALL_MESSAGE_SIZE];
@@ -594,7 +578,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                         }
                         os_result => {
                             libc::free(allocated_buffer.unwrap() as *mut _);
-                            return Err(MachError(os_result))
+                            return Err(MachError(os_result));
                         }
                     }
                 }
@@ -605,7 +589,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
 
         let local_port = (*message).header.msgh_local_port;
         if (*message).header.msgh_id == MACH_NOTIFY_NO_SENDERS {
-            return Ok(MachSelectionResult::ChannelClosed(local_port as i64))
+            return Ok(MachSelectionResult::ChannelClosed(local_port as i64));
         }
 
         let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
@@ -613,7 +597,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
         let mut descriptors_remaining = (*message).body.msgh_descriptor_count;
         while descriptors_remaining > 0 {
             if (*port_descriptor).type_ != MACH_MSG_PORT_DESCRIPTOR {
-                break
+                break;
             }
             ports.push(OpaqueMachChannel::from_name((*port_descriptor).name));
             port_descriptor = port_descriptor.offset(1);
@@ -632,7 +616,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
 
         let payload_ptr = shared_memory_descriptor as *mut u8;
         let payload_size = message as usize + ((*message).header.msgh_size as usize) -
-            (shared_memory_descriptor as usize);
+                           (shared_memory_descriptor as usize);
         let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
 
         if let Some(allocated_buffer) = allocated_buffer {
@@ -658,21 +642,21 @@ impl Drop for MachOneShotServer {
 }
 
 impl MachOneShotServer {
-    pub fn new() -> Result<(MachOneShotServer, String),MachError> {
+    pub fn new() -> Result<(MachOneShotServer, String), MachError> {
         let receiver = try!(MachReceiver::new());
         let name = try!(receiver.register_bootstrap_name());
         Ok((MachOneShotServer {
             receiver: Some(receiver),
             name: name.clone(),
-        }, name))
+        },
+            name))
     }
 
     pub fn accept(mut self) -> Result<(MachReceiver,
                                        Vec<u8>,
                                        Vec<OpaqueMachChannel>,
-                                       Vec<MachSharedMemory>),MachError> {
-        let (bytes, channels, shared_memory_regions) =
-            try!(self.receiver.as_mut().unwrap().recv());
+                                       Vec<MachSharedMemory>), MachError> {
+        let (bytes, channels, shared_memory_regions) = try!(self.receiver.as_mut().unwrap().recv());
         Ok((mem::replace(&mut self.receiver, None).unwrap(),
             bytes,
             channels,
@@ -692,9 +676,8 @@ impl Drop for MachSharedMemory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe {
-                assert!(mach_sys::vm_deallocate(mach_task_self(),
-                                                self.ptr as usize,
-                                                self.length) == KERN_SUCCESS);
+                assert!(mach_sys::vm_deallocate(mach_task_self(), self.ptr as usize, self.length) ==
+                        KERN_SUCCESS);
             }
         }
     }
@@ -743,9 +726,7 @@ impl Deref for MachSharedMemory {
         if self.ptr.is_null() && self.length > 0 {
             panic!("attempted to access a consumed `MachSharedMemory`")
         }
-        unsafe {
-            slice::from_raw_parts(self.ptr, self.length)
-        }
+        unsafe { slice::from_raw_parts(self.ptr, self.length) }
     }
 }
 
@@ -804,9 +785,9 @@ struct Message {
 impl Message {
     fn size_of(data_length: usize, port_length: usize, shared_memory_length: usize) -> usize {
         let mut size = mem::size_of::<Message>() +
-            mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
-            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            data_length;
+                       mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
+                       mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
+                       data_length;
 
         // Round up to the next 4 bytes.
         if (size & 0x3) != 0 {
@@ -861,51 +842,55 @@ impl From<MachError> for Error {
             MACH_SEND_INVALID_DATA => Error::new(ErrorKind::InvalidData, "Bogus in-line data."),
             MACH_SEND_INVALID_DEST => Error::new(ErrorKind::NotFound, "Bogus destination port."),
             MACH_SEND_TIMED_OUT => {
-                Error::new(ErrorKind::TimedOut, "Message not sent before timeout expired.")
+                Error::new(ErrorKind::TimedOut,
+                           "Message not sent before timeout expired.")
             }
             MACH_SEND_INVALID_VOUCHER => Error::new(ErrorKind::NotFound, "Bogus voucher port."),
             MACH_SEND_INTERRUPTED => Error::new(ErrorKind::Interrupted, "Software interrupt."),
             MACH_SEND_MSG_TOO_SMALL => {
-                Error::new(ErrorKind::InvalidData, "Data doesn't contain a complete message.")
+                Error::new(ErrorKind::InvalidData,
+                           "Data doesn't contain a complete message.")
             }
             MACH_SEND_INVALID_REPLY => Error::new(ErrorKind::InvalidInput, "Bogus reply port."),
             MACH_SEND_INVALID_RIGHT => {
-                Error::new(ErrorKind::InvalidInput, "Bogus port rights in the message body.")
+                Error::new(ErrorKind::InvalidInput,
+                           "Bogus port rights in the message body.")
             }
             MACH_SEND_INVALID_NOTIFY => {
                 Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
             }
             MACH_SEND_INVALID_MEMORY => {
-                Error::new(ErrorKind::InvalidInput, "Invalid out-of-line memory pointer.")
+                Error::new(ErrorKind::InvalidInput,
+                           "Invalid out-of-line memory pointer.")
             }
-            MACH_SEND_NO_BUFFER => {
-                Error::new(ErrorKind::Other, "No message buffer is available.")
-            }
-            MACH_SEND_TOO_LARGE => {
-                Error::new(ErrorKind::InvalidData, "Send is too large for port")
-            }
+            MACH_SEND_NO_BUFFER => Error::new(ErrorKind::Other, "No message buffer is available."),
+            MACH_SEND_TOO_LARGE => Error::new(ErrorKind::InvalidData, "Send is too large for port"),
             MACH_SEND_INVALID_TYPE => {
                 Error::new(ErrorKind::InvalidInput, "Invalid msg-type specification.")
             }
             MACH_SEND_INVALID_HEADER => {
-                Error::new(ErrorKind::InvalidInput, "A field in the header had a bad value.")
+                Error::new(ErrorKind::InvalidInput,
+                           "A field in the header had a bad value.")
             }
             MACH_SEND_INVALID_TRAILER => {
                 Error::new(ErrorKind::InvalidData,
                            "The trailer to be sent does not match kernel format.")
             }
             MACH_SEND_INVALID_RT_OOL_SIZE => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
+                Error::new(ErrorKind::Other,
+                           "compatibility: no longer a returned error")
             }
             MACH_RCV_IN_PROGRESS => {
                 Error::new(ErrorKind::Interrupted,
                            "Thread is waiting for receive.  (Internal use only.)")
             }
             MACH_RCV_INVALID_NAME => {
-                Error::new(ErrorKind::InvalidInput, "Bogus name for receive port/port-set.")
+                Error::new(ErrorKind::InvalidInput,
+                           "Bogus name for receive port/port-set.")
             }
             MACH_RCV_TIMED_OUT => {
-                Error::new(ErrorKind::TimedOut, "Didn't get a message within the timeout value.")
+                Error::new(ErrorKind::TimedOut,
+                           "Didn't get a message within the timeout value.")
             }
             MACH_RCV_TOO_LARGE => {
                 Error::new(ErrorKind::InvalidInput,
@@ -913,25 +898,31 @@ impl From<MachError> for Error {
             }
             MACH_RCV_INTERRUPTED => Error::new(ErrorKind::Interrupted, "Software interrupt."),
             MACH_RCV_PORT_CHANGED => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
+                Error::new(ErrorKind::Other,
+                           "compatibility: no longer a returned error")
             }
             MACH_RCV_INVALID_NOTIFY => {
                 Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
             }
             MACH_RCV_INVALID_DATA => {
-                Error::new(ErrorKind::InvalidInput, "Bogus message buffer for inline data.")
+                Error::new(ErrorKind::InvalidInput,
+                           "Bogus message buffer for inline data.")
             }
             MACH_RCV_PORT_DIED => {
-                Error::new(ErrorKind::BrokenPipe, "Port/set was sent away/died during receive.")
+                Error::new(ErrorKind::BrokenPipe,
+                           "Port/set was sent away/died during receive.")
             }
             MACH_RCV_IN_SET => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
+                Error::new(ErrorKind::Other,
+                           "compatibility: no longer a returned error")
             }
             MACH_RCV_HEADER_ERROR => {
-                Error::new(ErrorKind::Other, "Error receiving message header.  See special bits.")
+                Error::new(ErrorKind::Other,
+                           "Error receiving message header.  See special bits.")
             }
             MACH_RCV_BODY_ERROR => {
-                Error::new(ErrorKind::Other, "Error receiving message body.  See special bits.")
+                Error::new(ErrorKind::Other,
+                           "Error receiving message body.  See special bits.")
             }
             MACH_RCV_INVALID_TYPE => {
                 Error::new(ErrorKind::InvalidInput,
@@ -957,10 +948,14 @@ impl From<MachError> for Error {
     }
 }
 
-extern {
-    fn bootstrap_register2(bp: mach_port_t, service_name: name_t, sp: mach_port_t, flags: u64)
+extern "C" {
+    fn bootstrap_register2(bp: mach_port_t,
+                           service_name: name_t,
+                           sp: mach_port_t,
+                           flags: u64)
                            -> kern_return_t;
-    fn bootstrap_look_up(bp: mach_port_t, service_name: name_t, sp: *mut mach_port_t)
+    fn bootstrap_look_up(bp: mach_port_t,
+                         service_name: name_t,
+                         sp: *mut mach_port_t)
                          -> kern_return_t;
 }
-

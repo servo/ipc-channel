@@ -7,11 +7,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
-use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
-
-use bincode::{self, SizeLimit};
 use bincode::serde::DeserializeError;
+use bincode::{self, SizeLimit};
+use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
+use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::{RefCell, BorrowState};
 use std::cmp::min;
@@ -37,8 +36,9 @@ thread_local! {
         RefCell::new(Vec::new())
 }
 
-pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
-                  where T: Deserialize + Serialize {
+pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>), Error>
+    where T: Deserialize + Serialize
+{
     let (os_sender, os_receiver) = try!(platform::channel());
     let ipc_receiver = IpcReceiver {
         os_receiver: os_receiver,
@@ -51,44 +51,46 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
     Ok((ipc_sender, ipc_receiver))
 }
 
-pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
+pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver), Error> {
     let (os_sender, os_receiver) = try!(platform::channel());
-    let ipc_bytes_receiver = IpcBytesReceiver {
-        os_receiver: os_receiver,
-    };
-    let ipc_bytes_sender = IpcBytesSender {
-        os_sender: os_sender,
-    };
+    let ipc_bytes_receiver = IpcBytesReceiver { os_receiver: os_receiver };
+    let ipc_bytes_sender = IpcBytesSender { os_sender: os_sender };
     Ok((ipc_bytes_sender, ipc_bytes_receiver))
 }
 
 #[derive(Debug)]
-pub struct IpcReceiver<T> where T: Deserialize + Serialize {
+pub struct IpcReceiver<T>
+    where T: Deserialize + Serialize
+{
     os_receiver: OsIpcReceiver,
     phantom: PhantomData<T>,
 }
 
-impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
-    pub fn recv(&self) -> Result<T,DeserializeError> {
+impl<T> IpcReceiver<T>
+    where T: Deserialize + Serialize
+{
+    pub fn recv(&self) -> Result<T, DeserializeError> {
         let (data, os_ipc_channels, os_ipc_shared_memory_regions) = try!(self.os_receiver.recv());
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
-    pub fn try_recv(&self) -> Result<T,DeserializeError> {
-        let (data, os_ipc_channels, os_ipc_shared_memory_regions) =
-            try!(self.os_receiver.try_recv());
+    pub fn try_recv(&self) -> Result<T, DeserializeError> {
+        let (data, os_ipc_channels, os_ipc_shared_memory_regions) = try!(self.os_receiver
+                                                                             .try_recv());
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
     pub fn to_opaque(self) -> OpaqueIpcReceiver {
-        OpaqueIpcReceiver {
-            os_receiver: self.os_receiver,
-        }
+        OpaqueIpcReceiver { os_receiver: self.os_receiver }
     }
 }
 
-impl<T> Deserialize for IpcReceiver<T> where T: Deserialize + Serialize {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+impl<T> Deserialize for IpcReceiver<T>
+    where T: Deserialize + Serialize
+{
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let index: usize = try!(Deserialize::deserialize(deserializer));
         let os_receiver =
             OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
@@ -103,8 +105,12 @@ impl<T> Deserialize for IpcReceiver<T> where T: Deserialize + Serialize {
     }
 }
 
-impl<T> Serialize for IpcReceiver<T> where T: Deserialize + Serialize {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+impl<T> Serialize for IpcReceiver<T>
+    where T: Deserialize + Serialize
+{
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             let mut os_ipc_channels_for_serialization =
                 os_ipc_channels_for_serialization.borrow_mut();
@@ -118,12 +124,16 @@ impl<T> Serialize for IpcReceiver<T> where T: Deserialize + Serialize {
 }
 
 #[derive(Debug)]
-pub struct IpcSender<T> where T: Serialize {
+pub struct IpcSender<T>
+    where T: Serialize
+{
     os_sender: OsIpcSender,
     phantom: PhantomData<T>,
 }
 
-impl<T> Clone for IpcSender<T> where T: Serialize {
+impl<T> Clone for IpcSender<T>
+    where T: Serialize
+{
     fn clone(&self) -> IpcSender<T> {
         IpcSender {
             os_sender: self.os_sender.clone(),
@@ -132,15 +142,17 @@ impl<T> Clone for IpcSender<T> where T: Serialize {
     }
 }
 
-impl<T> IpcSender<T> where T: Serialize {
-    pub fn connect(name: String) -> Result<IpcSender<T>,Error> {
+impl<T> IpcSender<T>
+    where T: Serialize
+{
+    pub fn connect(name: String) -> Result<IpcSender<T>, Error> {
         Ok(IpcSender {
             os_sender: try!(OsIpcSender::connect(name)),
             phantom: PhantomData,
         })
     }
 
-    pub fn send(&self, data: T) -> Result<(),Error> {
+    pub fn send(&self, data: T) -> Result<(), Error> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
@@ -178,14 +190,16 @@ impl<T> IpcSender<T> where T: Serialize {
     }
 
     pub fn to_opaque(self) -> OpaqueIpcSender {
-        OpaqueIpcSender {
-            os_sender: self.os_sender,
-        }
+        OpaqueIpcSender { os_sender: self.os_sender }
     }
 }
 
-impl<T> Deserialize for IpcSender<T> where T: Serialize {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+impl<T> Deserialize for IpcSender<T>
+    where T: Serialize
+{
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let os_sender = try!(deserialize_os_ipc_sender(deserializer));
         Ok(IpcSender {
             os_sender: os_sender,
@@ -194,8 +208,12 @@ impl<T> Deserialize for IpcSender<T> where T: Serialize {
     }
 }
 
-impl<T> Serialize for IpcSender<T> where T: Serialize {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+impl<T> Serialize for IpcSender<T>
+    where T: Serialize
+{
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         serialize_os_ipc_sender(&self.os_sender, serializer)
     }
 }
@@ -205,26 +223,26 @@ pub struct IpcReceiverSet {
 }
 
 impl IpcReceiverSet {
-    pub fn new() -> Result<IpcReceiverSet,Error> {
-        Ok(IpcReceiverSet {
-            os_receiver_set: try!(OsIpcReceiverSet::new()),
-        })
+    pub fn new() -> Result<IpcReceiverSet, Error> {
+        Ok(IpcReceiverSet { os_receiver_set: try!(OsIpcReceiverSet::new()) })
     }
 
-    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,Error>
-                  where T: Deserialize + Serialize {
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64, Error>
+        where T: Deserialize + Serialize
+    {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
-    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,Error> {
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64, Error> {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
-    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,Error> {
+    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>, Error> {
         let results = try!(self.os_receiver_set.select());
-        Ok(results.into_iter().map(|result| {
-            match result {
-                OsIpcSelectionResult::DataReceived(os_receiver_id,
+        Ok(results.into_iter()
+                  .map(|result| {
+                      match result {
+                          OsIpcSelectionResult::DataReceived(os_receiver_id,
                                                    data,
                                                    os_ipc_channels,
                                                    os_ipc_shared_memory_regions) => {
@@ -238,11 +256,12 @@ impl IpcReceiverSet {
                                 }).collect(),
                     })
                 }
-                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
-                    IpcSelectionResult::ChannelClosed(os_receiver_id)
-                }
-            }
-        }).collect())
+                          OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                              IpcSelectionResult::ChannelClosed(os_receiver_id)
+                          }
+                      }
+                  })
+                  .collect())
     }
 }
 
@@ -261,7 +280,9 @@ impl Deref for IpcSharedMemory {
 }
 
 impl Deserialize for IpcSharedMemory {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let index: usize = try!(Deserialize::deserialize(deserializer));
         let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
             |os_ipc_shared_memory_regions_for_deserialization| {
@@ -271,14 +292,14 @@ impl Deserialize for IpcSharedMemory {
                     &mut os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index],
                     None).unwrap()
             });
-        Ok(IpcSharedMemory {
-            os_shared_memory: os_shared_memory,
-        })
+        Ok(IpcSharedMemory { os_shared_memory: os_shared_memory })
     }
 }
 
 impl Serialize for IpcSharedMemory {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         let index = OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
             |os_ipc_shared_memory_regions_for_serialization| {
                 let mut os_ipc_shared_memory_regions_for_serialization =
@@ -294,15 +315,11 @@ impl Serialize for IpcSharedMemory {
 
 impl IpcSharedMemory {
     pub fn from_bytes(bytes: &[u8]) -> IpcSharedMemory {
-        IpcSharedMemory {
-            os_shared_memory: OsIpcSharedMemory::from_bytes(bytes),
-        }
+        IpcSharedMemory { os_shared_memory: OsIpcSharedMemory::from_bytes(bytes) }
     }
 
     pub fn from_byte(byte: u8, length: usize) -> IpcSharedMemory {
-        IpcSharedMemory {
-            os_shared_memory: OsIpcSharedMemory::from_byte(byte, length),
-        }
+        IpcSharedMemory { os_shared_memory: OsIpcSharedMemory::from_byte(byte, length) }
     }
 }
 
@@ -348,12 +365,15 @@ impl OpaqueIpcMessage {
             os_ipc_shared_memory_regions:
                 os_ipc_shared_memory_regions.into_iter()
                                             .map(|os_ipc_shared_memory_region| {
-                    Some(os_ipc_shared_memory_region)
-                }).collect(),
+                                                Some(os_ipc_shared_memory_region)
+                                            })
+                                            .collect(),
         }
     }
 
-    pub fn to<T>(mut self) -> Result<T,DeserializeError> where T: Deserialize + Serialize {
+    pub fn to<T>(mut self) -> Result<T, DeserializeError>
+        where T: Deserialize + Serialize
+    {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
                     |os_ipc_shared_memory_regions_for_deserialization| {
@@ -389,7 +409,9 @@ pub struct OpaqueIpcSender {
 }
 
 impl OpaqueIpcSender {
-    pub fn to<T>(self) -> IpcSender<T> where T: Deserialize + Serialize {
+    pub fn to<T>(self) -> IpcSender<T>
+        where T: Deserialize + Serialize
+    {
         IpcSender {
             os_sender: self.os_sender,
             phantom: PhantomData,
@@ -398,16 +420,18 @@ impl OpaqueIpcSender {
 }
 
 impl Deserialize for OpaqueIpcSender {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let os_sender = try!(deserialize_os_ipc_sender(deserializer));
-        Ok(OpaqueIpcSender {
-            os_sender: os_sender,
-        })
+        Ok(OpaqueIpcSender { os_sender: os_sender })
     }
 }
 
 impl Serialize for OpaqueIpcSender {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         serialize_os_ipc_sender(&self.os_sender, serializer)
     }
 }
@@ -422,30 +446,37 @@ pub struct IpcOneShotServer<T> {
     phantom: PhantomData<T>,
 }
 
-impl<T> IpcOneShotServer<T> where T: Deserialize + Serialize {
-    pub fn new() -> Result<(IpcOneShotServer<T>, String),Error> {
+impl<T> IpcOneShotServer<T>
+    where T: Deserialize + Serialize
+{
+    pub fn new() -> Result<(IpcOneShotServer<T>, String), Error> {
         let (os_server, name) = try!(OsIpcOneShotServer::new());
         Ok((IpcOneShotServer {
             os_server: os_server,
             phantom: PhantomData,
-        }, name))
+        },
+            name))
     }
 
-    pub fn accept(self) -> Result<(IpcReceiver<T>,T),DeserializeError> {
-        let (os_receiver, data, os_channels, os_shared_memory_regions) =
-            try!(self.os_server.accept());
+    pub fn accept(self) -> Result<(IpcReceiver<T>, T), DeserializeError> {
+        let (os_receiver, data, os_channels, os_shared_memory_regions) = try!(self.os_server
+                                                                                  .accept());
         let value = try!(OpaqueIpcMessage {
-            data: data,
-            os_ipc_channels: os_channels,
-            os_ipc_shared_memory_regions: os_shared_memory_regions.into_iter()
-                                                                  .map(|os_shared_memory_region| {
-                Some(os_shared_memory_region)
-            }).collect(),
-        }.to());
+                             data: data,
+                             os_ipc_channels: os_channels,
+                             os_ipc_shared_memory_regions:
+                                 os_shared_memory_regions.into_iter()
+                                                         .map(|os_shared_memory_region| {
+                                                             Some(os_shared_memory_region)
+                                                         })
+                                                         .collect(),
+                         }
+                         .to());
         Ok((IpcReceiver {
             os_receiver: os_receiver,
             phantom: PhantomData,
-        }, value))
+        },
+            value))
     }
 }
 
@@ -456,7 +487,7 @@ pub struct IpcBytesReceiver {
 
 impl IpcBytesReceiver {
     #[inline]
-    pub fn recv(&self) -> Result<Vec<u8>,DeserializeError> {
+    pub fn recv(&self) -> Result<Vec<u8>, DeserializeError> {
         match self.os_receiver.recv() {
             Ok((data, _, _)) => Ok(data),
             Err(err) => Err(err.into()),
@@ -465,7 +496,9 @@ impl IpcBytesReceiver {
 }
 
 impl Deserialize for IpcBytesReceiver {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let index: usize = try!(Deserialize::deserialize(deserializer));
         let os_receiver =
             OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
@@ -473,14 +506,14 @@ impl Deserialize for IpcBytesReceiver {
                 // of bounds. We should return an `Err` result instead.
                 os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver()
             });
-        Ok(IpcBytesReceiver {
-            os_receiver: os_receiver,
-        })
+        Ok(IpcBytesReceiver { os_receiver: os_receiver })
     }
 }
 
 impl Serialize for IpcBytesReceiver {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             let mut os_ipc_channels_for_serialization =
                 os_ipc_channels_for_serialization.borrow_mut();
@@ -500,39 +533,41 @@ pub struct IpcBytesSender {
 
 impl Clone for IpcBytesSender {
     fn clone(&self) -> IpcBytesSender {
-        IpcBytesSender {
-            os_sender: self.os_sender.clone(),
-        }
+        IpcBytesSender { os_sender: self.os_sender.clone() }
     }
 }
 
 impl Deserialize for IpcBytesSender {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error> where D: Deserializer {
+    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+        where D: Deserializer
+    {
         let os_sender = try!(deserialize_os_ipc_sender(deserializer));
-        Ok(IpcBytesSender {
-            os_sender: os_sender,
-        })
+        Ok(IpcBytesSender { os_sender: os_sender })
     }
 }
 
 impl Serialize for IpcBytesSender {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(),S::Error> where S: Serializer {
+    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+        where S: Serializer
+    {
         serialize_os_ipc_sender(&self.os_sender, serializer)
     }
 }
 
 impl IpcBytesSender {
     #[inline]
-    pub fn send(&self, data: &[u8]) -> Result<(),Error> {
+    pub fn send(&self, data: &[u8]) -> Result<(), Error> {
         self.os_sender.send(data, vec![], vec![]).map_err(|e| Error::from(e))
     }
 }
 
-fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender, serializer: &mut S)
-                              -> Result<(),S::Error> where S: Serializer {
+fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender,
+                              serializer: &mut S)
+                              -> Result<(), S::Error>
+    where S: Serializer
+{
     let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
-        let mut os_ipc_channels_for_serialization =
-            os_ipc_channels_for_serialization.borrow_mut();
+        let mut os_ipc_channels_for_serialization = os_ipc_channels_for_serialization.borrow_mut();
         let index = os_ipc_channels_for_serialization.len();
         os_ipc_channels_for_serialization.push(OsIpcChannel::Sender(os_ipc_sender.clone()));
         index
@@ -540,8 +575,9 @@ fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender, serializer: &mut S)
     index.serialize(serializer)
 }
 
-fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
-                                -> Result<OsIpcSender, D::Error> where D: Deserializer {
+fn deserialize_os_ipc_sender<D>(deserializer: &mut D) -> Result<OsIpcSender, D::Error>
+    where D: Deserializer
+{
     let index: usize = try!(Deserialize::deserialize(deserializer));
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
         // FIXME(pcwalton): This could panic if the data was corrupt and the index was out of
@@ -551,6 +587,6 @@ fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
 }
 
 fn recursive_io_error() -> Error {
-    Error::new(ErrorKind::Other, "recursive IPC channel use during serialization")
+    Error::new(ErrorKind::Other,
+               "recursive IPC channel use during serialization")
 }
-

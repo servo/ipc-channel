@@ -12,8 +12,7 @@
 #![cfg_attr(test, feature(time2))]
 #![plugin(serde_macros)]
 
-#[macro_use]
-extern crate lazy_static;
+#[macro_use] extern crate lazy_static;
 
 extern crate bincode;
 extern crate byteorder;
@@ -28,4 +27,3 @@ pub mod router;
 
 #[cfg(test)]
 mod test;
-

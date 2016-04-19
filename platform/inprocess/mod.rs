@@ -8,17 +8,16 @@
 // except according to those terms.
 
 use bincode::serde::DeserializeError;
+use std::cell::RefCell;
+use std::cmp::PartialEq;
+use std::collections::hash_map::HashMap;
+use std::fmt::{self, Debug, Formatter};
+use std::io::{Error, ErrorKind};
+use std::mem;
+use std::ops::Deref;
+use std::slice;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::collections::hash_map::HashMap;
-use std::cell::{RefCell};
-use std::io::{Error, ErrorKind};
-use std::slice;
-use std::fmt::{self, Debug, Formatter};
-use std::cmp::{PartialEq};
-use std::ops::Deref;
-use std::mem;
-
 use uuid::Uuid;
 
 struct ServerRecord {
@@ -47,12 +46,12 @@ impl ServerRecord {
 }
 
 lazy_static! {
-    static ref ONE_SHOT_SERVERS: Mutex<HashMap<String,ServerRecord>> = Mutex::new(HashMap::new());
+    static ref ONE_SHOT_SERVERS: Mutex<HashMap<String, ServerRecord>> = Mutex::new(HashMap::new());
 }
 
 struct MpscChannelMessage(Vec<u8>, Vec<MpscChannel>, Vec<MpscSharedMemory>);
 
-pub fn channel() -> Result<(MpscSender, MpscReceiver),MpscError> {
+pub fn channel() -> Result<(MpscSender, MpscReceiver), MpscError> {
     let (base_sender, base_receiver) = mpsc::channel::<MpscChannelMessage>();
     Ok((MpscSender::new(base_sender), MpscReceiver::new(base_receiver)))
 }
@@ -64,7 +63,7 @@ pub struct MpscReceiver {
 impl PartialEq for MpscReceiver {
     fn eq(&self, other: &MpscReceiver) -> bool {
         self.receiver.borrow().as_ref().map(|rx| rx as *const _) ==
-            other.receiver.borrow().as_ref().map(|rx| rx as *const _)
+        other.receiver.borrow().as_ref().map(|rx| rx as *const _)
     }
 }
 
@@ -78,9 +77,7 @@ impl fmt::Debug for MpscReceiver {
 
 impl MpscReceiver {
     fn new(receiver: mpsc::Receiver<MpscChannelMessage>) -> MpscReceiver {
-        MpscReceiver {
-            receiver: RefCell::new(Some(receiver)),
-        }
+        MpscReceiver { receiver: RefCell::new(Some(receiver)) }
     }
 
     pub fn consume(&self) -> MpscReceiver {
@@ -88,29 +85,31 @@ impl MpscReceiver {
         MpscReceiver::new(receiver.unwrap())
     }
 
-    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMpscChannel>, Vec<MpscSharedMemory>),MpscError> {
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMpscChannel>, Vec<MpscSharedMemory>), MpscError> {
         let r = self.receiver.borrow();
         match r.as_ref().unwrap().recv() {
-            Ok(MpscChannelMessage(d,c,s)) => Ok((d,
-                                                 c.into_iter().map(OpaqueMpscChannel::new).collect(),
-                                                 s)),
+            Ok(MpscChannelMessage(d, c, s)) => {
+                Ok((d, c.into_iter().map(OpaqueMpscChannel::new).collect(), s))
+            }
             Err(_) => Err(MpscError::ChannelClosedError),
         }
     }
 
-    pub fn try_recv(&self) -> Result<(Vec<u8>, Vec<OpaqueMpscChannel>, Vec<MpscSharedMemory>),MpscError> {
+    pub fn try_recv
+        (&self)
+         -> Result<(Vec<u8>, Vec<OpaqueMpscChannel>, Vec<MpscSharedMemory>), MpscError> {
         let r = self.receiver.borrow();
         match r.as_ref().unwrap().try_recv() {
-            Ok(MpscChannelMessage(d,c,s)) => Ok((d,
-                                                 c.into_iter().map(OpaqueMpscChannel::new).collect(),
-                                                 s)),
+            Ok(MpscChannelMessage(d, c, s)) => {
+                Ok((d, c.into_iter().map(OpaqueMpscChannel::new).collect(), s))
+            }
             Err(_) => Err(MpscError::ChannelClosedError),
         }
     }
 }
 
-unsafe impl Send for MpscReceiver { }
-unsafe impl Sync for MpscReceiver { }
+unsafe impl Send for MpscReceiver {}
+unsafe impl Sync for MpscReceiver {}
 
 #[derive(Clone)]
 pub struct MpscSender {
@@ -119,8 +118,7 @@ pub struct MpscSender {
 
 impl PartialEq for MpscSender {
     fn eq(&self, other: &MpscSender) -> bool {
-        &*self.sender.borrow() as *const _ ==
-            &*other.sender.borrow() as *const _
+        &*self.sender.borrow() as *const _ == &*other.sender.borrow() as *const _
     }
 }
 
@@ -132,17 +130,15 @@ impl fmt::Debug for MpscSender {
     }
 }
 
-unsafe impl Send for MpscSender { }
-unsafe impl Sync for MpscSender { }
+unsafe impl Send for MpscSender {}
+unsafe impl Sync for MpscSender {}
 
 impl MpscSender {
     fn new(sender: mpsc::Sender<MpscChannelMessage>) -> MpscSender {
-        MpscSender {
-            sender: RefCell::new(sender),
-        }
+        MpscSender { sender: RefCell::new(sender) }
     }
 
-    pub fn connect(name: String) -> Result<MpscSender,MpscError> {
+    pub fn connect(name: String) -> Result<MpscSender, MpscError> {
         let record = ONE_SHOT_SERVERS.lock().unwrap().remove(&name).unwrap();
         record.connect();
         Ok(record.sender)
@@ -152,9 +148,10 @@ impl MpscSender {
                 data: &[u8],
                 ports: Vec<MpscChannel>,
                 shared_memory_regions: Vec<MpscSharedMemory>)
-                -> Result<(),MpscError>
-    {
-        match self.sender.borrow().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
+                -> Result<(), MpscError> {
+        match self.sender
+                  .borrow()
+                  .send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
             Err(_) => Err(MpscError::ChannelClosedError),
             Ok(_) => Ok(()),
         }
@@ -168,7 +165,7 @@ pub struct MpscReceiverSet {
 }
 
 impl MpscReceiverSet {
-    pub fn new() -> Result<MpscReceiverSet,MpscError> {
+    pub fn new() -> Result<MpscReceiverSet, MpscError> {
         Ok(MpscReceiverSet {
             last_index: 0,
             receiver_ids: vec![],
@@ -176,28 +173,30 @@ impl MpscReceiverSet {
         })
     }
 
-    pub fn add(&mut self, receiver: MpscReceiver) -> Result<i64,MpscError> {
+    pub fn add(&mut self, receiver: MpscReceiver) -> Result<i64, MpscError> {
         self.last_index += 1;
         self.receiver_ids.push(self.last_index);
         self.receivers.push(receiver.consume());
         Ok(self.last_index as i64)
     }
 
-    pub fn select(&mut self) -> Result<Vec<MpscSelectionResult>,MpscError> {
-        let mut receivers: Vec<Option<mpsc::Receiver<MpscChannelMessage>>> = Vec::with_capacity(self.receivers.len());
+    pub fn select(&mut self) -> Result<Vec<MpscSelectionResult>, MpscError> {
+        let mut receivers: Vec<Option<mpsc::Receiver<MpscChannelMessage>>> =
+            Vec::with_capacity(self.receivers.len());
         let mut r_id: i64 = -1;
         let mut r_index: usize = 0;
 
         {
             let select = mpsc::Select::new();
             // we *must* allocate exact capacity for this, because the Handles *can't move*
-            let mut handles: Vec<mpsc::Handle<MpscChannelMessage>> = Vec::with_capacity(self.receivers.len());
+            let mut handles: Vec<mpsc::Handle<MpscChannelMessage>> =
+                Vec::with_capacity(self.receivers.len());
 
             for r in &self.receivers {
                 let inner_r = mem::replace(&mut *r.receiver.borrow_mut(), None);
                 receivers.push(inner_r);
             }
-            
+
             for r in &receivers {
                 unsafe {
                     handles.push(select.handle(r.as_ref().unwrap()));
@@ -207,7 +206,7 @@ impl MpscReceiverSet {
 
             let id = select.wait();
 
-            for (index,h) in handles.iter().enumerate() {
+            for (index, h) in handles.iter().enumerate() {
                 if h.id() == id {
                     r_index = index;
                     r_id = self.receiver_ids[index] as i64;
@@ -217,8 +216,9 @@ impl MpscReceiverSet {
         }
 
         // put the receivers back
-        for (index,r) in self.receivers.iter().enumerate() {
-            mem::replace(&mut *r.receiver.borrow_mut(), mem::replace(&mut receivers[index], None));
+        for (index, r) in self.receivers.iter().enumerate() {
+            mem::replace(&mut *r.receiver.borrow_mut(),
+                         mem::replace(&mut receivers[index], None));
         }
 
         if r_id == -1 {
@@ -227,13 +227,14 @@ impl MpscReceiverSet {
 
         let receivers = &mut self.receivers;
         match receivers[r_index].recv() {
-            Ok((data, channels, shmems)) =>
-                Ok(vec![MpscSelectionResult::DataReceived(r_id, data, channels, shmems)]),
+            Ok((data, channels, shmems)) => {
+                Ok(vec![MpscSelectionResult::DataReceived(r_id, data, channels, shmems)])
+            }
             Err(MpscError::ChannelClosedError) => {
                 receivers.remove(r_index);
                 self.receiver_ids.remove(r_index);
                 Ok(vec![MpscSelectionResult::ChannelClosed(r_id)])
-            },
+            }
             Err(err) => Err(err),
         }
     }
@@ -251,7 +252,8 @@ impl MpscSelectionResult {
                 (id, data, channels, shared_memory_regions)
             }
             MpscSelectionResult::ChannelClosed(id) => {
-                panic!("MpscSelectionResult::unwrap(): receiver ID {} was closed!", id)
+                panic!("MpscSelectionResult::unwrap(): receiver ID {} was closed!",
+                       id)
             }
         }
     }
@@ -263,9 +265,9 @@ pub struct MpscOneShotServer {
 }
 
 impl MpscOneShotServer {
-    pub fn new() -> Result<(MpscOneShotServer, String),MpscError> {
+    pub fn new() -> Result<(MpscOneShotServer, String), MpscError> {
         let (sender, receiver) = match channel() {
-            Ok((s,r)) => (s,r),
+            Ok((s, r)) => (s, r),
             Err(err) => return Err(err),
         };
 
@@ -275,13 +277,14 @@ impl MpscOneShotServer {
         Ok((MpscOneShotServer {
             receiver: RefCell::new(Some(receiver)),
             name: name.clone(),
-        },name.clone()))
+        },
+            name.clone()))
     }
 
     pub fn accept(&self) -> Result<(MpscReceiver,
                                     Vec<u8>,
                                     Vec<OpaqueMpscChannel>,
-                                    Vec<MpscSharedMemory>),MpscError>
+                                    Vec<MpscSharedMemory>), MpscError>
     {
         ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().accept();
         let receiver = self.receiver.borrow_mut().take().unwrap();
@@ -303,18 +306,16 @@ pub struct OpaqueMpscChannel {
 
 impl OpaqueMpscChannel {
     fn new(channel: MpscChannel) -> OpaqueMpscChannel {
-        OpaqueMpscChannel {
-            channel: RefCell::new(Some(channel))
-        }
+        OpaqueMpscChannel { channel: RefCell::new(Some(channel)) }
     }
 
     pub fn to_receiver(&self) -> MpscReceiver {
         match self.channel.borrow_mut().take().unwrap() {
             MpscChannel::Sender(_) => panic!("Opaque channel is not a receiver!"),
-            MpscChannel::Receiver(r) => r
+            MpscChannel::Receiver(r) => r,
         }
     }
-    
+
     pub fn to_sender(&self) -> MpscSender {
         match self.channel.borrow_mut().take().unwrap() {
             MpscChannel::Sender(s) => s,
@@ -362,9 +363,7 @@ impl Deref for MpscSharedMemory {
         if self.ptr.is_null() {
             panic!("attempted to access a consumed `MpscSharedMemory`")
         }
-        unsafe {
-            slice::from_raw_parts(self.ptr, self.length)
-        }
+        unsafe { slice::from_raw_parts(self.ptr, self.length) }
     }
 }
 
@@ -374,7 +373,7 @@ impl MpscSharedMemory {
         MpscSharedMemory {
             ptr: Arc::get_mut(&mut v).unwrap().as_mut_ptr(),
             length: length,
-            data: v
+            data: v,
         }
     }
 
@@ -383,7 +382,7 @@ impl MpscSharedMemory {
         MpscSharedMemory {
             ptr: Arc::get_mut(&mut v).unwrap().as_mut_ptr(),
             length: v.len(),
-            data: v
+            data: v,
         }
     }
 }
@@ -417,4 +416,3 @@ impl From<MpscError> for Error {
         }
     }
 }
-
