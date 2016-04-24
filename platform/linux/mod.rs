@@ -8,7 +8,6 @@
 // except according to those terms.
 
 use bincode::serde::DeserializeError;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_ulong};
 use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
 use std::cmp;
@@ -209,21 +208,15 @@ impl UnixSender {
                     (ptr::null_mut(), 0)
                 };
 
-                // First fragment begins with a header recording the total data length.
-                //
-                // The receiver uses this to determine whether it already got the entire message,
-                // or needs to receive additional fragments -- and if so, how much.
-                let mut len_buffer = vec![0; mem::size_of_val(&len)];
-                {
-                    let mut len_buffer = &mut len_buffer[..];
-                    len_buffer.write_uint::<LittleEndian>(len as u64, mem::size_of_val(&len))
-                              .unwrap();
-                }
-
                 let iovec = [
+                    // First fragment begins with a header recording the total data length.
+                    //
+                    // The receiver uses this to determine
+                    // whether it already got the entire message,
+                    // or needs to receive additional fragments -- and if so, how much.
                     iovec {
-                        iov_base: len_buffer.as_ptr() as *const c_char as *mut c_char,
-                        iov_len: len_buffer.len(),
+                        iov_base: &len as *const _ as *mut c_char,
+                        iov_len: mem::size_of_val(&len),
                     },
                     iovec {
                         iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
@@ -734,15 +727,16 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         //
         // We use this to determine whether we already got the entire message,
         // or need to receive additional fragments -- and if so, how much.
-        let mut len_buffer = vec![0; mem::size_of::<usize>()];
+        let mut total_size = 0usize;
         // Allocate a buffer without initialising the memory.
-        let mut main_data_buffer = Vec::with_capacity(*SYSTEM_SENDBUF_SIZE - len_buffer.len());
-        main_data_buffer.set_len(*SYSTEM_SENDBUF_SIZE - len_buffer.len());
+        let mut main_data_buffer = Vec::with_capacity(*SYSTEM_SENDBUF_SIZE
+                                                      - mem::size_of_val(&total_size));
+        main_data_buffer.set_len(*SYSTEM_SENDBUF_SIZE - mem::size_of_val(&total_size));
 
         let iovec = [
             iovec {
-                iov_base: len_buffer.as_mut_ptr() as *mut c_char,
-                iov_len: len_buffer.len(),
+                iov_base: &mut total_size as *mut _ as *mut c_char,
+                iov_len: mem::size_of_val(&total_size),
             },
             iovec {
                 iov_base: main_data_buffer.as_mut_ptr() as *mut c_char,
@@ -752,7 +746,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let mut cmsg = UnixCmsg::new(&iovec);
 
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
-        main_data_buffer.set_len(bytes_read - len_buffer.len());
+        main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
         let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
@@ -771,8 +765,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             shared_memory_regions.push(UnixSharedMemory::from_fd(fd));
         }
 
-        let total_size = (&len_buffer[..]).read_uint::<LittleEndian>(mem::size_of::<usize>())
-                                          .unwrap() as usize;
         if total_size == main_data_buffer.len() {
             // Fast path: no fragments.
             return Ok((main_data_buffer, channels, shared_memory_regions))
