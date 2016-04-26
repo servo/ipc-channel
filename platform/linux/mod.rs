@@ -193,27 +193,41 @@ impl UnixSender {
                 (msghdr, iovec)
             };
 
+            let mut sendbuf_size = try!(self.get_system_sendbuf_size());
+
+            /// Reduce send buffer size after getting ENOBUFS,
+            /// i.e. when the kernel failed to allocate a large enough buffer.
+            ///
+            /// (If the buffer already was significantly smaller
+            /// than the memory page size though,
+            /// if means something else must have gone wrong;
+            /// so there is no point in further downsizing,
+            /// and we error out instead.)
+            fn downsize(sendbuf_size: &mut usize, sent_size: usize) -> Result<(),()> {
+                if sent_size > 2000 {
+                    *sendbuf_size /= 2;
+                    Ok(())
+                } else {
+                    Err(())
+                }
+            }
+
             let (msghdr, _iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             let result = sendmsg(self.fd, &msghdr, 0);
             libc::free(msghdr.msg_control);
 
-            let mut downsize = false;
-
             if result > 0 {
                 return Ok(())
             } else {
                 let error = UnixError::last();
-                if error.0 == libc::ENOBUFS {
+                if error.0 == libc::ENOBUFS
+                   && downsize(&mut sendbuf_size, data_buffer.len()).is_ok() {
                     // If we get this error,
                     // it means the message was small enough to fit the maximum send size,
                     // but the kernel failed to allocate a buffer large enough
                     // to actually transfer the message --
                     // so we have to proceed with a fragmented send nevertheless.
-                    //
-                    // The flag indicates that packets need to be smaller
-                    // than the ordinary maximum send size.
-                    downsize = true;
                 } else if error.0 != libc::EMSGSIZE {
                     return Err(error)
                 }
@@ -232,15 +246,9 @@ impl UnixSender {
             let (msghdr, mut iovec) = construct_header(&fds[..], &data_buffer[..]);
 
             // Split up the packet into fragments.
-            let mut sendbuf_size = try!(self.get_system_sendbuf_size());
             let mut byte_position = 0;
             let mut this_fragment_id = 0;
             while byte_position < data.len() {
-                if downsize {
-                    // We got ENOBUFS. Retry send with half the packet size.
-                    sendbuf_size /= 2;
-                    downsize = false;
-                }
                 let bytes_per_fragment = sendbuf_size
                                          - (mem::size_of::<u32>() * 2 + RESERVED_SIZE);
 
@@ -278,16 +286,10 @@ impl UnixSender {
 
                 if result <= 0 {
                     let error = UnixError::last();
-                    if error.0 == libc::ENOBUFS && bytes_to_send > 2000 {
+                    if error.0 == libc::ENOBUFS
+                       && downsize(&mut sendbuf_size, bytes_to_send).is_ok() {
                         // If the kernel failed to allocate a buffer large enough for the packet,
-                        // retry with a smaller size.
-                        //
-                        // (If the packet was already significantly smaller
-                        // than the memory page size though,
-                        // if means something else must have gone wrong;
-                        // so there is no point in further downsizing,
-                        // and we error out instead.)
-                        downsize = true;
+                        // retry with a smaller size (if possible).
                         continue
                     } else {
                         libc::free(msghdr.msg_control);
