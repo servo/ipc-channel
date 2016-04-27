@@ -733,14 +733,18 @@ enum BlockingMode {
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
         -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+
+    let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
+
+    // First fragments begins with a header recording the total data length.
+    //
+    // We use this to determine whether we already got the entire message,
+    // or need to receive additional fragments -- and if so, how much.
+    let mut total_size = 0usize;
+    let mut main_data_buffer;
     unsafe {
-        // First fragment begins with a header recording the total data length.
-        //
-        // We use this to determine whether we already got the entire message,
-        // or need to receive additional fragments -- and if so, how much.
-        let mut total_size = 0usize;
         // Allocate a buffer without initialising the memory.
-        let mut main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
+        main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
         main_data_buffer.set_len(UnixSender::get_max_fragment_size());
 
         let iovec = [
@@ -765,7 +769,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         } else {
             (cmsg.cmsg_len() - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
         };
-        let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
             if is_socket(fd) {
@@ -774,29 +777,34 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             }
             shared_memory_regions.push(UnixSharedMemory::from_fd(fd));
         }
+    }
 
-        if total_size == main_data_buffer.len() {
-            // Fast path: no fragments.
-            return Ok((main_data_buffer, channels, shared_memory_regions))
-        }
+    if total_size == main_data_buffer.len() {
+        // Fast path: no fragments.
+        return Ok((main_data_buffer, channels, shared_memory_regions))
+    }
 
-        // Reassemble fragments.
-        //
-        // The initial fragment carries the receive end of a dedicated channel
-        // through which all the remaining fragments will be coming in.
-        let dedicated_rx = channels.pop().unwrap().to_receiver();
+    // Reassemble fragments.
+    //
+    // The initial fragment carries the receive end of a dedicated channel
+    // through which all the remaining fragments will be coming in.
+    let dedicated_rx = channels.pop().unwrap().to_receiver();
 
-        // Extend the buffer to hold the entire message, without initialising the memory.
-        let len = main_data_buffer.len();
-        main_data_buffer.reserve(total_size - len);
+    // Extend the buffer to hold the entire message, without initialising the memory.
+    let len = main_data_buffer.len();
+    main_data_buffer.reserve(total_size - len);
 
-        // Receive followup fragments directly into the main buffer.
-        while main_data_buffer.len() < total_size {
-            let write_pos = main_data_buffer.len();
-            let end_pos = cmp::min(write_pos + UnixSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
-                                   total_size);
+    // Receive followup fragments directly into the main buffer.
+    while main_data_buffer.len() < total_size {
+        let write_pos = main_data_buffer.len();
+        let end_pos = cmp::min(write_pos + UnixSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
+                               total_size);
+        let result = unsafe {
             assert!(end_pos <= main_data_buffer.capacity());
             main_data_buffer.set_len(end_pos);
+
+            // Integer underflow could make the following code unsound...
+            assert!(end_pos >= write_pos);
 
             // Note: we always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
@@ -806,16 +814,17 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
                                     end_pos - write_pos,
                                     0);
             main_data_buffer.set_len(write_pos + cmp::max(result, 0) as usize);
+            result
+        };
 
-            if result == 0 {
-                return Err(UnixError(libc::ECONNRESET))
-            } else if result < 0 {
-                return Err(UnixError::last())
-            };
-        }
-
-        Ok((main_data_buffer, channels, shared_memory_regions))
+        if result == 0 {
+            return Err(UnixError(libc::ECONNRESET))
+        } else if result < 0 {
+            return Err(UnixError::last())
+        };
     }
+
+    Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
 #[cfg(target_os="android")]
