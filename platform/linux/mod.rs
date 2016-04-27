@@ -740,9 +740,8 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         // or need to receive additional fragments -- and if so, how much.
         let mut total_size = 0usize;
         // Allocate a buffer without initialising the memory.
-        let mut main_data_buffer = Vec::with_capacity(*SYSTEM_SENDBUF_SIZE
-                                                      - mem::size_of_val(&total_size));
-        main_data_buffer.set_len(*SYSTEM_SENDBUF_SIZE - mem::size_of_val(&total_size));
+        let mut main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
+        main_data_buffer.set_len(UnixSender::get_max_fragment_size());
 
         let iovec = [
             iovec {
