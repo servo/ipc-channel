@@ -739,7 +739,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         // through which all the remaining fragments will be coming in.
         let dedicated_rx = channels.pop().unwrap().to_receiver();
         while next_fragment_id != 0 {
-            let mut cmsg = UnixCmsg::new(maximum_recv_size);
+            let mut cmsg = UnixCmsg::new(maximum_recv_size - RESERVED_SIZE);
             // Always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
