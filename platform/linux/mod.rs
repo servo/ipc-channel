@@ -201,7 +201,7 @@ impl UnixSender {
                                          fds.len());
 
                 // Put this on the heap so address remains stable across function return.
-                let mut iovec = Box::new(iovec {
+                let iovec = Box::new(iovec {
                     iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
                     iov_len: data_buffer.len(),
                 });
@@ -209,7 +209,7 @@ impl UnixSender {
                 let msghdr = msghdr {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
-                    msg_iov: &mut *iovec,
+                    msg_iov: &*iovec,
                     msg_iovlen: 1,
                     msg_control: cmsg_buffer as *mut c_void,
                     msg_controllen: CMSG_SPACE(cmsg_length),
@@ -868,11 +868,11 @@ impl UnixCmsg {
         assert!(maximum_recv_size > cmsg_length);
         let mut data_buffer: Vec<u8> = vec![0; maximum_recv_size];
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
-        let mut iovec = Box::new(iovec {
+        let iovec = Box::new(iovec {
             iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
             iov_len: data_buffer.len(),
         });
-        let iovec_ptr: *mut iovec = &mut *iovec;
+        let iovec_ptr: *const iovec = &*iovec;
         UnixCmsg {
             data_buffer: data_buffer,
             cmsg_buffer: cmsg_buffer,
@@ -988,7 +988,7 @@ extern {
 struct msghdr {
     msg_name: *mut c_void,
     msg_namelen: socklen_t,
-    msg_iov: *mut iovec,
+    msg_iov: *const iovec,
     msg_iovlen: size_t,
     msg_control: *mut c_void,
     msg_controllen: size_t,
