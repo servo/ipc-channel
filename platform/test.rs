@@ -10,7 +10,6 @@
 use libc;
 use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
 use platform::{OsIpcSharedMemory};
-use std::mem;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
@@ -174,31 +173,94 @@ fn big_data_with_sender_transfer() {
     thread.join().unwrap();
 }
 
-#[test]
-// This test only applies to platforms that need fragmentation.
-#[cfg(target_os="linux")]
-fn full_packet() {
-    let (tx, rx) = platform::channel().unwrap();
-
-    // Should be the biggest size that just fits in a single packet.
-    //
-    // 32 is the empirical minimal size of the "control message" header,
-    // which we presently always send along with the data;
-    // the rest is for the fragment header.
-    //
-    // Note that this calculation might become imprecise
-    // when certain implementation details of the send() method change...
-    let size = tx.get_maximum_send_size().unwrap() - 32 - mem::size_of::<u32>() * 2;
+fn with_n_fds(n: usize, size: usize) {
+    let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| platform::channel().unwrap())
+                                                    .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
+                                                    .unzip();
+    let (super_tx, super_rx) = platform::channel().unwrap();
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-    let data: &[u8] = &data[..];
-
-    tx.send(data, vec![], vec![]).unwrap();
+    super_tx.send(&data[..], sender_fds, vec![]).unwrap();
     let (mut received_data, received_channels, received_shared_memory_regions) =
-        rx.recv().unwrap();
+        super_rx.recv().unwrap();
+
     received_data.truncate(size);
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (&data[..], vec![], vec![]));
+    assert_eq!(received_data.len(), data.len());
+    assert_eq!(&received_data[..], &data[..]);
+    assert_eq!(received_channels.len(), receivers.len());
+    assert_eq!(received_shared_memory_regions.len(), 0);
+
+    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+    for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
+        let sub_tx = sender_fd.to_sender();
+        sub_tx.send(&data[..], vec![], vec![]).unwrap();
+        let (mut received_data, received_channels, received_shared_memory_regions) =
+            sub_rx.recv().unwrap();
+        received_data.truncate(65536);
+        assert_eq!(received_data.len(), data.len());
+        assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+                   (&data[..], vec![], vec![]));
+    }
+}
+
+// These tests only apply to platforms that need fragmentation.
+#[cfg(target_os="linux")]
+mod fragment_tests {
+    use platform;
+    use super::with_n_fds;
+
+    lazy_static! {
+        static ref FRAGMENT_SIZE: usize = {
+            platform::OsIpcSender::get_max_fragment_size()
+        };
+    }
+
+    #[test]
+    fn full_packet() {
+        with_n_fds(0, *FRAGMENT_SIZE);
+    }
+
+    #[test]
+    fn full_packet_with_1_fds() {
+        with_n_fds(1, *FRAGMENT_SIZE);
+    }
+    #[test]
+    fn full_packet_with_2_fds() {
+        with_n_fds(2, *FRAGMENT_SIZE);
+    }
+    #[test]
+    fn full_packet_with_3_fds() {
+        with_n_fds(3, *FRAGMENT_SIZE);
+    }
+    #[test]
+    fn full_packet_with_4_fds() {
+        with_n_fds(4, *FRAGMENT_SIZE);
+    }
+    #[test]
+    fn full_packet_with_5_fds() {
+        with_n_fds(5, *FRAGMENT_SIZE);
+    }
+    #[test]
+    fn full_packet_with_6_fds() {
+        with_n_fds(6, *FRAGMENT_SIZE);
+    }
+
+    // MAX_FDS_IN_CMSG is currently 64.
+    #[test]
+    fn full_packet_with_64_fds() {
+        with_n_fds(64, *FRAGMENT_SIZE);
+    }
+
+    #[test]
+    fn overfull_packet() {
+        with_n_fds(0, *FRAGMENT_SIZE + 1);
+    }
+
+    // In fragmented transfers, one FD is used up for the dedicated channel.
+    #[test]
+    fn overfull_packet_with_63_fds() {
+        with_n_fds(63, *FRAGMENT_SIZE + 1);
+    }
 }
 
 macro_rules! create_big_data_with_n_fds {

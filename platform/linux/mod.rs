@@ -8,19 +8,17 @@
 // except according to those terms.
 
 use bincode::serde::DeserializeError;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_ulong};
 use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
-use std::io::{Error, Write};
+use std::io::Error;
 use std::mem;
 use std::ops::Deref;
 use std::ptr;
 use std::slice;
-use std::sync::atomic::{ATOMIC_USIZE_INIT, AtomicUsize, Ordering};
 use std::thread;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
@@ -28,7 +26,17 @@ const MAX_FDS_IN_CMSG: u32 = 64;
 // Yes, really!
 const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
-static LAST_FRAGMENT_ID: AtomicUsize = ATOMIC_USIZE_INIT;
+lazy_static! {
+    static ref SYSTEM_SENDBUF_SIZE: usize = {
+        let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
+        tx.get_system_sendbuf_size().expect("Failed to obtain maximum send size for socket")
+    };
+}
+
+// The value Linux returns for SO_SNDBUF
+// is not the size we are actually allowed to use...
+// Empirically, we have to deduct 32 bytes from that.
+const RESERVED_SIZE: usize = 32;
 
 pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
     let mut results = [0, 0];
@@ -114,188 +122,232 @@ impl UnixSender {
         }
     }
 
-    /// Maximum total data size that can be transferred over this channel in a single packet.
-    pub fn get_maximum_send_size(&self) -> Result<usize,UnixError> {
+    /// Maximum size of the kernel buffer used for transfers over this channel.
+    ///
+    /// Note: This is *not* the actual maximal packet size we are allowed to use...
+    /// Some of it is reserved by the kernel for bookkeeping.
+    fn get_system_sendbuf_size(&self) -> Result<usize,UnixError> {
         unsafe {
-            let mut maximum_send_size: usize = 0;
-            let mut maximum_send_size_len = mem::size_of::<usize>() as socklen_t;
+            let mut socket_sendbuf_size: usize = 0;
+            let mut socket_sendbuf_size_len = mem::size_of::<usize>() as socklen_t;
             if getsockopt(self.fd,
                           libc::SOL_SOCKET,
                           libc::SO_SNDBUF,
-                          &mut maximum_send_size as *mut usize as *mut c_void,
-                          &mut maximum_send_size_len as *mut socklen_t) < 0 {
+                          &mut socket_sendbuf_size as *mut usize as *mut c_void,
+                          &mut socket_sendbuf_size_len as *mut socklen_t) < 0 {
                 return Err(UnixError::last())
             }
-            Ok(maximum_send_size)
+            Ok(socket_sendbuf_size)
         }
+    }
+
+    /// Calculate maximum payload data size per fragment.
+    ///
+    /// It is the total size of the kernel buffer, minus the part reserved by the kernel.
+    ///
+    /// The `sendbuf_size` passed in should usually be the maximum kernel buffer size,
+    /// i.e. the value of *SYSTEM_SENDBUF_SIZE --
+    /// except after getting ENOBUFS, in which case it needs to be reduced.
+    fn fragment_size(sendbuf_size: usize) -> usize {
+        sendbuf_size - RESERVED_SIZE
+    }
+
+    /// Calculate maximum payload data size of first fragment.
+    ///
+    /// This one is smaller than regular fragments, because it carries the message (size) header.
+    fn first_fragment_size(sendbuf_size: usize) -> usize {
+        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>())
+            & (!8usize + 1) // Ensure optimal alignment.
+    }
+
+    /// Maximum data size that can be transferred over this channel in a single packet.
+    ///
+    /// This is the size of the main data chunk only --
+    /// it's independent of any auxiliary data (FDs) transferred along with it.
+    ///
+    /// A send on this channel won't block for transfers up to this size
+    /// under normal circumstances.
+    /// (It might still block if heavy memory pressure causes ENOBUFS,
+    /// forcing us to reduce the packet size.)
+    pub fn get_max_fragment_size() -> usize {
+        Self::first_fragment_size(*SYSTEM_SENDBUF_SIZE)
     }
 
     pub fn send(&self,
                 data: &[u8],
-                mut channels: Vec<UnixChannel>,
+                channels: Vec<UnixChannel>,
                 shared_memory_regions: Vec<UnixSharedMemory>)
                 -> Result<(),UnixError> {
-        let mut data_buffer = vec![0; data.len() + mem::size_of::<u32>() * 2];
-        {
-            let mut data_buffer = &mut data_buffer[..];
-            data_buffer.write_u32::<LittleEndian>(0u32).unwrap();
-            data_buffer.write_u32::<LittleEndian>(0u32).unwrap();
-            data_buffer.write(data).unwrap();
+
+        let mut fds = Vec::new();
+        for channel in channels.iter() {
+            fds.push(channel.fd());
+        }
+        for shared_memory_region in shared_memory_regions.iter() {
+            fds.push(shared_memory_region.fd);
         }
 
-        unsafe {
-            unsafe fn construct_header(channels: &[UnixChannel],
-                                       shared_memory_regions: &[UnixSharedMemory],
-                                       data_buffer: &[u8])
-                                       -> (msghdr, Box<iovec>) {
-                let cmsg_length =
-                    (channels.len() + shared_memory_regions.len()) * mem::size_of::<c_int>();
-                let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length as size_t)) as *mut cmsghdr;
-                (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length as size_t);
-                (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
-                (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
+        // `len` is the total length of the message.
+        // Its value will be sent as a message header before the payload data.
+        //
+        // Not to be confused with the length of the data to send in this packet
+        // (i.e. the length of the data buffer passed in),
+        // which in a fragmented send will be smaller than the total message length.
+        fn send_first_fragment(sender_fd: c_int, fds: &[c_int], data_buffer: &[u8], len: usize)
+                               -> Result<(),UnixError> {
+            let result = unsafe {
+                let cmsg_length = mem::size_of_val(fds);
+                let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
+                    let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
+                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
+                    (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
+                    (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
-                let mut fds = Vec::new();
-                for channel in channels.iter() {
-                    fds.push(channel.fd());
-                }
-                for shared_memory_region in shared_memory_regions.iter() {
-                    fds.push(shared_memory_region.fd);
-                }
-                ptr::copy_nonoverlapping(fds.as_ptr(),
-                                         cmsg_buffer.offset(1) as *mut _ as *mut c_int,
-                                         fds.len());
+                    ptr::copy_nonoverlapping(fds.as_ptr(),
+                                             cmsg_buffer.offset(1) as *mut _ as *mut c_int,
+                                             fds.len());
+                    (cmsg_buffer, CMSG_SPACE(cmsg_length))
+                } else {
+                    (ptr::null_mut(), 0)
+                };
 
-                // Put this on the heap so address remains stable across function return.
-                let mut iovec = Box::new(iovec {
-                    iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
-                    iov_len: data_buffer.len() as size_t,
-                });
+                let iovec = [
+                    // First fragment begins with a header recording the total data length.
+                    //
+                    // The receiver uses this to determine
+                    // whether it already got the entire message,
+                    // or needs to receive additional fragments -- and if so, how much.
+                    iovec {
+                        iov_base: &len as *const _ as *mut c_char,
+                        iov_len: mem::size_of_val(&len),
+                    },
+                    iovec {
+                        iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
+                        iov_len: data_buffer.len(),
+                    },
+                ];
 
                 let msghdr = msghdr {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
-                    msg_iov: &mut *iovec,
-                    msg_iovlen: 1,
+                    msg_iov: iovec.as_ptr(),
+                    msg_iovlen: iovec.len(),
                     msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: CMSG_SPACE(cmsg_length as size_t),
+                    msg_controllen: cmsg_space,
                     msg_flags: 0,
                 };
 
-                // Be sure to always return iovec -- whether the caller uses it or not --
-                // to prevent premature deallocation!
-                (msghdr, iovec)
+                let result = sendmsg(sender_fd, &msghdr, 0);
+                libc::free(cmsg_buffer as *mut c_void);
+                result
             };
 
-            let (msghdr, _iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
+            if result > 0 {
+                Ok(())
+            } else {
+                Err(UnixError::last())
+            }
+        };
 
-            let result = sendmsg(self.fd, &msghdr, 0);
-            libc::free(msghdr.msg_control);
-
-            let mut downsize = false;
+        fn send_followup_fragment(sender_fd: c_int, data_buffer: &[u8]) -> Result<(),UnixError> {
+            let result = unsafe {
+                libc::send(sender_fd,
+                           data_buffer.as_ptr() as *const c_void,
+                           data_buffer.len(),
+                           0)
+            };
 
             if result > 0 {
-                return Ok(())
+                Ok(())
             } else {
-                let error = UnixError::last();
-                if error.0 == libc::ENOBUFS {
-                    // If we get this error,
-                    // it means the message was small enough to fit the maximum send size,
-                    // but the kernel failed to allocate a buffer large enough
-                    // to actually transfer the message --
-                    // so we have to proceed with a fragmented send nevertheless.
+                Err(UnixError::last())
+            }
+        }
+
+        let mut sendbuf_size = *SYSTEM_SENDBUF_SIZE;
+
+        /// Reduce send buffer size after getting ENOBUFS,
+        /// i.e. when the kernel failed to allocate a large enough buffer.
+        ///
+        /// (If the buffer already was significantly smaller
+        /// than the memory page size though,
+        /// if means something else must have gone wrong;
+        /// so there is no point in further downsizing,
+        /// and we error out instead.)
+        fn downsize(sendbuf_size: &mut usize, sent_size: usize) -> Result<(),()> {
+            if sent_size > 2000 {
+                *sendbuf_size /= 2;
+                Ok(())
+            } else {
+                Err(())
+            }
+        }
+
+        // If the message is small enough, try sending it in a single fragment.
+        if data.len() <= Self::get_max_fragment_size() {
+            match send_first_fragment(self.fd, &fds[..], data, data.len()) {
+                Ok(_) => return Ok(()),
+                Err(error) => {
+                    // ENOBUFS means the kernel failed to allocate a buffer large enough
+                    // to actually transfer the message,
+                    // although the message was small enough to fit the maximum send size --
+                    // so we have to proceed with a fragmented send nevertheless,
+                    // using a reduced send buffer size.
                     //
-                    // The flag indicates that packets need to be smaller
-                    // than the ordinary maximum send size.
-                    downsize = true;
-                } else if error.0 != libc::EMSGSIZE {
+                    // Any other errors we might get here are non-recoverable.
+                    if !(error.0 == libc::ENOBUFS
+                         && downsize(&mut sendbuf_size, data.len()).is_ok()) {
+                        return Err(error)
+                    }
+                },
+            }
+        }
+
+        // The packet is too big. Fragmentation time!
+        //
+        // Create dedicated channel to send all but the first fragment.
+        // This way we avoid fragments of different messages interleaving in the receiver.
+        //
+        // The receiver end of the channel is sent with the first fragment
+        // along any other file descriptors that are to be transferred in the message.
+        let (dedicated_tx, dedicated_rx) = try!(channel());
+        // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
+        fds.push(dedicated_rx.fd);
+
+        // Split up the packet into fragments.
+        let mut byte_position = 0;
+        while byte_position < data.len() {
+            let end_byte_position;
+            let result = if byte_position == 0 {
+                // First fragment. No offset; but contains message header (total size).
+                // The auxiliary data (FDs) is also sent along with this one.
+
+                // This fragment always uses the full allowable buffer size.
+                end_byte_position = Self::first_fragment_size(sendbuf_size);
+                send_first_fragment(self.fd, &fds[..], &data[..end_byte_position], data.len())
+            } else {
+                // Followup fragment. No header; but offset by amount of data already sent.
+
+                end_byte_position = cmp::min(byte_position + Self::fragment_size(sendbuf_size),
+                                             data.len());
+                send_followup_fragment(dedicated_tx.fd, &data[byte_position..end_byte_position])
+            };
+
+            if let Err(error) = result {
+                if error.0 == libc::ENOBUFS
+                   && downsize(&mut sendbuf_size, end_byte_position - byte_position).is_ok() {
+                    // If the kernel failed to allocate a buffer large enough for the packet,
+                    // retry with a smaller size (if possible).
+                    continue
+                } else {
                     return Err(error)
                 }
             }
 
-            // The packet is too big. Fragmentation time!
-            //
-            // Create dedicated channel to send all but the first fragment.
-            // This way we avoid fragments of different messages interleaving in the receiver.
-            //
-            // The receiver end of the channel is sent with the first fragment
-            // along any other file descriptors that are to be transferred in the message.
-            let (dedicated_tx, dedicated_rx) = try!(channel());
-            channels.push(UnixChannel::Receiver(dedicated_rx));
-            let (msghdr, mut iovec) = construct_header(&channels, &shared_memory_regions, &data_buffer);
-
-            let mut bytes_per_fragment = try!(self.get_maximum_send_size())
-                                         - (mem::size_of::<u32>() * 2
-                                            + msghdr.msg_controllen as usize + 256);
-
-            // Split up the packet into fragments.
-            let mut byte_position = 0;
-            let mut this_fragment_id = 0;
-            while byte_position < data.len() {
-                if downsize {
-                    // We got ENOBUFS. Retry send with half the packet size.
-                    bytes_per_fragment /= 2;
-                    downsize = false;
-                }
-
-                let end_byte_position = cmp::min(data.len(), byte_position + bytes_per_fragment);
-                let next_fragment_id = if end_byte_position == data.len() {
-                    0
-                } else {
-                    (LAST_FRAGMENT_ID.fetch_add(1, Ordering::SeqCst) + 1) as u32
-                };
-
-                {
-                    let mut data_buffer = &mut data_buffer[..];
-                    data_buffer.write_u32::<LittleEndian>(this_fragment_id).unwrap();
-                    data_buffer.write_u32::<LittleEndian>(next_fragment_id).unwrap();
-                    data_buffer.write(&data[byte_position..end_byte_position]).unwrap();
-                }
-
-                let bytes_to_send = end_byte_position - byte_position + mem::size_of::<u32>() * 2;
-                let result = if byte_position == 0 {
-                    // First one. This fragment includes the file descriptors.
-
-                    // Better reset this in case `data_buffer` moved around -- iterator
-                    // invalidation!
-                    iovec.iov_base = data_buffer.as_ptr() as *const c_char as *mut c_char;
-                    iovec.iov_len = bytes_to_send as size_t;
-
-                    sendmsg(self.fd, &msghdr, 0)
-                } else {
-                    // Trailing fragment.
-                    libc::send(dedicated_tx.fd,
-                               data_buffer.as_ptr() as *const c_void,
-                               bytes_to_send as size_t,
-                               0)
-                };
-
-                if result <= 0 {
-                    let error = UnixError::last();
-                    if error.0 == libc::ENOBUFS && bytes_to_send > 2000 {
-                        // If the kernel failed to allocate a buffer large enough for the packet,
-                        // retry with a smaller size.
-                        //
-                        // (If the packet was already significantly smaller
-                        // than the memory page size though,
-                        // if means something else must have gone wrong;
-                        // so there is no point in further downsizing,
-                        // and we error out instead.)
-                        downsize = true;
-                        continue
-                    } else {
-                        libc::free(msghdr.msg_control);
-                        return Err(error)
-                    }
-                }
-
-                byte_position += bytes_per_fragment;
-                this_fragment_id = next_fragment_id;
-            }
-
-            libc::free(msghdr.msg_control);
-            Ok(())
+            byte_position = end_byte_position;
         }
+
+        Ok(())
     }
 
     pub fn connect(name: String) -> Result<UnixSender,UnixError> {
@@ -308,10 +360,9 @@ impl UnixSender {
             };
             libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                           name.as_ptr(),
-                          sockaddr.sun_path.len() as size_t - 1);
+                          sockaddr.sun_path.len() - 1);
 
-            let len = mem::size_of::<c_short>() +
-                (libc::strlen(sockaddr.sun_path.as_ptr()) as usize);
+            let len = mem::size_of::<c_short>() + libc::strlen(sockaddr.sun_path.as_ptr());
             if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -489,7 +540,7 @@ impl UnixOneShotServer {
                 };
                 libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                               path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() as size_t - 1);
+                              sockaddr.sun_path.len() - 1);
 
                 let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
                                                        usize);
@@ -571,7 +622,7 @@ impl Drop for UnixSharedMemory {
     fn drop(&mut self) {
         unsafe {
             if !self.ptr.is_null() {
-                let result = libc::munmap(self.ptr as *mut c_void, self.length as size_t);
+                let result = libc::munmap(self.ptr as *mut c_void, self.length);
                 assert!(thread::panicking() || result == 0);
             }
             let result = libc::close(self.fd);
@@ -584,7 +635,7 @@ impl Clone for UnixSharedMemory {
     fn clone(&self) -> UnixSharedMemory {
         unsafe {
             let new_fd = libc::dup(self.fd);
-            let (address, _) = map_file(new_fd, Some(self.length as size_t));
+            let (address, _) = map_file(new_fd, Some(self.length));
             UnixSharedMemory::from_raw_parts(address, self.length, new_fd)
         }
     }
@@ -624,13 +675,13 @@ impl UnixSharedMemory {
 
     unsafe fn from_fd(fd: c_int) -> UnixSharedMemory {
         let (ptr, length) = map_file(fd, None);
-        UnixSharedMemory::from_raw_parts(ptr, length as usize, fd)
+        UnixSharedMemory::from_raw_parts(ptr, length, fd)
     }
 
     pub fn from_byte(byte: u8, length: usize) -> UnixSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(length);
-            let (address, _) = map_file(fd, Some(length as size_t));
+            let (address, _) = map_file(fd, Some(length));
             for element in slice::from_raw_parts_mut(address, length) {
                 *element = byte;
             }
@@ -641,7 +692,7 @@ impl UnixSharedMemory {
     pub fn from_bytes(bytes: &[u8]) -> UnixSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(bytes.len());
-            let (address, _) = map_file(fd, Some(bytes.len() as size_t));
+            let (address, _) = map_file(fd, Some(bytes.len()));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
             UnixSharedMemory::from_raw_parts(address, bytes.len(), fd)
         }
@@ -682,28 +733,42 @@ enum BlockingMode {
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
         -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
-    unsafe {
-        let mut maximum_recv_size: usize = 0;
-        let mut maximum_recv_size_len = mem::size_of::<usize>() as socklen_t;
-        if getsockopt(fd,
-                      libc::SOL_SOCKET,
-                      libc::SO_RCVBUF,
-                      &mut maximum_recv_size as *mut usize as *mut c_void,
-                      &mut maximum_recv_size_len as *mut socklen_t) < 0 {
-            return Err(UnixError::last())
-        }
 
-        let mut cmsg = UnixCmsg::new(maximum_recv_size);
-        let bytes_read = try!(cmsg.recv(fd, blocking_mode)) as usize;
+    let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
+
+    // First fragments begins with a header recording the total data length.
+    //
+    // We use this to determine whether we already got the entire message,
+    // or need to receive additional fragments -- and if so, how much.
+    let mut total_size = 0usize;
+    let mut main_data_buffer;
+    unsafe {
+        // Allocate a buffer without initialising the memory.
+        main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
+        main_data_buffer.set_len(UnixSender::get_max_fragment_size());
+
+        let iovec = [
+            iovec {
+                iov_base: &mut total_size as *mut _ as *mut c_char,
+                iov_len: mem::size_of_val(&total_size),
+            },
+            iovec {
+                iov_base: main_data_buffer.as_mut_ptr() as *mut c_char,
+                iov_len: main_data_buffer.len(),
+            },
+        ];
+        let mut cmsg = UnixCmsg::new(&iovec);
+
+        let bytes_read = try!(cmsg.recv(fd, blocking_mode));
+        main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
         let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
         let channel_length = if cmsg_length == 0 {
             0
         } else {
-            ((cmsg.cmsg_len() as usize) - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
+            (cmsg.cmsg_len() - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
         };
-        let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
             if is_socket(fd) {
@@ -712,49 +777,54 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             }
             shared_memory_regions.push(UnixSharedMemory::from_fd(fd));
         }
+    }
 
-        // Separate out the fragmentation frame.
-        let (fragment_info_buffer, main_data_buffer) = cmsg.data_buffer
-                                                           .split_at(mem::size_of::<u32>() * 2);
-        let mut main_data_buffer: Vec<u8> =
-            main_data_buffer[0..(bytes_read - mem::size_of::<u32>() * 2)].iter()
-                                                                         .cloned()
-                                                                         .collect();
-        let mut next_fragment_id =
-            (&fragment_info_buffer[mem::size_of::<u32>()..
-                                   (mem::size_of::<u32>() * 2)]).read_u32::<LittleEndian>()
-                                                                .unwrap();
-        if next_fragment_id == 0 {
-            // Fast path: no fragments.
-            return Ok((main_data_buffer, channels, shared_memory_regions))
-        }
+    if total_size == main_data_buffer.len() {
+        // Fast path: no fragments.
+        return Ok((main_data_buffer, channels, shared_memory_regions))
+    }
 
-        // Reassemble fragments.
-        //
-        // The initial fragment carries the receive end of a dedicated channel
-        // through which all the remaining fragments will be coming in.
-        let dedicated_rx = channels.pop().unwrap().to_receiver();
-        while next_fragment_id != 0 {
-            let mut cmsg = UnixCmsg::new(maximum_recv_size);
-            // Always use blocking mode for followup fragments,
+    // Reassemble fragments.
+    //
+    // The initial fragment carries the receive end of a dedicated channel
+    // through which all the remaining fragments will be coming in.
+    let dedicated_rx = channels.pop().unwrap().to_receiver();
+
+    // Extend the buffer to hold the entire message, without initialising the memory.
+    let len = main_data_buffer.len();
+    main_data_buffer.reserve(total_size - len);
+
+    // Receive followup fragments directly into the main buffer.
+    while main_data_buffer.len() < total_size {
+        let write_pos = main_data_buffer.len();
+        let end_pos = cmp::min(write_pos + UnixSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
+                               total_size);
+        let result = unsafe {
+            assert!(end_pos <= main_data_buffer.capacity());
+            main_data_buffer.set_len(end_pos);
+
+            // Integer underflow could make the following code unsound...
+            assert!(end_pos >= write_pos);
+
+            // Note: we always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
-            let bytes_read = try!(cmsg.recv(dedicated_rx.fd, BlockingMode::Blocking)) as usize;
+            let result = libc::recv(dedicated_rx.fd,
+                                    main_data_buffer[write_pos..].as_mut_ptr() as *mut c_void,
+                                    end_pos - write_pos,
+                                    0);
+            main_data_buffer.set_len(write_pos + cmp::max(result, 0) as usize);
+            result
+        };
 
-            let this_fragment_id =
-                (&cmsg.data_buffer[0..mem::size_of::<u32>()]).read_u32::<LittleEndian>().unwrap();
-            assert!(this_fragment_id == next_fragment_id);
-
-            next_fragment_id =
-                (&cmsg.data_buffer[mem::size_of::<u32>()..
-                                   (mem::size_of::<u32>() * 2)]).read_u32::<LittleEndian>()
-                                                                .unwrap();
-            main_data_buffer.extend(
-                    cmsg.data_buffer[(mem::size_of::<u32>() * 2)..bytes_read].iter().cloned())
-        }
-
-        Ok((main_data_buffer, channels, shared_memory_regions))
+        if result == 0 {
+            return Err(UnixError(libc::ECONNRESET))
+        } else if result < 0 {
+            return Err(UnixError::last())
+        };
     }
+
+    Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
 #[cfg(target_os="android")]
@@ -810,10 +880,7 @@ unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
 }
 
 struct UnixCmsg {
-    data_buffer: Vec<u8>,
     cmsg_buffer: *mut cmsghdr,
-    #[allow(dead_code)]
-    iovec: Box<iovec>,
     msghdr: msghdr,
 }
 
@@ -828,35 +895,26 @@ impl Drop for UnixCmsg {
 }
 
 impl UnixCmsg {
-    unsafe fn new(maximum_recv_size: usize) -> UnixCmsg {
+    unsafe fn new(iovec: &[iovec]) -> UnixCmsg {
         let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
             mem::size_of::<c_int>();
-        assert!(maximum_recv_size > cmsg_length);
-        let mut data_buffer: Vec<u8> = vec![0; maximum_recv_size];
-        let cmsg_buffer = libc::malloc(cmsg_length as size_t) as *mut cmsghdr;
-        let mut iovec = Box::new(iovec {
-            iov_base: &mut data_buffer[0] as *mut _ as *mut c_char,
-            iov_len: data_buffer.len(),
-        });
-        let iovec_ptr: *mut iovec = &mut *iovec;
+        let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
         UnixCmsg {
-            data_buffer: data_buffer,
             cmsg_buffer: cmsg_buffer,
-            iovec: iovec,
             msghdr: msghdr {
                 msg_name: ptr::null_mut(),
                 msg_namelen: 0,
-                msg_iov: iovec_ptr,
-                msg_iovlen: 1,
+                msg_iov: iovec.as_ptr(),
+                msg_iovlen: iovec.len(),
                 msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length as size_t,
+                msg_controllen: cmsg_length,
                 msg_flags: 0,
             },
         }
     }
 
     unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
-                   -> Result<ssize_t, UnixError> {
+                   -> Result<usize, UnixError> {
         if let BlockingMode::Nonblocking = blocking_mode {
             if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
                 return Err(UnixError::last())
@@ -865,7 +923,7 @@ impl UnixCmsg {
 
         let result = recvmsg(fd, &mut self.msghdr, 0);
         let result = if result > 0 {
-            Ok(result)
+            Ok(result as usize)
         } else if result == 0 {
             Err(UnixError(libc::ECONNRESET))
         } else {
@@ -910,17 +968,17 @@ type nfds_t = c_ulong;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
-    CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t) + length
+    CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
 }
 
 #[allow(non_snake_case)]
 fn CMSG_ALIGN(length: size_t) -> size_t {
-    (length + (mem::size_of::<size_t>() as size_t) - 1) & ((!(mem::size_of::<size_t>() - 1)) as size_t)
+    (length + mem::size_of::<size_t>() - 1) & !(mem::size_of::<size_t>() - 1)
 }
 
 #[allow(non_snake_case)]
 fn CMSG_SPACE(length: size_t) -> size_t {
-    CMSG_ALIGN(length) + CMSG_ALIGN(mem::size_of::<cmsghdr>() as size_t)
+    CMSG_ALIGN(length) + CMSG_ALIGN(mem::size_of::<cmsghdr>())
 }
 
 #[allow(non_snake_case)]
@@ -954,7 +1012,7 @@ extern {
 struct msghdr {
     msg_name: *mut c_void,
     msg_namelen: socklen_t,
-    msg_iov: *mut iovec,
+    msg_iov: *const iovec,
     msg_iovlen: size_t,
     msg_control: *mut c_void,
     msg_controllen: size_t,
