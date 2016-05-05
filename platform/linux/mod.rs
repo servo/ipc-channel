@@ -277,6 +277,10 @@ impl UnixSender {
         fn downsize(sendbuf_size: &mut usize, sent_size: usize) -> Result<(),()> {
             if sent_size > 2000 {
                 *sendbuf_size /= 2;
+                // Make certain we end up with less than what we tried before...
+                if !(*sendbuf_size < sent_size) {
+                    *sendbuf_size = sent_size / 2;
+                }
                 Ok(())
             } else {
                 Err(())
