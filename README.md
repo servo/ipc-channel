@@ -1,5 +1,7 @@
 # ipc-channel
 
+[Documentation](https://doc.servo.org/ipc_channel/index.html)
+
 ## Overview
 
 `ipc-channel` is an implementation of the Rust channel API (a form of communicating sequential processes, CSP) over the native OS abstractions. Under the hood, this API uses Mach ports on the Mac and file descriptor passing over Unix sockets on Linux. The `serde` library is used to serialize values for transport over the wire.
