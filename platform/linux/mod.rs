@@ -133,7 +133,7 @@ impl UnixSender {
             if getsockopt(self.fd,
                           libc::SOL_SOCKET,
                           libc::SO_SNDBUF,
-                          &mut socket_sendbuf_size as *mut usize as *mut c_void,
+                          &mut socket_sendbuf_size as *mut _ as *mut c_void,
                           &mut socket_sendbuf_size_len as *mut socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -222,7 +222,7 @@ impl UnixSender {
                         iov_len: mem::size_of_val(&len),
                     },
                     iovec {
-                        iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
+                        iov_base: data_buffer.as_ptr() as *const c_char as *mut _,
                         iov_len: data_buffer.len(),
                     },
                 ];
@@ -600,7 +600,7 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
         setsockopt(sockfd,
                    SOL_SOCKET,
                    SO_LINGER,
-                   &linger as *const linger as *const c_void,
+                   &linger as *const _ as *const c_void,
                    mem::size_of::<linger>() as socklen_t)
     };
     if err < 0 {
