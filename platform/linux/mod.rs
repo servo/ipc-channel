@@ -204,7 +204,7 @@ impl UnixSender {
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
                     ptr::copy_nonoverlapping(fds.as_ptr(),
-                                             cmsg_buffer.offset(1) as *mut _ as *mut c_int,
+                                             cmsg_buffer.offset(1) as *mut c_int,
                                              fds.len());
                     (cmsg_buffer, CMSG_SPACE(cmsg_length))
                 } else {
