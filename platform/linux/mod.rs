@@ -762,7 +762,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
-        let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
+        let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const _ as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
         let channel_length = if cmsg_length == 0 {
             0
