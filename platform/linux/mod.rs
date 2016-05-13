@@ -133,7 +133,7 @@ impl UnixSender {
             if getsockopt(self.fd,
                           libc::SOL_SOCKET,
                           libc::SO_SNDBUF,
-                          &mut socket_sendbuf_size as *mut usize as *mut c_void,
+                          &mut socket_sendbuf_size as *mut _ as *mut c_void,
                           &mut socket_sendbuf_size_len as *mut socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -204,7 +204,7 @@ impl UnixSender {
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
                     ptr::copy_nonoverlapping(fds.as_ptr(),
-                                             cmsg_buffer.offset(1) as *mut _ as *mut c_int,
+                                             cmsg_buffer.offset(1) as *mut c_int,
                                              fds.len());
                     (cmsg_buffer, CMSG_SPACE(cmsg_length))
                 } else {
@@ -222,7 +222,7 @@ impl UnixSender {
                         iov_len: mem::size_of_val(&len),
                     },
                     iovec {
-                        iov_base: data_buffer.as_ptr() as *const c_char as *mut c_char,
+                        iov_base: data_buffer.as_ptr() as *mut c_char,
                         iov_len: data_buffer.len(),
                     },
                 ];
@@ -604,7 +604,7 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
         setsockopt(sockfd,
                    SOL_SOCKET,
                    SO_LINGER,
-                   &linger as *const linger as *const c_void,
+                   &linger as *const _ as *const c_void,
                    mem::size_of::<linger>() as socklen_t)
     };
     if err < 0 {
@@ -766,7 +766,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
-        let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const u8 as *const c_int;
+        let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
         let channel_length = if cmsg_length == 0 {
             0
