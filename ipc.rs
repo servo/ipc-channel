@@ -63,6 +63,7 @@ pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct IpcReceiver<T> where T: Deserialize + Serialize {
     os_receiver: OsIpcReceiver,
     phantom: PhantomData<T>,
@@ -118,6 +119,7 @@ impl<T> Serialize for IpcReceiver<T> where T: Deserialize + Serialize {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct IpcSender<T> where T: Serialize {
     os_sender: OsIpcSender,
     phantom: PhantomData<T>,

@@ -11,6 +11,7 @@
 #![feature(borrow_state)]
 #![cfg_attr(any(target_os="windows", target_os="android"), feature(mpsc_select))]
 #![plugin(serde_macros)]
+#![cfg_attr(feature="heap_size", plugin(heapsize_plugin))]
 
 #[macro_use]
 extern crate lazy_static;
@@ -20,6 +21,7 @@ extern crate libc;
 extern crate rand;
 extern crate serde;
 extern crate uuid;
+#[cfg(feature="heap_size")] #[macro_use] extern crate heapsize;
 
 pub mod ipc;
 pub mod platform;

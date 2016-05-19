@@ -467,3 +467,13 @@ fn test_so_linger() {
     };
     assert_eq!(val, 42);
 }
+
+#[cfg(feature="heap_size")]
+#[test]
+fn heap_size() {
+    use heapsize::HeapSizeOf;
+    fn check<T: HeapSizeOf>(_: T) {}
+    let (sender, receiver) = ipc::channel::<i32>().unwrap();
+    check(sender);
+    check(receiver);
+}

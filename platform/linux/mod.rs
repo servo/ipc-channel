@@ -50,6 +50,7 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
 }
 
 #[derive(PartialEq, Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct UnixReceiver {
     fd: c_int,
 }
@@ -92,6 +93,7 @@ impl UnixReceiver {
 }
 
 #[derive(PartialEq, Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct UnixSender {
     fd: c_int,
 }

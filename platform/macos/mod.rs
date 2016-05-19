@@ -114,6 +114,7 @@ pub fn channel() -> Result<(MachSender, MachReceiver),MachError> {
 }
 
 #[derive(PartialEq, Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct MachReceiver {
     port: Cell<mach_port_t>,
 }
@@ -304,6 +305,7 @@ impl MachReceiver {
 }
 
 #[derive(PartialEq, Debug)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct MachSender {
     port: mach_port_t,
 }

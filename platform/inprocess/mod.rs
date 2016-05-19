@@ -58,6 +58,7 @@ pub fn channel() -> Result<(MpscSender, MpscReceiver),MpscError> {
     Ok((MpscSender::new(base_sender), MpscReceiver::new(base_receiver)))
 }
 
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct MpscReceiver {
     receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
 }
@@ -114,6 +115,7 @@ unsafe impl Send for MpscReceiver { }
 unsafe impl Sync for MpscReceiver { }
 
 #[derive(Clone)]
+#[cfg_attr(feature="heap_size", derive(HeapSizeOf))]
 pub struct MpscSender {
     sender: RefCell<mpsc::Sender<MpscChannelMessage>>,
 }
