@@ -19,6 +19,7 @@ use std::mem;
 use std::ops::Deref;
 use std::ptr;
 use std::slice;
+use std::sync::Arc;
 use std::thread;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
@@ -91,26 +92,20 @@ impl UnixReceiver {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
+pub struct SharedFileDescriptor(c_int);
+
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct UnixSender {
-    fd: c_int,
+    fd: Arc<SharedFileDescriptor>,
 }
 
-impl Drop for UnixSender {
+impl Drop for SharedFileDescriptor {
     fn drop(&mut self) {
         unsafe {
-            let result = libc::close(self.fd);
+            let result = libc::close(self.0);
             assert!(thread::panicking() || result == 0);
-        }
-    }
-}
-
-impl Clone for UnixSender {
-    fn clone(&self) -> UnixSender {
-        unsafe {
-            UnixSender {
-                fd: libc::dup(self.fd)
-            }
         }
     }
 }
@@ -118,7 +113,7 @@ impl Clone for UnixSender {
 impl UnixSender {
     fn from_fd(fd: c_int) -> UnixSender {
         UnixSender {
-            fd: fd,
+            fd: Arc::new(SharedFileDescriptor(fd)),
         }
     }
 
@@ -130,7 +125,7 @@ impl UnixSender {
         unsafe {
             let mut socket_sendbuf_size: usize = 0;
             let mut socket_sendbuf_size_len = mem::size_of::<usize>() as socklen_t;
-            if getsockopt(self.fd,
+            if getsockopt(self.fd.0,
                           libc::SOL_SOCKET,
                           libc::SO_SNDBUF,
                           &mut socket_sendbuf_size as *mut _ as *mut c_void,
@@ -289,7 +284,7 @@ impl UnixSender {
 
         // If the message is small enough, try sending it in a single fragment.
         if data.len() <= Self::get_max_fragment_size() {
-            match send_first_fragment(self.fd, &fds[..], data, data.len()) {
+            match send_first_fragment(self.fd.0, &fds[..], data, data.len()) {
                 Ok(_) => return Ok(()),
                 Err(error) => {
                     // ENOBUFS means the kernel failed to allocate a buffer large enough
@@ -328,13 +323,13 @@ impl UnixSender {
 
                 // This fragment always uses the full allowable buffer size.
                 end_byte_position = Self::first_fragment_size(sendbuf_size);
-                send_first_fragment(self.fd, &fds[..], &data[..end_byte_position], data.len())
+                send_first_fragment(self.fd.0, &fds[..], &data[..end_byte_position], data.len())
             } else {
                 // Followup fragment. No header; but offset by amount of data already sent.
 
                 end_byte_position = cmp::min(byte_position + Self::fragment_size(sendbuf_size),
                                              data.len());
-                send_followup_fragment(dedicated_tx.fd, &data[byte_position..end_byte_position])
+                send_followup_fragment(dedicated_tx.fd.0, &data[byte_position..end_byte_position])
             };
 
             if let Err(error) = result {
@@ -385,7 +380,7 @@ pub enum UnixChannel {
 impl UnixChannel {
     fn fd(&self) -> c_int {
         match *self {
-            UnixChannel::Sender(ref sender) => sender.fd,
+            UnixChannel::Sender(ref sender) => sender.fd.0,
             UnixChannel::Receiver(ref receiver) => receiver.fd,
         }
     }
