@@ -18,6 +18,15 @@ use std::sync::{mpsc, Mutex};
 /// as the benchmark framework doesn't know about the inner iterations...
 const ITERATIONS: usize = 1;
 
+#[bench]
+fn create_channel(b: &mut test::Bencher) {
+    b.iter(|| {
+        for _ in 0..ITERATIONS {
+            platform::channel().unwrap();
+        }
+    });
+}
+
 fn bench_size(b: &mut test::Bencher, size: usize) {
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let (tx, rx) = platform::channel().unwrap();
