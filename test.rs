@@ -437,7 +437,7 @@ fn multiple_paths_to_a_sender() {
 
 #[test]
 fn bytes() {
-    let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+    let bytes = [1, 2, 3, 4, 5, 6, 7];
     let (tx, rx) = ipc::bytes_channel().unwrap();
     tx.send(&bytes[..]).unwrap();
     let received_bytes = rx.recv().unwrap();
@@ -450,7 +450,7 @@ fn embedded_bytes_receivers() {
     let (super_tx, super_rx) = ipc::channel().unwrap();
     super_tx.send(sub_tx).unwrap();
     let sub_tx = super_rx.recv().unwrap();
-    let bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+    let bytes = [1, 2, 3, 4, 5, 6, 7];
     sub_tx.send(&bytes[..]).unwrap();
     let received_bytes = sub_rx.recv().unwrap();
     assert_eq!(&bytes, &received_bytes[..]);
