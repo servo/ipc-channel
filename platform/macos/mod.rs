@@ -808,17 +808,10 @@ struct Message {
 
 impl Message {
     fn size_of(data_length: usize, port_length: usize, shared_memory_length: usize) -> usize {
-        let mut size = mem::size_of::<Message>() +
+        mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
             mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            data_length;
-
-        // Round up to the next 4 bytes.
-        if (size & 0x3) != 0 {
-            size = (size & !0x3) + 4;
-        }
-
-        size
+            data_length
     }
 }
 
