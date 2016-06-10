@@ -7,10 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(custom_derive, plugin, slice_patterns)]
 #![feature(borrow_state)]
 #![cfg_attr(any(target_os="windows", target_os="android"), feature(mpsc_select))]
-#![plugin(serde_macros)]
 
 #[macro_use]
 extern crate lazy_static;

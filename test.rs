@@ -43,42 +43,15 @@ impl Wait for libc::pid_t {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct Person {
-    name: String,
-    age: u32,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct PersonAndSender {
-    person: Person,
-    sender: IpcSender<Person>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct PersonAndOpaqueSender {
-    person: Person,
-    sender: OpaqueIpcSender,
-}
-
-#[derive(Serialize, Deserialize)]
-struct PersonAndReceiver {
-    person: Person,
-    receiver: IpcReceiver<Person>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct PersonAndSharedMemory {
-    person: Person,
-    shared_memory: IpcSharedMemory,
-}
+type Person = (String, u32);
+type PersonAndSender = (Person, IpcSender<Person>);
+type PersonAndOpaqueSender = (Person, OpaqueIpcSender);
+type PersonAndReceiver = (Person, IpcReceiver<Person>);
+type PersonAndSharedMemory = (Person, IpcSharedMemory);
 
 #[test]
 fn simple() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
     let received_person = rx.recv().unwrap();
@@ -87,41 +60,29 @@ fn simple() {
 
 #[test]
 fn embedded_senders() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
-    let person_and_sender = PersonAndSender {
-        person: person.clone(),
-        sender: sub_tx,
-    };
+    let person_and_sender = (person.clone(), sub_tx);
     let (super_tx, super_rx) = ipc::channel().unwrap();
     super_tx.send(person_and_sender).unwrap();
     let received_person_and_sender = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_sender.person, person);
-    received_person_and_sender.sender.send(person.clone()).unwrap();
+    assert_eq!(received_person_and_sender.0, person);
+    received_person_and_sender.1.send(person.clone()).unwrap();
     let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
 #[test]
 fn embedded_receivers() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
-    let person_and_receiver = PersonAndReceiver {
-        person: person.clone(),
-        receiver: sub_rx,
-    };
+    let person_and_receiver = (person.clone(), sub_rx);
     let (super_tx, super_rx) = ipc::channel().unwrap();
     super_tx.send(person_and_receiver).unwrap();
     let received_person_and_receiver = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_receiver.person, person);
+    assert_eq!(received_person_and_receiver.0, person);
     sub_tx.send(person.clone()).unwrap();
-    let received_person = received_person_and_receiver.receiver.recv().unwrap();
+    let received_person = received_person_and_receiver.1.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
@@ -133,10 +94,7 @@ fn select() {
     let rx0_id = rx_set.add(rx0).unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     tx0.send(person.clone()).unwrap();
     let (received_id, received_data) =
         rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
@@ -175,10 +133,7 @@ fn select() {
 ///XXXjdm Windows' libc doesn't include fork.
 #[cfg(not(windows))]
 fn cross_process_embedded_senders() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();
     let (server2, server2_name) = IpcOneShotServer::new().unwrap();
     let child_pid = unsafe { fork(|| {
@@ -199,10 +154,7 @@ fn cross_process_embedded_senders() {
 
 #[test]
 fn router_simple() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
@@ -216,10 +168,7 @@ fn router_simple() {
 
 #[test]
 fn router_routing_to_new_mpsc_receiver() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
@@ -230,10 +179,7 @@ fn router_routing_to_new_mpsc_receiver() {
 
 #[test]
 fn router_multiplexing() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx0, rx0) = ipc::channel().unwrap();
     tx0.send(person.clone()).unwrap();
     let (tx1, rx1) = ipc::channel().unwrap();
@@ -249,10 +195,7 @@ fn router_multiplexing() {
 
 #[test]
 fn router_multithreaded_multiplexing() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
 
     let person_for_thread = person.clone();
     let (tx0, rx0) = ipc::channel().unwrap();
@@ -319,10 +262,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
 
 #[test]
 fn router_big_data() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let people: Vec<_> = iter::repeat(person).take(64 * 1024).collect();
     let (tx, rx) = ipc::channel().unwrap();
     let people_for_subthread = people.clone();
@@ -341,28 +281,20 @@ fn router_big_data() {
 
 #[test]
 fn shared_memory() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
-    let person_and_shared_memory = PersonAndSharedMemory {
-        person: person,
-        shared_memory: IpcSharedMemory::from_byte(0xba, 1024 * 1024),
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
+    let person_and_shared_memory = 
+        (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
     assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
-    assert!(person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
-    assert!(received_person_and_shared_memory.shared_memory.iter().all(|byte| *byte == 0xba));
+    assert!(person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
+    assert!(received_person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
 }
 
 #[test]
 fn opaque_sender() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     let opaque_tx = tx.to_opaque();
     let tx: IpcSender<Person> = opaque_tx.to();
@@ -373,30 +305,21 @@ fn opaque_sender() {
 
 #[test]
 fn embedded_opaque_senders() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel::<Person>().unwrap();
-    let person_and_sender = PersonAndOpaqueSender {
-        person: person.clone(),
-        sender: sub_tx.to_opaque(),
-    };
+    let person_and_sender = (person.clone(), sub_tx.to_opaque());
     let (super_tx, super_rx) = ipc::channel().unwrap();
     super_tx.send(person_and_sender).unwrap();
     let received_person_and_sender = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_sender.person, person);
-    received_person_and_sender.sender.to::<Person>().send(person.clone()).unwrap();
+    assert_eq!(received_person_and_sender.0, person);
+    received_person_and_sender.1.to::<Person>().send(person.clone()).unwrap();
     let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
 #[test]
 fn try_recv() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     assert!(rx.try_recv().is_err());
     tx.send(person.clone()).unwrap();
@@ -407,15 +330,9 @@ fn try_recv() {
 
 #[test]
 fn multiple_paths_to_a_sender() {
-    let person = Person {
-        name: "Patrick Walton".to_owned(),
-        age: 29,
-    };
+    let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
-    let person_and_sender = Arc::new(PersonAndSender {
-        person: person.clone(),
-        sender: sub_tx,
-    });
+    let person_and_sender = Arc::new((person.clone(), sub_tx));
     let send_data = vec![
         person_and_sender.clone(),
         person_and_sender.clone(),
@@ -424,13 +341,13 @@ fn multiple_paths_to_a_sender() {
     let (super_tx, super_rx) = ipc::channel().unwrap();
     super_tx.send(send_data).unwrap();
     let received_data = super_rx.recv().unwrap();
-    assert_eq!(received_data[0].person, person);
-    assert_eq!(received_data[1].person, person);
-    assert_eq!(received_data[2].person, person);
-    received_data[0].sender.send(person.clone()).unwrap();
+    assert_eq!(received_data[0].0, person);
+    assert_eq!(received_data[1].0, person);
+    assert_eq!(received_data[2].0, person);
+    received_data[0].1.send(person.clone()).unwrap();
     let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
-    received_data[1].sender.send(person.clone()).unwrap();
+    received_data[1].1.send(person.clone()).unwrap();
     let received_person = sub_rx.recv().unwrap();
     assert_eq!(received_person, person);
 }
