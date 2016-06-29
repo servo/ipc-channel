@@ -8,8 +8,10 @@
 // except according to those terms.
 
 use bincode::serde::DeserializeError;
-use libc::{self, MAP_SHARED, PROT_READ, PROT_WRITE, c_char, c_int, c_short, c_ulong};
-use libc::{c_ushort, c_void, mode_t, off_t, size_t, sockaddr, sockaddr_un, socklen_t, ssize_t};
+use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
+use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_short, c_ushort, c_void, getsockopt};
+use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
+use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t};
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
@@ -23,9 +25,6 @@ use std::sync::Arc;
 use std::thread;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
-
-// Yes, really!
-const MAP_FAILED: *mut u8 = (!0usize) as *mut u8;
 
 lazy_static! {
     static ref SYSTEM_SENDBUF_SIZE: usize = {
@@ -206,18 +205,18 @@ impl UnixSender {
                     (ptr::null_mut(), 0)
                 };
 
-                let iovec = [
+                let mut iovec = [
                     // First fragment begins with a header recording the total data length.
                     //
                     // The receiver uses this to determine
                     // whether it already got the entire message,
                     // or needs to receive additional fragments -- and if so, how much.
                     iovec {
-                        iov_base: &len as *const _ as *mut c_char,
+                        iov_base: &len as *const _ as *mut c_void,
                         iov_len: mem::size_of_val(&len),
                     },
                     iovec {
-                        iov_base: data_buffer.as_ptr() as *mut c_char,
+                        iov_base: data_buffer.as_ptr() as *mut c_void,
                         iov_len: data_buffer.len(),
                     },
                 ];
@@ -225,7 +224,7 @@ impl UnixSender {
                 let msghdr = msghdr {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
-                    msg_iov: iovec.as_ptr(),
+                    msg_iov: iovec.as_mut_ptr(),
                     msg_iovlen: iovec.len(),
                     msg_control: cmsg_buffer as *mut c_void,
                     msg_controllen: cmsg_space,
@@ -746,17 +745,17 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
         main_data_buffer.set_len(UnixSender::get_max_fragment_size());
 
-        let iovec = [
+        let mut iovec = [
             iovec {
-                iov_base: &mut total_size as *mut _ as *mut c_char,
+                iov_base: &mut total_size as *mut _ as *mut c_void,
                 iov_len: mem::size_of_val(&total_size),
             },
             iovec {
-                iov_base: main_data_buffer.as_mut_ptr() as *mut c_char,
+                iov_base: main_data_buffer.as_mut_ptr() as *mut c_void,
                 iov_len: main_data_buffer.len(),
             },
         ];
-        let mut cmsg = UnixCmsg::new(&iovec);
+        let mut cmsg = UnixCmsg::new(&mut iovec);
 
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
@@ -872,10 +871,10 @@ unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
                              PROT_READ | PROT_WRITE,
                              MAP_SHARED,
                              fd,
-                             0) as *mut u8;
+                             0);
     assert!(address != ptr::null_mut());
     assert!(address != MAP_FAILED);
-    (address, length)
+    (address as *mut u8, length)
 }
 
 struct UnixCmsg {
@@ -894,7 +893,7 @@ impl Drop for UnixCmsg {
 }
 
 impl UnixCmsg {
-    unsafe fn new(iovec: &[iovec]) -> UnixCmsg {
+    unsafe fn new(iovec: &mut [iovec]) -> UnixCmsg {
         let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
             mem::size_of::<c_int>();
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
@@ -903,7 +902,7 @@ impl UnixCmsg {
             msghdr: msghdr {
                 msg_name: ptr::null_mut(),
                 msg_namelen: 0,
-                msg_iov: iovec.as_ptr(),
+                msg_iov: iovec.as_mut_ptr(),
                 msg_iovlen: iovec.len(),
                 msg_control: cmsg_buffer as *mut c_void,
                 msg_controllen: cmsg_length,
@@ -954,16 +953,7 @@ fn is_socket(fd: c_int) -> bool {
 
 // FFI stuff follows:
 
-const POLLIN: c_short = 0x01;
 const SCM_RIGHTS: c_int = 0x01;
-const SOCK_SEQPACKET: c_int = 0x05;
-const SOL_SOCKET: c_int = 1;
-const SO_LINGER: c_int = 13;
-const S_IFMT: mode_t = 0o00170000;
-const S_IFSOCK: mode_t = 0o0140000;
-
-#[allow(non_camel_case_types)]
-type nfds_t = c_ulong;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
@@ -986,42 +976,8 @@ fn S_ISSOCK(mode: mode_t) -> bool {
 }
 
 extern {
-    fn getsockopt(sockfd: c_int,
-                  level: c_int,
-                  optname: c_int,
-                  optval: *mut c_void,
-                  optlen: *mut socklen_t)
-                  -> c_int;
-    fn mkstemp(template: *mut c_char) -> c_int;
     fn mktemp(template: *mut c_char) -> *mut c_char;
-    fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
-    fn recvmsg(socket: c_int, message: *mut msghdr, flags: c_int) -> ssize_t;
-    fn sendmsg(socket: c_int, message: *const msghdr, flags: c_int) -> ssize_t;
-    fn setsockopt(socket: c_int,
-                  level: c_int,
-                  option_name: c_int,
-                  option_value: *const c_void,
-                  option_len: socklen_t)
-                  -> c_int;
-    fn socketpair(domain: c_int, socket_type: c_int, protocol: c_int, sv: *mut c_int) -> c_int;
     fn strdup(string: *const c_char) -> *mut c_char;
-}
-
-#[repr(C)]
-struct msghdr {
-    msg_name: *mut c_void,
-    msg_namelen: socklen_t,
-    msg_iov: *const iovec,
-    msg_iovlen: size_t,
-    msg_control: *mut c_void,
-    msg_controllen: size_t,
-    msg_flags: c_int,
-}
-
-#[repr(C)]
-struct iovec {
-    iov_base: *mut c_char,
-    iov_len: size_t,
 }
 
 #[repr(C)]
@@ -1029,13 +985,6 @@ struct cmsghdr {
     cmsg_len: size_t,
     cmsg_level: c_int,
     cmsg_type: c_int,
-}
-
-#[repr(C)]
-struct pollfd {
-    fd: c_int,
-    events: c_short,
-    revents: c_short,
 }
 
 #[repr(C)]
