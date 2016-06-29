@@ -594,7 +594,6 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                         MACH_MSG_SUCCESS => break,
                         MACH_RCV_TOO_LARGE => {
                             libc::free(allocated_buffer.unwrap() as *mut _);
-                            allocated_buffer = None;
                             extra_size *= 2;
                         }
                         os_result => {
