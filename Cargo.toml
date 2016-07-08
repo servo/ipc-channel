@@ -6,6 +6,9 @@ version = "0.2.4"
 name = "ipc_channel"
 path = "lib.rs"
 
+[features]
+inprocess = []
+
 [dependencies]
 bincode = ">=0.4.1, <0.6"
 lazy_static = "0.2"

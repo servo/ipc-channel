@@ -38,11 +38,11 @@ lazy_static! {
 // Empirically, we have to deduct 32 bytes from that.
 const RESERVED_SIZE: usize = 32;
 
-pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
+pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
     let mut results = [0, 0];
     unsafe {
         if socketpair(libc::AF_UNIX, SOCK_SEQPACKET, 0, &mut results[0]) >= 0 {
-            Ok((UnixSender::from_fd(results[0]), UnixReceiver::from_fd(results[1])))
+            Ok((OsIpcSender::from_fd(results[0]), OsIpcReceiver::from_fd(results[1])))
         } else {
             Err(UnixError::last())
         }
@@ -50,11 +50,11 @@ pub fn channel() -> Result<(UnixSender, UnixReceiver),UnixError> {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct UnixReceiver {
+pub struct OsIpcReceiver {
     fd: c_int,
 }
 
-impl Drop for UnixReceiver {
+impl Drop for OsIpcReceiver {
     fn drop(&mut self) {
         unsafe {
             //assert!(libc::close(self.fd) == 0)
@@ -63,9 +63,9 @@ impl Drop for UnixReceiver {
     }
 }
 
-impl UnixReceiver {
-    fn from_fd(fd: c_int) -> UnixReceiver {
-        UnixReceiver {
+impl OsIpcReceiver {
+    fn from_fd(fd: c_int) -> OsIpcReceiver {
+        OsIpcReceiver {
             fd: fd,
         }
     }
@@ -76,17 +76,17 @@ impl UnixReceiver {
         }
     }
 
-    pub fn consume(&self) -> UnixReceiver {
-        UnixReceiver::from_fd(self.consume_fd())
+    pub fn consume(&self) -> OsIpcReceiver {
+        OsIpcReceiver::from_fd(self.consume_fd())
     }
 
     pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
         recv(self.fd, BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
         recv(self.fd, BlockingMode::Nonblocking)
     }
 }
@@ -96,7 +96,7 @@ pub struct SharedFileDescriptor(c_int);
 
 
 #[derive(PartialEq, Debug, Clone)]
-pub struct UnixSender {
+pub struct OsIpcSender {
     fd: Arc<SharedFileDescriptor>,
 }
 
@@ -109,9 +109,9 @@ impl Drop for SharedFileDescriptor {
     }
 }
 
-impl UnixSender {
-    fn from_fd(fd: c_int) -> UnixSender {
-        UnixSender {
+impl OsIpcSender {
+    fn from_fd(fd: c_int) -> OsIpcSender {
+        OsIpcSender {
             fd: Arc::new(SharedFileDescriptor(fd)),
         }
     }
@@ -169,8 +169,8 @@ impl UnixSender {
 
     pub fn send(&self,
                 data: &[u8],
-                channels: Vec<UnixChannel>,
-                shared_memory_regions: Vec<UnixSharedMemory>)
+                channels: Vec<OsIpcChannel>,
+                shared_memory_regions: Vec<OsIpcSharedMemory>)
                 -> Result<(),UnixError> {
 
         let mut fds = Vec::new();
@@ -348,7 +348,7 @@ impl UnixSender {
         Ok(())
     }
 
-    pub fn connect(name: String) -> Result<UnixSender,UnixError> {
+    pub fn connect(name: String) -> Result<OsIpcSender,UnixError> {
         let name = CString::new(name).unwrap();
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET, 0);
@@ -365,31 +365,31 @@ impl UnixSender {
                 return Err(UnixError::last())
             }
 
-            Ok(UnixSender::from_fd(fd))
+            Ok(OsIpcSender::from_fd(fd))
         }
     }
 }
 
 #[derive(PartialEq, Debug)]
-pub enum UnixChannel {
-    Sender(UnixSender),
-    Receiver(UnixReceiver),
+pub enum OsIpcChannel {
+    Sender(OsIpcSender),
+    Receiver(OsIpcReceiver),
 }
 
-impl UnixChannel {
+impl OsIpcChannel {
     fn fd(&self) -> c_int {
         match *self {
-            UnixChannel::Sender(ref sender) => sender.fd.0,
-            UnixChannel::Receiver(ref receiver) => receiver.fd,
+            OsIpcChannel::Sender(ref sender) => sender.fd.0,
+            OsIpcChannel::Receiver(ref receiver) => receiver.fd,
         }
     }
 }
 
-pub struct UnixReceiverSet {
+pub struct OsIpcReceiverSet {
     pollfds: Vec<pollfd>,
 }
 
-impl Drop for UnixReceiverSet {
+impl Drop for OsIpcReceiverSet {
     fn drop(&mut self) {
         unsafe {
             for pollfd in self.pollfds.iter() {
@@ -400,14 +400,14 @@ impl Drop for UnixReceiverSet {
     }
 }
 
-impl UnixReceiverSet {
-    pub fn new() -> Result<UnixReceiverSet,UnixError> {
-        Ok(UnixReceiverSet {
+impl OsIpcReceiverSet {
+    pub fn new() -> Result<OsIpcReceiverSet,UnixError> {
+        Ok(OsIpcReceiverSet {
             pollfds: Vec::new(),
         })
     }
 
-    pub fn add(&mut self, receiver: UnixReceiver) -> Result<i64,UnixError> {
+    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<i64,UnixError> {
         let fd = receiver.consume_fd();
         self.pollfds.push(pollfd {
             fd: fd,
@@ -417,7 +417,7 @@ impl UnixReceiverSet {
         Ok(fd as i64)
     }
 
-    pub fn select(&mut self) -> Result<Vec<UnixSelectionResult>,UnixError> {
+    pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,UnixError> {
         let mut selection_results = Vec::new();
         let result = unsafe {
             poll(self.pollfds.as_mut_ptr(), self.pollfds.len() as nfds_t, -1)
@@ -431,7 +431,7 @@ impl UnixReceiverSet {
             if (pollfd.revents & POLLIN) != 0 {
                 match recv(pollfd.fd, BlockingMode::Blocking) {
                     Ok((data, channels, shared_memory_regions)) => {
-                        selection_results.push(UnixSelectionResult::DataReceived(
+                        selection_results.push(OsIpcSelectionResult::DataReceived(
                                 pollfd.fd as i64,
                                 data,
                                 channels,
@@ -439,7 +439,7 @@ impl UnixReceiverSet {
                     }
                     Err(err) if err.channel_is_closed() => {
                         hangups.insert(pollfd.fd);
-                        selection_results.push(UnixSelectionResult::ChannelClosed(
+                        selection_results.push(OsIpcSelectionResult::ChannelClosed(
                                     pollfd.fd as i64))
                     }
                     Err(err) => return Err(err),
@@ -456,30 +456,30 @@ impl UnixReceiverSet {
     }
 }
 
-pub enum UnixSelectionResult {
-    DataReceived(i64, Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),
+pub enum OsIpcSelectionResult {
+    DataReceived(i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
     ChannelClosed(i64),
 }
 
-impl UnixSelectionResult {
-    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>) {
+impl OsIpcSelectionResult {
+    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
         match self {
-            UnixSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
+            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
                 (id, data, channels, shared_memory_regions)
             }
-            UnixSelectionResult::ChannelClosed(id) => {
-                panic!("UnixSelectionResult::unwrap(): receiver ID {} was closed!", id)
+            OsIpcSelectionResult::ChannelClosed(id) => {
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {} was closed!", id)
             }
         }
     }
 }
 
 #[derive(PartialEq, Debug)]
-pub struct OpaqueUnixChannel {
+pub struct OsOpaqueIpcChannel {
     fd: c_int,
 }
 
-impl Drop for OpaqueUnixChannel {
+impl Drop for OsOpaqueIpcChannel {
     fn drop(&mut self) {
         unsafe {
             libc::close(self.fd); 
@@ -487,31 +487,31 @@ impl Drop for OpaqueUnixChannel {
     }
 }
 
-impl OpaqueUnixChannel {
-    fn from_fd(fd: c_int) -> OpaqueUnixChannel {
-        OpaqueUnixChannel {
+impl OsOpaqueIpcChannel {
+    fn from_fd(fd: c_int) -> OsOpaqueIpcChannel {
+        OsOpaqueIpcChannel {
             fd: fd,
         }
     }
 
-    pub fn to_sender(&mut self) -> UnixSender {
+    pub fn to_sender(&mut self) -> OsIpcSender {
         unsafe {
-            UnixSender::from_fd(libc::dup(self.fd))
+            OsIpcSender::from_fd(libc::dup(self.fd))
         }
     }
 
-    pub fn to_receiver(&mut self) -> UnixReceiver {
+    pub fn to_receiver(&mut self) -> OsIpcReceiver {
         unsafe {
-            UnixReceiver::from_fd(libc::dup(self.fd))
+            OsIpcReceiver::from_fd(libc::dup(self.fd))
         }
     }
 }
 
-pub struct UnixOneShotServer {
+pub struct OsIpcOneShotServer {
     fd: c_int,
 }
 
-impl Drop for UnixOneShotServer {
+impl Drop for OsIpcOneShotServer {
     fn drop(&mut self) {
         unsafe {
             let result = libc::close(self.fd);
@@ -520,8 +520,8 @@ impl Drop for UnixOneShotServer {
     }
 }
 
-impl UnixOneShotServer {
-    pub fn new() -> Result<(UnixOneShotServer, String),UnixError> {
+impl OsIpcOneShotServer {
+    pub fn new() -> Result<(OsIpcOneShotServer, String),UnixError> {
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET, 0);
             let mut path: Vec<u8>;
@@ -556,17 +556,17 @@ impl UnixOneShotServer {
                 return Err(UnixError::last())
             }
 
-            Ok((UnixOneShotServer {
+            Ok((OsIpcOneShotServer {
                 fd: fd,
             }, String::from_utf8(CStr::from_ptr(path.as_ptr() as
                                                 *const c_char).to_bytes().to_owned()).unwrap()))
         }
     }
 
-    pub fn accept(self) -> Result<(UnixReceiver,
+    pub fn accept(self) -> Result<(OsIpcReceiver,
                                    Vec<u8>,
-                                   Vec<OpaqueUnixChannel>,
-                                   Vec<UnixSharedMemory>),UnixError> {
+                                   Vec<OsOpaqueIpcChannel>,
+                                   Vec<OsIpcSharedMemory>),UnixError> {
         unsafe {
             let sockaddr: *mut sockaddr = ptr::null_mut();
             let sockaddr_len: *mut socklen_t = ptr::null_mut();
@@ -576,7 +576,7 @@ impl UnixOneShotServer {
             }
             try!(make_socket_lingering(client_fd));
 
-            let receiver = UnixReceiver {
+            let receiver = OsIpcReceiver {
                 fd: client_fd,
             };
             let (data, channels, shared_memory_regions) = try!(receiver.recv());
@@ -607,16 +607,16 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
     Ok(())
 }
 
-pub struct UnixSharedMemory {
+pub struct OsIpcSharedMemory {
     ptr: *mut u8,
     length: usize,
     fd: c_int,
 }
 
-unsafe impl Send for UnixSharedMemory {}
-unsafe impl Sync for UnixSharedMemory {}
+unsafe impl Send for OsIpcSharedMemory {}
+unsafe impl Sync for OsIpcSharedMemory {}
 
-impl Drop for UnixSharedMemory {
+impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
         unsafe {
             if !self.ptr.is_null() {
@@ -629,29 +629,29 @@ impl Drop for UnixSharedMemory {
     }
 }
 
-impl Clone for UnixSharedMemory {
-    fn clone(&self) -> UnixSharedMemory {
+impl Clone for OsIpcSharedMemory {
+    fn clone(&self) -> OsIpcSharedMemory {
         unsafe {
             let new_fd = libc::dup(self.fd);
             let (address, _) = map_file(new_fd, Some(self.length));
-            UnixSharedMemory::from_raw_parts(address, self.length, new_fd)
+            OsIpcSharedMemory::from_raw_parts(address, self.length, new_fd)
         }
     }
 }
 
-impl PartialEq for UnixSharedMemory {
-    fn eq(&self, other: &UnixSharedMemory) -> bool {
+impl PartialEq for OsIpcSharedMemory {
+    fn eq(&self, other: &OsIpcSharedMemory) -> bool {
         **self == **other
     }
 }
 
-impl Debug for UnixSharedMemory {
+impl Debug for OsIpcSharedMemory {
     fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
         (**self).fmt(formatter)
     }
 }
 
-impl Deref for UnixSharedMemory {
+impl Deref for OsIpcSharedMemory {
     type Target = [u8];
 
     #[inline]
@@ -662,37 +662,37 @@ impl Deref for UnixSharedMemory {
     }
 }
 
-impl UnixSharedMemory {
-    unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> UnixSharedMemory {
-        UnixSharedMemory {
+impl OsIpcSharedMemory {
+    unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> OsIpcSharedMemory {
+        OsIpcSharedMemory {
             ptr: ptr,
             length: length,
             fd: fd,
         }
     }
 
-    unsafe fn from_fd(fd: c_int) -> UnixSharedMemory {
+    unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemory {
         let (ptr, length) = map_file(fd, None);
-        UnixSharedMemory::from_raw_parts(ptr, length, fd)
+        OsIpcSharedMemory::from_raw_parts(ptr, length, fd)
     }
 
-    pub fn from_byte(byte: u8, length: usize) -> UnixSharedMemory {
+    pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(length);
             let (address, _) = map_file(fd, Some(length));
             for element in slice::from_raw_parts_mut(address, length) {
                 *element = byte;
             }
-            UnixSharedMemory::from_raw_parts(address, length, fd)
+            OsIpcSharedMemory::from_raw_parts(address, length, fd)
         }
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> UnixSharedMemory {
+    pub fn from_bytes(bytes: &[u8]) -> OsIpcSharedMemory {
         unsafe {
             let fd = create_memory_backing_store(bytes.len());
             let (address, _) = map_file(fd, Some(bytes.len()));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
-            UnixSharedMemory::from_raw_parts(address, bytes.len(), fd)
+            OsIpcSharedMemory::from_raw_parts(address, bytes.len(), fd)
         }
     }
 }
@@ -730,7 +730,7 @@ enum BlockingMode {
 }
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
-        -> Result<(Vec<u8>, Vec<OpaqueUnixChannel>, Vec<UnixSharedMemory>),UnixError> {
+        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
 
     let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
 
@@ -742,8 +742,8 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     let mut main_data_buffer;
     unsafe {
         // Allocate a buffer without initialising the memory.
-        main_data_buffer = Vec::with_capacity(UnixSender::get_max_fragment_size());
-        main_data_buffer.set_len(UnixSender::get_max_fragment_size());
+        main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size());
+        main_data_buffer.set_len(OsIpcSender::get_max_fragment_size());
 
         let mut iovec = [
             iovec {
@@ -770,10 +770,10 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
             if is_socket(fd) {
-                channels.push(OpaqueUnixChannel::from_fd(fd));
+                channels.push(OsOpaqueIpcChannel::from_fd(fd));
                 continue
             }
-            shared_memory_regions.push(UnixSharedMemory::from_fd(fd));
+            shared_memory_regions.push(OsIpcSharedMemory::from_fd(fd));
         }
     }
 
@@ -795,7 +795,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     // Receive followup fragments directly into the main buffer.
     while main_data_buffer.len() < total_size {
         let write_pos = main_data_buffer.len();
-        let end_pos = cmp::min(write_pos + UnixSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
+        let end_pos = cmp::min(write_pos + OsIpcSender::fragment_size(*SYSTEM_SENDBUF_SIZE),
                                total_size);
         let result = unsafe {
             assert!(end_pos <= main_data_buffer.capacity());
