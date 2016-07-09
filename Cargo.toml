@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.3.0"
+version = "0.3.1"
 
 [lib]
 name = "ipc_channel"
@@ -14,7 +14,7 @@ bincode = "0.5.9"
 lazy_static = "0.2"
 libc = "0.2.12"
 rand = "0.3"
-serde = "0.7.13"
+serde = "0.7.11"
 uuid = {version = "0.2", features = ["v4"]}
 
 [dev-dependencies]
