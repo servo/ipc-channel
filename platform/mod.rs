@@ -8,13 +8,13 @@
 // except according to those terms.
 
 mod os {
-    #[cfg(all(not(feature = "inprocess"), target_os = "linux"))]
+    #[cfg(target_os = "linux")]
     include!("linux/mod.rs");
 
-    #[cfg(all(not(feature = "inprocess"), target_os = "macos"))]
+    #[cfg(target_os = "macos")]
     include!("macos/mod.rs");
 
-    #[cfg(feature = "inprocess")]
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     include!("inprocess/mod.rs");
 }
 

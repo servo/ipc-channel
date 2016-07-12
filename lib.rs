@@ -7,8 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(feature = "inprocess", feature(mpsc_select))]
 #![feature(borrow_state)]
+#![cfg_attr(any(target_os="windows", target_os="android"), feature(mpsc_select))]
 
 #[macro_use]
 extern crate lazy_static;

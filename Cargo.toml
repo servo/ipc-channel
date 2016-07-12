@@ -1,13 +1,10 @@
 [package]
 name = "ipc-channel"
-version = "0.3.1"
+version = "0.4.0"
 
 [lib]
 name = "ipc_channel"
 path = "lib.rs"
-
-[features]
-inprocess = []
 
 [dependencies]
 bincode = "0.5.9"
