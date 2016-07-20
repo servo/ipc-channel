@@ -59,13 +59,13 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),MpscError> {
 }
 
 pub struct OsIpcReceiver {
-    receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
+    receiver: Arc<Mutex<Option<mpsc::Receiver<MpscChannelMessage>>>>,
 }
 
 impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
-        self.receiver.borrow().as_ref().map(|rx| rx as *const _) ==
-            other.receiver.borrow().as_ref().map(|rx| rx as *const _)
+        self.receiver.lock().unwrap().as_ref().map(|rx| rx as *const _) ==
+            other.receiver.lock().unwrap().as_ref().map(|rx| rx as *const _)
     }
 }
 
@@ -80,17 +80,17 @@ impl fmt::Debug for OsIpcReceiver {
 impl OsIpcReceiver {
     fn new(receiver: mpsc::Receiver<MpscChannelMessage>) -> OsIpcReceiver {
         OsIpcReceiver {
-            receiver: RefCell::new(Some(receiver)),
+            receiver: Arc::new(Mutex::new(Some(receiver))),
         }
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
-        let receiver = self.receiver.borrow_mut().take();
+        let receiver = self.receiver.lock().unwrap().take();
         OsIpcReceiver::new(receiver.unwrap())
     }
 
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MpscError> {
-        let r = self.receiver.borrow();
+        let r = self.receiver.lock().unwrap();
         match r.as_ref().unwrap().recv() {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
@@ -100,7 +100,7 @@ impl OsIpcReceiver {
     }
 
     pub fn try_recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MpscError> {
-        let r = self.receiver.borrow();
+        let r = self.receiver.lock().unwrap();
         match r.as_ref().unwrap().try_recv() {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
@@ -110,18 +110,15 @@ impl OsIpcReceiver {
     }
 }
 
-unsafe impl Send for OsIpcReceiver { }
-unsafe impl Sync for OsIpcReceiver { }
-
 #[derive(Clone)]
 pub struct OsIpcSender {
-    sender: RefCell<mpsc::Sender<MpscChannelMessage>>,
+    sender: Arc<Mutex<mpsc::Sender<MpscChannelMessage>>>,
 }
 
 impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
-        &*self.sender.borrow() as *const _ ==
-            &*other.sender.borrow() as *const _
+        &*self.sender.lock().unwrap() as *const _ ==
+            &*other.sender.lock().unwrap() as *const _
     }
 }
 
@@ -133,13 +130,10 @@ impl fmt::Debug for OsIpcSender {
     }
 }
 
-unsafe impl Send for OsIpcSender { }
-unsafe impl Sync for OsIpcSender { }
-
 impl OsIpcSender {
     fn new(sender: mpsc::Sender<MpscChannelMessage>) -> OsIpcSender {
         OsIpcSender {
-            sender: RefCell::new(sender),
+            sender: Arc::new(Mutex::new(sender)),
         }
     }
 
@@ -159,7 +153,7 @@ impl OsIpcSender {
                 shared_memory_regions: Vec<OsIpcSharedMemory>)
                 -> Result<(),MpscError>
     {
-        match self.sender.borrow().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
+        match self.sender.lock().unwrap().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
             Err(_) => Err(MpscError::ChannelClosedError),
             Ok(_) => Ok(()),
         }
@@ -199,7 +193,7 @@ impl OsIpcReceiverSet {
             let mut handles: Vec<mpsc::Handle<MpscChannelMessage>> = Vec::with_capacity(self.receivers.len());
 
             for r in &self.receivers {
-                let inner_r = mem::replace(&mut *r.receiver.borrow_mut(), None);
+                let inner_r = mem::replace(&mut *r.receiver.lock().unwrap(), None);
                 receivers.push(inner_r);
             }
             
@@ -223,7 +217,7 @@ impl OsIpcReceiverSet {
 
         // put the receivers back
         for (index,r) in self.receivers.iter().enumerate() {
-            mem::replace(&mut *r.receiver.borrow_mut(), mem::replace(&mut receivers[index], None));
+            mem::replace(&mut *r.receiver.lock().unwrap(), mem::replace(&mut receivers[index], None));
         }
 
         if r_id == -1 {
