@@ -15,7 +15,6 @@ use std::thread;
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use libc;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
@@ -396,9 +395,8 @@ fn receiver_set() {
     }
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
 #[test]
-//XXXjdm This hangs indefinitely with inprocess impl and warrants further investigation.
 fn server() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
