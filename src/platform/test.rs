@@ -393,8 +393,6 @@ fn receiver_set() {
 }
 
 #[test]
-//XXXjdm This hangs indefinitely on appveyor and warrants further investigation.
-#[cfg(not(windows))]
 fn server() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
