@@ -139,7 +139,7 @@ impl OsIpcSender {
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender,MpscError> {
-        let record = ONE_SHOT_SERVERS.lock().unwrap().remove(&name).unwrap();
+        let record = ONE_SHOT_SERVERS.lock().unwrap().get(&name).unwrap().clone();
         record.connect();
         Ok(record.sender)
     }
@@ -285,6 +285,7 @@ impl OsIpcOneShotServer {
     {
         let record = ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().clone();
         record.accept();
+        ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
         let receiver = self.receiver.borrow_mut().take().unwrap();
         let (data, channels, shmems) = receiver.recv().unwrap();
         Ok((receiver, data, channels, shmems))
