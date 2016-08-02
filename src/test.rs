@@ -18,8 +18,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-///XXXjdm Windows' libc doesn't include fork.
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 // I'm not actually sure invoking this is indeed unsafe -- but better safe than sorry...
 pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
     match libc::fork() {
@@ -129,9 +128,8 @@ fn select() {
     }
 }
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
-///XXXjdm Windows' libc doesn't include fork.
-#[cfg(not(windows))]
 fn cross_process_embedded_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();

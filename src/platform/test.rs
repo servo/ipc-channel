@@ -14,7 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
 
 #[test]
@@ -173,6 +173,7 @@ fn big_data_with_sender_transfer() {
     thread.join().unwrap();
 }
 
+#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
 fn with_n_fds(n: usize, size: usize) {
     let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| platform::channel().unwrap())
                                                     .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
@@ -204,7 +205,7 @@ fn with_n_fds(n: usize, size: usize) {
 }
 
 // These tests only apply to platforms that need fragmentation.
-#[cfg(target_os="linux")]
+#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
 mod fragment_tests {
     use platform;
     use super::with_n_fds;
@@ -392,9 +393,9 @@ fn receiver_set() {
     }
 }
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
-//XXXjdm This hangs indefinitely on appveyor and warrants further investigation.
-#[cfg(not(windows))]
+//XXXjdm This hangs indefinitely with inprocess impl and warrants further investigation.
 fn server() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
@@ -411,8 +412,7 @@ fn server() {
                (data, vec![], vec![]));
 }
 
-///XXXjdm Windows' libc doesn't include fork.
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
 fn cross_process() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
@@ -432,8 +432,7 @@ fn cross_process() {
                (data, vec![], vec![]));
 }
 
-///XXXjdm Windows' libc doesn't include fork.
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
 fn cross_process_sender_transfer() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
