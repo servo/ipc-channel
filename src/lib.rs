@@ -17,7 +17,7 @@ extern crate bincode;
 extern crate libc;
 extern crate rand;
 extern crate serde;
-extern crate uuid;
+#[cfg(any(target_os = "windows", target_os = "android"))] extern crate uuid;
 
 pub mod ipc;
 pub mod platform;
