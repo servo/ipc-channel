@@ -7,7 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![feature(borrow_state)]
 #![cfg_attr(any(target_os="windows", target_os="android"), feature(mpsc_select))]
 
 #[macro_use]
@@ -21,6 +20,7 @@ extern crate serde;
 
 pub mod ipc;
 pub mod platform;
+mod refcell;
 pub mod router;
 
 #[cfg(test)]

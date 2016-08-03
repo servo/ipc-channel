@@ -13,7 +13,7 @@ use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOp
 use bincode::{self, SizeLimit};
 use bincode::serde::DeserializeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::cell::{RefCell, BorrowState};
+use refcell::{RefCell, BorrowState};
 use std::cmp::min;
 use std::fmt::{self, Debug, Formatter};
 use std::io::{Error, ErrorKind};
