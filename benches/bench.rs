@@ -172,3 +172,143 @@ fn size_22_4m(b: &mut test::Bencher) {
 fn size_23_8m(b: &mut test::Bencher) {
     bench_size(b, 8 * 1024 * 1024);
 }
+
+mod receiver_set {
+    use ipc_channel::ipc::{self, IpcReceiverSet};
+    use test;
+
+    fn gen_select_test(b: &mut test::Bencher, to_send: usize, n: usize) -> () {
+        let mut active = Vec::with_capacity(to_send);
+        let mut dormant = Vec::with_capacity(n - to_send);
+        let mut rx_set = IpcReceiverSet::new().unwrap();
+        for _ in 0..to_send {
+            let (tx, rx) = ipc::channel().unwrap();
+            rx_set.add(rx).unwrap();
+            active.push(tx);
+        }
+        for _ in to_send..n {
+            let (tx, rx) = ipc::channel::<()>().unwrap();
+            rx_set.add(rx).unwrap();
+            dormant.push(tx);
+        }
+        b.iter(|| {
+            for tx in active.iter() {
+                tx.send(()).unwrap();
+            }
+            let mut received = 0;
+            while received < to_send {
+                for result in rx_set.select().unwrap().into_iter() {
+                    let (_, _) = result.unwrap();
+                    received += 1;
+                }
+            }
+        });
+    }
+
+    fn create_empty_set() -> Result<IpcReceiverSet, ()> {
+        Ok(IpcReceiverSet::new().unwrap())
+    }
+
+    fn add_n_rxs(rx_set: &mut IpcReceiverSet, n: usize) -> () {
+        for _ in 0..n {
+            let (_, rx) = ipc::channel::<()>().unwrap();
+            rx_set.add(rx).unwrap();
+        }
+    }
+
+    #[bench]
+    fn send_on_1_of_1(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 1, 1);
+    }
+
+    #[bench]
+    fn send_on_1_of_5(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 1, 5);
+    }
+
+    #[bench]
+    fn send_on_2_of_5(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 2, 5);
+    }
+
+    #[bench]
+    fn send_on_5_of_5(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 5, 5);
+    }
+
+    #[bench]
+    fn send_on_1_of_20(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 1, 20);
+    }
+
+    #[bench]
+    fn send_on_5_of_20(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 5, 20);
+    }
+
+    #[bench]
+    fn send_on_20_of_20(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 20, 20);
+    }
+
+    #[bench]
+    fn send_on_1_of_100(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 1, 100);
+    }
+
+    #[bench]
+    fn send_on_5_of_100(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 5, 100);
+    }
+    #[bench]
+    fn send_on_20_of_100(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 20, 100);
+    }
+
+    #[bench]
+    fn send_on_100_of_100(b: &mut test::Bencher) -> () {
+        gen_select_test(b, 100, 100);
+    }
+
+    #[bench]
+    fn create_and_destroy_empty_set(b: &mut test::Bencher) -> () {
+        b.iter(|| {
+            create_empty_set().unwrap();
+        });
+    }
+
+    #[bench]
+    fn create_and_destroy_set_of_10(b: &mut test::Bencher) -> () {
+        b.iter(|| {
+            let mut rx_set = IpcReceiverSet::new().unwrap();
+            add_n_rxs(&mut rx_set, 10);
+        });
+    }
+
+    #[bench]
+    fn create_and_destroy_set_of_5(b: &mut test::Bencher) -> () {
+        b.iter(|| {
+            let mut rx_set = IpcReceiverSet::new().unwrap();
+            add_n_rxs(&mut rx_set, 5);
+        });
+    }
+
+    #[bench]
+    // Benchmark adding and removing closed receivers from the set
+    fn add_and_remove_closed_receivers(b: &mut test::Bencher) -> () {
+        b.iter(|| {
+            let mut rx_set = IpcReceiverSet::new().unwrap();
+            {
+                {
+                    let (_, rx) = ipc::channel::<()>().unwrap();
+                    rx_set.add(rx).unwrap();
+                }
+                // On select Receivers with a "ClosedChannel" event
+                // will be closed
+                rx_set.select().unwrap();
+                let (_, rx) = ipc::channel::<()>().unwrap();
+                rx_set.add(rx).unwrap();
+            }
+        });
+    }
+}
