@@ -9,9 +9,9 @@
 
 use fnv::FnvHasher;
 use bincode::serde::DeserializeError;
-use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
+use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
-use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
+use libc::{iovec, mkstemp, mode_t, msghdr, off_t, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cell::Cell;
 use std::cmp;
@@ -27,6 +27,8 @@ use std::ptr;
 use std::slice;
 use std::sync::Arc;
 use std::thread;
+use mio::unix::EventedFd;
+use mio::{Poll, Token, Events, Ready, PollOpt};
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -77,6 +79,12 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
             Err(UnixError::last())
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct PollEntry {
+    pub id: u64,
+    pub fd: c_int
 }
 
 #[derive(PartialEq, Debug)]
@@ -415,17 +423,18 @@ impl OsIpcChannel {
 
 pub struct OsIpcReceiverSet {
     incrementor: Incrementor,
-    pollfds: Vec<pollfd>,
-    fdids: HashMap<c_int, u64, BuildHasherDefault<FnvHasher>>
+    poll: Poll,
+    pollfds: HashMap<Token, PollEntry, BuildHasherDefault<FnvHasher>>,
+    events: Events
 }
 
 impl Drop for OsIpcReceiverSet {
     fn drop(&mut self) {
-        unsafe {
-            for pollfd in self.pollfds.iter() {
-                let result = libc::close(pollfd.fd);
-                assert!(thread::panicking() || result == 0);
-            }
+        for &PollEntry { id: _, fd } in self.pollfds.values() {
+            let result = unsafe {
+                libc::close(fd)
+            };
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -435,60 +444,66 @@ impl OsIpcReceiverSet {
         let fnv = BuildHasherDefault::<FnvHasher>::default();
         Ok(OsIpcReceiverSet {
             incrementor: Incrementor::new(),
-            pollfds: Vec::new(),
-            fdids: HashMap::with_hasher(fnv)
+            poll: try!(Poll::new()),
+            pollfds: HashMap::with_hasher(fnv),
+            events: Events::with_capacity(10)
         })
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,UnixError> {
         let last_index = self.incrementor.increment();
         let fd = receiver.consume_fd();
-        self.pollfds.push(pollfd {
-            fd: fd,
-            events: POLLIN,
-            revents: 0,
-        });
-        self.fdids.insert(fd, last_index);
+        let io = EventedFd(&fd);
+        let fd_token = Token(fd as usize);
+        let poll_entry = PollEntry {
+            id: last_index,
+            fd: fd
+        };
+        try!(self.poll.register(&io,
+                                fd_token,
+                                Ready::readable(),
+                                PollOpt::level()));
+        self.pollfds.insert(fd_token, poll_entry);
         Ok(last_index)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,UnixError> {
         let mut selection_results = Vec::new();
-        let result = unsafe {
-            poll(self.pollfds.as_mut_ptr(), self.pollfds.len() as nfds_t, -1)
+        match self.poll.poll(&mut self.events, None) {
+            Ok(sz) if sz > 0 => {},
+            _ => { return Err(UnixError::last()); }
         };
-        if result <= 0 {
-            return Err(UnixError::last())
-        }
 
-        for pollfd in self.pollfds.iter_mut() {
-            if (pollfd.revents & POLLIN) != 0 {
-                match recv(pollfd.fd, BlockingMode::Blocking) {
-                    Ok((data, channels, shared_memory_regions)) => {
-                        selection_results.push(OsIpcSelectionResult::DataReceived(
-                                *self.fdids.get(&pollfd.fd).unwrap(),
-                                data,
-                                channels,
-                                shared_memory_regions));
-                    }
-                    Err(err) if err.channel_is_closed() => {
-                        let id = self.fdids.remove(&pollfd.fd).unwrap();
-                        unsafe {
-                            libc::close(pollfd.fd);
+        for evt in self.events.iter() {
+            let evt_token = evt.token();
+            match (evt.kind().is_readable(), self.pollfds.get(&evt_token)) {
+                (true, Some(&poll_entry)) => {
+                    match recv(poll_entry.fd, BlockingMode::Blocking) {
+                        Ok((data, channels, shared_memory_regions)) => {
+                            selection_results.push(OsIpcSelectionResult::DataReceived(
+                                    poll_entry.id,
+                                    data,
+                                    channels,
+                                    shared_memory_regions));
                         }
-                        selection_results.push(OsIpcSelectionResult::ChannelClosed(id))
+                        Err(err) if err.channel_is_closed() => {
+                            self.pollfds.remove(&evt_token).unwrap();
+                            unsafe {
+                                libc::close(poll_entry.fd);
+                            }
+                            selection_results.push(OsIpcSelectionResult::ChannelClosed(poll_entry.id))
+                        }
+                        Err(err) => return Err(err),
                     }
-                    Err(err) => return Err(err),
+                },
+                (true, None) => {
+                    panic!("Readable event for unknown token: {:?}", evt_token)
+                },
+                (false, _) => {
+                    panic!("Received an event that was not readable for token: {:?}", evt_token)
                 }
-                pollfd.revents = pollfd.revents & !POLLIN
             }
         }
-
-        // File descriptors not in fdids are closed channels, and the descriptor
-        // has been closed. This must be done after we have finished iterating over
-        // the pollfds vec.
-        let fdids = &self.fdids;
-        self.pollfds.retain(|pollfd| fdids.contains_key(&pollfd.fd));
 
         Ok(selection_results)
     }
@@ -749,6 +764,12 @@ impl From<UnixError> for DeserializeError {
 impl From<UnixError> for Error {
     fn from(unix_error: UnixError) -> Error {
         Error::from_raw_os_error(unix_error.0)
+    }
+}
+
+impl From<Error> for UnixError {
+    fn from(e: Error) -> UnixError {
+        UnixError(e.raw_os_error().unwrap())
     }
 }
 
