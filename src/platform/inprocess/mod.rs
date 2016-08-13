@@ -22,10 +22,11 @@ use std::usize;
 
 use uuid::Uuid;
 
+#[derive(Clone)]
 struct ServerRecord {
     sender: OsIpcSender,
     conn_sender: mpsc::Sender<bool>,
-    conn_receiver: Mutex<mpsc::Receiver<bool>>,
+    conn_receiver: Arc<Mutex<mpsc::Receiver<bool>>>,
 }
 
 impl ServerRecord {
@@ -34,7 +35,7 @@ impl ServerRecord {
         ServerRecord {
             sender: sender,
             conn_sender: tx,
-            conn_receiver: Mutex::new(rx),
+            conn_receiver: Arc::new(Mutex::new(rx)),
         }
     }
 
@@ -138,7 +139,7 @@ impl OsIpcSender {
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender,MpscError> {
-        let record = ONE_SHOT_SERVERS.lock().unwrap().remove(&name).unwrap();
+        let record = ONE_SHOT_SERVERS.lock().unwrap().get(&name).unwrap().clone();
         record.connect();
         Ok(record.sender)
     }
@@ -282,7 +283,9 @@ impl OsIpcOneShotServer {
                                     Vec<OsOpaqueIpcChannel>,
                                     Vec<OsIpcSharedMemory>),MpscError>
     {
-        ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().accept();
+        let record = ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().clone();
+        record.accept();
+        ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
         let receiver = self.receiver.borrow_mut().take().unwrap();
         let (data, channels, shmems) = receiver.recv().unwrap();
         Ok((receiver, data, channels, shmems))

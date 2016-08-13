@@ -393,9 +393,25 @@ fn receiver_set() {
 }
 
 #[test]
-//XXXjdm This hangs indefinitely on appveyor and warrants further investigation.
-#[cfg(not(windows))]
-fn server() {
+fn server_accept_first() {
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let data: &[u8] = b"1234567";
+
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(30));
+        let tx = OsIpcSender::connect(name).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
+    });
+
+    let (_, mut received_data, received_channels, received_shared_memory_regions) =
+        server.accept().unwrap();
+    received_data.truncate(7);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
+}
+
+#[test]
+fn server_connect_first() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
@@ -404,6 +420,7 @@ fn server() {
         tx.send(data, vec![], vec![]).unwrap();
     });
 
+    thread::sleep(Duration::from_millis(30));
     let (_, mut received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
     received_data.truncate(7);
