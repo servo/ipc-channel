@@ -7,16 +7,20 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use ipc::{self, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use ipc::{OpaqueIpcSender};
 use router::ROUTER;
 use libc;
-use std::io::Error;
 use std::iter;
 use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
+
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use ipc::IpcOneShotServer;
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use std::io::Error;
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 // I'm not actually sure invoking this is indeed unsafe -- but better safe than sorry...

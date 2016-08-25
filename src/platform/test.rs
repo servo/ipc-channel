@@ -7,13 +7,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use libc;
-use platform::{self, OsIpcChannel, OsIpcReceiverSet, OsIpcSender, OsIpcOneShotServer};
+use platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use platform::{OsIpcSharedMemory};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use libc;
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
 
