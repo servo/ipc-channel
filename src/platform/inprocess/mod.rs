@@ -314,7 +314,7 @@ impl OsOpaqueIpcChannel {
         }
     }
     
-    pub fn to_sender(&self) -> OsIpcSender {
+    pub fn to_sender(&mut self) -> OsIpcSender {
         match self.channel.borrow_mut().take().unwrap() {
             OsIpcChannel::Sender(s) => s,
             OsIpcChannel::Receiver(_) => panic!("Opaque channel is not a sender!"),
