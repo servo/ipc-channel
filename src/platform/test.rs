@@ -691,7 +691,7 @@ fn cross_process_sender_transfer() {
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let sub_tx = received_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
