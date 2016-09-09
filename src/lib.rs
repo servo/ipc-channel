@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"),
+#![cfg_attr(any(feature = "force-inprocess", target_os = "android", target_os = "ios"),
 			feature(mpsc_select))]
 #![cfg_attr(all(feature = "unstable", test), feature(specialization))]
 
@@ -18,6 +18,7 @@ extern crate bincode;
 extern crate libc;
 extern crate rand;
 extern crate serde;
+
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"))]
 extern crate uuid;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
@@ -34,6 +35,11 @@ extern crate syscall;
 #[cfg(feature = "async")]
 extern crate futures;
 
+
+#[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
+extern crate winapi;
+#[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
+extern crate kernel32;
 
 pub mod ipc;
 pub mod platform;
