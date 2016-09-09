@@ -8,17 +8,17 @@
 // except according to those terms.
 
 use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use ipc::IpcReceiver;
 use router::ROUTER;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::env;
 use std::iter;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::process::{self, Command, Stdio};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use std::ptr;
@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use ipc::IpcOneShotServer;
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
@@ -61,7 +61,7 @@ impl Wait for libc::pid_t {
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 pub fn get_channel_name_arg(which: &str) -> Option<String> {
     for arg in env::args() {
         let arg_str = &*format!("channel_name-{}:", which);
@@ -74,7 +74,7 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
     Command::new(env::current_exe().unwrap())
         .arg(test_name)
@@ -169,7 +169,7 @@ fn select() {
     }
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_embedded_senders_spawn() {
     let person = ("Patrick Walton".to_owned(), 29);
@@ -357,7 +357,14 @@ fn shared_memory() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
-    assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
+    // On Windows, we don't have a way to check whether two handles
+    // refer to the same underlying object before Windows 10.  It's questionable
+    // if this test *really* wants that anyway.
+    if cfg!(not(windows)) {
+        assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
+    } else {
+        assert_eq!(received_person_and_shared_memory.0, person_and_shared_memory.0);
+    }
     assert!(person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
     assert!(received_person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
 }
