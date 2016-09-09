@@ -11,7 +11,13 @@ edition = "2018"
 force-inprocess = []
 memfd = ["sc"]
 unstable = []
+<<<<<<< HEAD
 async = ["futures-preview", "futures-test-preview"]
+win32-trace = []
+=======
+async = ["futures"]
+win32-trace = []
+>>>>>>> Implement ipc-channel on Windows
 
 [dependencies]
 bincode = "1"
@@ -32,3 +38,7 @@ sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
 crossbeam = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = "0.2"
+kernel32-sys = "0.2"
