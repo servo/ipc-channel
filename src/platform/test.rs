@@ -14,17 +14,22 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use libc;
 use crate::platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc::{kill, SIGSTOP, SIGCONT};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+<<<<<<< HEAD
 use crate::test::{fork, Wait};
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+=======
+use test::{fork, Wait};
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+>>>>>>> Implement ipc-channel on Windows
 use test::{get_channel_name_arg, spawn_server};
 
 #[test]
@@ -216,7 +221,8 @@ fn with_n_fds(n: usize, size: usize) {
 
 // These tests only apply to platforms that need fragmentation.
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd")))]
+                                                target_os = "freebsd",
+                                                target_os = "windows")))]
 mod fragment_tests {
     use crate::platform;
     use super::with_n_fds;
@@ -663,7 +669,7 @@ fn server_connect_first() {
                (data, vec![], vec![]));
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_spawn() {
     let data: &[u8] = b"1234567";
@@ -704,7 +710,7 @@ fn cross_process_fork() {
                (data, vec![], vec![]));
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_sender_transfer_spawn() {
     let channel_name = get_channel_name_arg("server");
@@ -1045,10 +1051,16 @@ mod sync_test {
     }
 }
 
-// TODO -- this fails on OSX with a MACH_SEND_INVALID_RIGHT!
-// Needs investigation.
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-#[cfg_attr(target_os = "macos", ignore)]
+// This test panics on Windows, because the other process will panic
+// when it detects that it receives handles that are intended for another
+// process.  It's marked as ignore/known-fail on Windows for this reason.
+//
+// TODO -- this fails on OSX as well with a MACH_SEND_INVALID_RIGHT!
+// Needs investigation.  It may be a similar underlying issue, just done by
+// the kernel instead of explicitly (ports in a message that's already
+// buffered are intended for only one process).
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[cfg_attr(any(target_os = "windows", target_os = "macos"), ignore)]
 #[test]
 fn cross_process_two_step_transfer_spawn() {
     let cookie: &[u8] = b"cookie";

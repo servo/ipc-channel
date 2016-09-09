@@ -12,6 +12,7 @@ force-inprocess = []
 memfd = ["sc"]
 unstable = []
 async = ["futures-preview", "futures-test-preview"]
+win32-trace = []
 
 [dependencies]
 bincode = "1"
@@ -32,3 +33,7 @@ sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
 crossbeam-utils = "0.7"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = "0.2"
+kernel32-sys = "0.2"
