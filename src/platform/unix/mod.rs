@@ -30,6 +30,8 @@ use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
 
+use super::Incrementor;
+
 const MAX_FDS_IN_CMSG: u32 = 64;
 
 const SCM_RIGHTS: c_int = 0x01;
