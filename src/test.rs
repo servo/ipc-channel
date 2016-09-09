@@ -11,10 +11,12 @@ use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcReceiver;
 use router::ROUTER;
+#[cfg(not(windows))]
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::iter;
+#[cfg(not(windows))]
 use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
