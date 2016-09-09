@@ -31,6 +31,7 @@ use std::time::UNIX_EPOCH;
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
+use super::Incrementor;
 
 use super::incrementor::Incrementor;
 

@@ -10,10 +10,16 @@
 use platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use platform::{OsIpcSharedMemory};
 use std::collections::HashMap;
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+use std::env;
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+use libc;
 use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use libc::{kill, SIGSTOP, SIGCONT};
@@ -208,7 +214,8 @@ fn with_n_fds(n: usize, size: usize) {
 
 // These tests only apply to platforms that need fragmentation.
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd")))]
+                                                target_os = "freebsd",
+                                                target_os = "windows")))]
 mod fragment_tests {
     use platform;
     use super::with_n_fds;
@@ -663,9 +670,59 @@ fn server_connect_first() {
                (data, vec![], vec![]));
 }
 
+// Note! This test is actually used by the cross_process_spawn() test
+// below.  Running it by itself is meaningless.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[test]
+#[ignore]
+fn cross_process_server()
+{
+    let mut channel_name: Option<String> = None;
+    let data: &[u8] = b"1234567";
+
+    for arg in env::args() {
+        if arg.starts_with("channel_name:") {
+            let (_, name) = arg.split_at("channel_name:".len());
+            channel_name = Some(String::from(name));
+        }
+    }
+
+    if channel_name.is_none() {
+        return;
+    }
+
+    let tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
+    tx.send(data, vec![], vec![]).unwrap();
+    unsafe { libc::exit(0); }
+}
+
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[test]
+fn cross_process_spawn() {
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let data: &[u8] = b"1234567";
+
+    let mut child_pid = Command::new(env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("cross_process_server")
+        .arg(format!("channel_name:{}", name))
+        .stdout(Stdio::null())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to execute server process");
+
+    let (_, mut received_data, received_channels, received_shared_memory_regions) =
+        server.accept().unwrap();
+    child_pid.wait().expect("failed to wait on child");
+    received_data.truncate(7);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
+}
+
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
-fn cross_process() {
+fn cross_process_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
@@ -682,9 +739,70 @@ fn cross_process() {
                (data, vec![], vec![]));
 }
 
+// Note! This test is actually used by the
+// cross_process_sender_transfer_spawn() test below.  Running it by
+// itself is meaningless.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[test]
+#[ignore]
+fn cross_process_sender_transfer_server()
+{
+    let mut channel_name: Option<String> = None;
+
+    for arg in env::args() {
+        if arg.starts_with("channel_name:") {
+            let (_, name) = arg.split_at("channel_name:".len());
+            channel_name = Some(String::from(name));
+        }
+    }
+
+    if channel_name.is_none() {
+        return;
+    }
+
+    let super_tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
+    let data: &[u8] = b"foo";
+    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    sub_rx.recv().unwrap();
+    let data: &[u8] = b"bar";
+    super_tx.send(data, vec![], vec![]).unwrap();
+    unsafe { libc::exit(0); }
+}
+
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[test]
+fn cross_process_sender_transfer_spawn() {
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+
+    let mut child_pid = Command::new(env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("cross_process_sender_transfer_server")
+        .arg(format!("channel_name:{}", name))
+        .stdout(Stdio::null())
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to execute server process");
+
+    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let data: &[u8] = b"baz";
+    sub_tx.send(data, vec![], vec![]).unwrap();
+
+    let data: &[u8] = b"bar";
+    let (mut received_data, received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
+    child_pid.wait().expect("failed to wait on child");
+    received_data.truncate(3);
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
+}
+
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 #[test]
-fn cross_process_sender_transfer() {
+fn cross_process_sender_transfer_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
     let child_pid = unsafe { fork(|| {

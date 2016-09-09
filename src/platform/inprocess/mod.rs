@@ -20,6 +20,7 @@ use std::ops::Deref;
 use std::mem;
 use std::usize;
 use uuid::Uuid;
+use super::Incrementor;
 
 use super::incrementor::Incrementor;
 
