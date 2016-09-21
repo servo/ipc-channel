@@ -26,17 +26,25 @@ use std::thread;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
+const SCM_RIGHTS: c_int = 0x01;
+
+// The value Linux returns for SO_SNDBUF
+// is not the size we are actually allowed to use...
+// Empirically, we have to deduct 32 bytes from that.
+const RESERVED_SIZE: usize = 32;
+
+#[cfg(target_os="android")]
+const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
+
+#[cfg(not(target_os="android"))]
+const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
+
 lazy_static! {
     static ref SYSTEM_SENDBUF_SIZE: usize = {
         let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
         tx.get_system_sendbuf_size().expect("Failed to obtain maximum send size for socket")
     };
 }
-
-// The value Linux returns for SO_SNDBUF
-// is not the size we are actually allowed to use...
-// Empirically, we have to deduct 32 bytes from that.
-const RESERVED_SIZE: usize = 32;
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
     let mut results = [0, 0];
@@ -826,12 +834,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
 }
 
 #[cfg(target_os="android")]
-const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
-
-#[cfg(not(target_os="android"))]
-const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
-
-#[cfg(target_os="android")]
 fn maybe_unlink(_: *const c_char) -> c_int {
     // Calling `unlink` on a file stored on an sdcard immediately deletes it.
     // FIXME: use a better temporary directory than the sdcard via the Java APIs
@@ -952,8 +954,6 @@ fn is_socket(fd: c_int) -> bool {
 }
 
 // FFI stuff follows:
-
-const SCM_RIGHTS: c_int = 0x01;
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
