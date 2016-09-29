@@ -9,7 +9,7 @@
 
 mod os {
     #[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
-    include!("linux/mod.rs");
+    include!("unix/mod.rs");
 
     #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
     include!("macos/mod.rs");
