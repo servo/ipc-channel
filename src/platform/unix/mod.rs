@@ -206,7 +206,7 @@ impl OsIpcSender {
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
                     ptr::copy_nonoverlapping(fds.as_ptr(),
-                                             cmsg_buffer.offset(1) as *mut c_int,
+                                             CMSG_DATA(cmsg_buffer) as *mut c_int,
                                              fds.len());
                     (cmsg_buffer, CMSG_SPACE(cmsg_length))
                 } else {
@@ -958,6 +958,12 @@ fn is_socket(fd: c_int) -> bool {
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
     CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
+}
+
+#[allow(non_snake_case)]
+unsafe fn CMSG_DATA(cmsg: *mut cmsghdr) -> *mut c_void {
+    (cmsg as *mut libc::c_uchar).offset(CMSG_ALIGN(
+            mem::size_of::<cmsghdr>()) as isize) as *mut c_void
 }
 
 #[allow(non_snake_case)]
