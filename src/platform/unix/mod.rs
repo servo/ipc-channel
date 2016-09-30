@@ -9,7 +9,7 @@
 
 use bincode::serde::DeserializeError;
 use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
-use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_short, c_ushort, c_void, getsockopt};
+use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_ushort, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t};
 use std::cmp;
@@ -38,6 +38,14 @@ const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memor
 
 #[cfg(not(target_os="android"))]
 const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
+
+unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
+    let mut sockaddr: sockaddr_un = mem::zeroed();
+    libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
+                  path, sockaddr.sun_path.len() - 1);
+    sockaddr.sun_family = libc::AF_UNIX as u16;
+    (sockaddr, mem::size_of::<sockaddr_un>())
+}
 
 lazy_static! {
     static ref SYSTEM_SENDBUF_SIZE: usize = {
@@ -360,15 +368,7 @@ impl OsIpcSender {
         let name = CString::new(name).unwrap();
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET, 0);
-            let mut sockaddr = sockaddr_un {
-                sun_family: libc::AF_UNIX as u16,
-                sun_path: [ 0; 108 ],
-            };
-            libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
-                          name.as_ptr(),
-                          sockaddr.sun_path.len() - 1);
-
-            let len = mem::size_of::<c_short>() + libc::strlen(sockaddr.sun_path.as_ptr());
+            let (sockaddr, len) = new_sockaddr_un(name.as_ptr());
             if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -540,16 +540,7 @@ impl OsIpcOneShotServer {
                     return Err(UnixError::last())
                 }
 
-                let mut sockaddr = sockaddr_un {
-                    sun_family: libc::AF_UNIX as c_ushort,
-                    sun_path: [ 0; 108 ],
-                };
-                libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
-                              path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() - 1);
-
-                let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
-                                                       usize);
+                let (sockaddr, len) = new_sockaddr_un(path.as_ptr() as *const c_char);
                 if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) == 0 {
                     break
                 }
