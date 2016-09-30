@@ -9,9 +9,9 @@
 
 use bincode::serde::DeserializeError;
 use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
-use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_ushort, c_void, getsockopt};
+use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
-use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t};
+use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
@@ -39,11 +39,21 @@ const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memor
 #[cfg(not(target_os="android"))]
 const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
 
+#[cfg(target_os = "linux")]
+type IovLen = usize;
+#[cfg(target_os = "linux")]
+type MsgControlLen = size_t;
+
+#[cfg(target_os = "freebsd")]
+type IovLen = i32;
+#[cfg(target_os = "freebsd")]
+type MsgControlLen = socklen_t;
+
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
     let mut sockaddr: sockaddr_un = mem::zeroed();
     libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
                   path, sockaddr.sun_path.len() - 1);
-    sockaddr.sun_family = libc::AF_UNIX as u16;
+    sockaddr.sun_family = libc::AF_UNIX as sa_family_t;
     (sockaddr, mem::size_of::<sockaddr_un>())
 }
 
@@ -209,7 +219,7 @@ impl OsIpcSender {
                 let cmsg_length = mem::size_of_val(fds);
                 let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
                     let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
-                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
+                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length) as MsgControlLen;
                     (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
@@ -241,9 +251,9 @@ impl OsIpcSender {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
                     msg_iov: iovec.as_mut_ptr(),
-                    msg_iovlen: iovec.len(),
+                    msg_iovlen: iovec.len() as IovLen,
                     msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: cmsg_space,
+                    msg_controllen: cmsg_space as MsgControlLen,
                     msg_flags: 0,
                 };
 
@@ -896,9 +906,9 @@ impl UnixCmsg {
                 msg_name: ptr::null_mut(),
                 msg_namelen: 0,
                 msg_iov: iovec.as_mut_ptr(),
-                msg_iovlen: iovec.len(),
+                msg_iovlen: iovec.len() as IovLen,
                 msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length,
+                msg_controllen: cmsg_length as MsgControlLen,
                 msg_flags: 0,
             },
         }
@@ -930,7 +940,7 @@ impl UnixCmsg {
     }
 
     unsafe fn cmsg_len(&self) -> size_t {
-        (*(self.msghdr.msg_control as *const cmsghdr)).cmsg_len
+        (*(self.msghdr.msg_control as *const cmsghdr)).cmsg_len as size_t
     }
 }
 
@@ -979,7 +989,7 @@ extern {
 
 #[repr(C)]
 struct cmsghdr {
-    cmsg_len: size_t,
+    cmsg_len: MsgControlLen,
     cmsg_level: c_int,
     cmsg_type: c_int,
 }
