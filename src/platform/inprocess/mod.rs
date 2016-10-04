@@ -60,13 +60,13 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),MpscError> {
 }
 
 pub struct OsIpcReceiver {
-    receiver: Arc<Mutex<Option<mpsc::Receiver<MpscChannelMessage>>>>,
+    receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
 }
 
 impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
-        self.receiver.lock().unwrap().as_ref().map(|rx| rx as *const _) ==
-            other.receiver.lock().unwrap().as_ref().map(|rx| rx as *const _)
+        self.receiver.borrow().as_ref().map(|rx| rx as *const _) ==
+            other.receiver.borrow().as_ref().map(|rx| rx as *const _)
     }
 }
 
@@ -81,17 +81,17 @@ impl fmt::Debug for OsIpcReceiver {
 impl OsIpcReceiver {
     fn new(receiver: mpsc::Receiver<MpscChannelMessage>) -> OsIpcReceiver {
         OsIpcReceiver {
-            receiver: Arc::new(Mutex::new(Some(receiver))),
+            receiver: RefCell::new(Some(receiver)),
         }
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
-        let receiver = self.receiver.lock().unwrap().take();
+        let receiver = self.receiver.borrow_mut().take();
         OsIpcReceiver::new(receiver.unwrap())
     }
 
     pub fn recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MpscError> {
-        let r = self.receiver.lock().unwrap();
+        let r = self.receiver.borrow();
         match r.as_ref().unwrap().recv() {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
@@ -101,7 +101,7 @@ impl OsIpcReceiver {
     }
 
     pub fn try_recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MpscError> {
-        let r = self.receiver.lock().unwrap();
+        let r = self.receiver.borrow();
         match r.as_ref().unwrap().try_recv() {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
@@ -194,7 +194,7 @@ impl OsIpcReceiverSet {
             let mut handles: Vec<mpsc::Handle<MpscChannelMessage>> = Vec::with_capacity(self.receivers.len());
 
             for r in &self.receivers {
-                let inner_r = mem::replace(&mut *r.receiver.lock().unwrap(), None);
+                let inner_r = mem::replace(&mut *r.receiver.borrow_mut(), None);
                 receivers.push(inner_r);
             }
             
@@ -218,7 +218,7 @@ impl OsIpcReceiverSet {
 
         // put the receivers back
         for (index,r) in self.receivers.iter().enumerate() {
-            mem::replace(&mut *r.receiver.lock().unwrap(), mem::replace(&mut receivers[index], None));
+            mem::replace(&mut *r.receiver.borrow_mut(), mem::replace(&mut receivers[index], None));
         }
 
         if r_id == -1 {
