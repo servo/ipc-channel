@@ -59,6 +59,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),MpscError> {
     Ok((OsIpcSender::new(base_sender), OsIpcReceiver::new(base_receiver)))
 }
 
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     receiver: RefCell<Option<mpsc::Receiver<MpscChannelMessage>>>,
 }
@@ -67,14 +68,6 @@ impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
         self.receiver.borrow().as_ref().map(|rx| rx as *const _) ==
             other.receiver.borrow().as_ref().map(|rx| rx as *const _)
-    }
-}
-
-// Can't derive, as mpsc::Receiver doesn't implement Debug.
-impl fmt::Debug for OsIpcReceiver {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Not sure there is anything useful we could print here.
-        write!(f, "OsIpcReceiver {{ .. }}")
     }
 }
 
