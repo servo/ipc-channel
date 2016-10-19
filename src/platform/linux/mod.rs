@@ -439,6 +439,9 @@ impl OsIpcReceiverSet {
                     }
                     Err(err) if err.channel_is_closed() => {
                         hangups.insert(pollfd.fd);
+                        unsafe {
+                            libc::close(pollfd.fd);
+                        }
                         selection_results.push(OsIpcSelectionResult::ChannelClosed(
                                     pollfd.fd as i64))
                     }
