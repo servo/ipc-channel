@@ -104,7 +104,7 @@ impl OsIpcReceiver {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OsIpcSender {
     sender: Arc<Mutex<mpsc::Sender<MpscChannelMessage>>>,
 }
@@ -113,14 +113,6 @@ impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
         &*self.sender.lock().unwrap() as *const _ ==
             &*other.sender.lock().unwrap() as *const _
-    }
-}
-
-// Can't derive, as mpsc::Sender doesn't implement Debug.
-impl fmt::Debug for OsIpcSender {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Not sure there is anything useful we could print here.
-        write!(f, "OsIpcSender {{ .. }}")
     }
 }
 
