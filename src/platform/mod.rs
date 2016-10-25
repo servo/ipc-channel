@@ -8,7 +8,8 @@
 // except according to those terms.
 
 mod os {
-    #[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
+    #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                    target_os = "freebsd")))]
     include!("unix/mod.rs");
 
     #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
