@@ -9,9 +9,9 @@
 
 use bincode::serde::DeserializeError;
 use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
-use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_short, c_ushort, c_void, getsockopt};
+use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
-use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t};
+use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
@@ -26,17 +26,43 @@ use std::thread;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
+const SCM_RIGHTS: c_int = 0x01;
+
+// The value Linux returns for SO_SNDBUF
+// is not the size we are actually allowed to use...
+// Empirically, we have to deduct 32 bytes from that.
+const RESERVED_SIZE: usize = 32;
+
+#[cfg(target_os="android")]
+const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
+
+#[cfg(not(target_os="android"))]
+const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
+
+#[cfg(target_os = "linux")]
+type IovLen = usize;
+#[cfg(target_os = "linux")]
+type MsgControlLen = size_t;
+
+#[cfg(target_os = "freebsd")]
+type IovLen = i32;
+#[cfg(target_os = "freebsd")]
+type MsgControlLen = socklen_t;
+
+unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
+    let mut sockaddr: sockaddr_un = mem::zeroed();
+    libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
+                  path, sockaddr.sun_path.len() - 1);
+    sockaddr.sun_family = libc::AF_UNIX as sa_family_t;
+    (sockaddr, mem::size_of::<sockaddr_un>())
+}
+
 lazy_static! {
     static ref SYSTEM_SENDBUF_SIZE: usize = {
         let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
         tx.get_system_sendbuf_size().expect("Failed to obtain maximum send size for socket")
     };
 }
-
-// The value Linux returns for SO_SNDBUF
-// is not the size we are actually allowed to use...
-// Empirically, we have to deduct 32 bytes from that.
-const RESERVED_SIZE: usize = 32;
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
     let mut results = [0, 0];
@@ -193,12 +219,12 @@ impl OsIpcSender {
                 let cmsg_length = mem::size_of_val(fds);
                 let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
                     let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
-                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length);
+                    (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length) as MsgControlLen;
                     (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
 
                     ptr::copy_nonoverlapping(fds.as_ptr(),
-                                             cmsg_buffer.offset(1) as *mut c_int,
+                                             CMSG_DATA(cmsg_buffer) as *mut c_int,
                                              fds.len());
                     (cmsg_buffer, CMSG_SPACE(cmsg_length))
                 } else {
@@ -225,9 +251,9 @@ impl OsIpcSender {
                     msg_name: ptr::null_mut(),
                     msg_namelen: 0,
                     msg_iov: iovec.as_mut_ptr(),
-                    msg_iovlen: iovec.len(),
+                    msg_iovlen: iovec.len() as IovLen,
                     msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: cmsg_space,
+                    msg_controllen: cmsg_space as MsgControlLen,
                     msg_flags: 0,
                 };
 
@@ -352,15 +378,7 @@ impl OsIpcSender {
         let name = CString::new(name).unwrap();
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET, 0);
-            let mut sockaddr = sockaddr_un {
-                sun_family: libc::AF_UNIX as u16,
-                sun_path: [ 0; 108 ],
-            };
-            libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
-                          name.as_ptr(),
-                          sockaddr.sun_path.len() - 1);
-
-            let len = mem::size_of::<c_short>() + libc::strlen(sockaddr.sun_path.as_ptr());
+            let (sockaddr, len) = new_sockaddr_un(name.as_ptr());
             if libc::connect(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) < 0 {
                 return Err(UnixError::last())
             }
@@ -532,16 +550,7 @@ impl OsIpcOneShotServer {
                     return Err(UnixError::last())
                 }
 
-                let mut sockaddr = sockaddr_un {
-                    sun_family: libc::AF_UNIX as c_ushort,
-                    sun_path: [ 0; 108 ],
-                };
-                libc::strncpy(sockaddr.sun_path.as_mut_ptr(),
-                              path.as_ptr() as *const c_char,
-                              sockaddr.sun_path.len() - 1);
-
-                let len = mem::size_of::<c_short>() + (libc::strlen(sockaddr.sun_path.as_ptr()) as
-                                                       usize);
+                let (sockaddr, len) = new_sockaddr_un(path.as_ptr() as *const c_char);
                 if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) == 0 {
                     break
                 }
@@ -826,12 +835,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
 }
 
 #[cfg(target_os="android")]
-const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
-
-#[cfg(not(target_os="android"))]
-const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
-
-#[cfg(target_os="android")]
 fn maybe_unlink(_: *const c_char) -> c_int {
     // Calling `unlink` on a file stored on an sdcard immediately deletes it.
     // FIXME: use a better temporary directory than the sdcard via the Java APIs
@@ -903,9 +906,9 @@ impl UnixCmsg {
                 msg_name: ptr::null_mut(),
                 msg_namelen: 0,
                 msg_iov: iovec.as_mut_ptr(),
-                msg_iovlen: iovec.len(),
+                msg_iovlen: iovec.len() as IovLen,
                 msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length,
+                msg_controllen: cmsg_length as MsgControlLen,
                 msg_flags: 0,
             },
         }
@@ -937,7 +940,7 @@ impl UnixCmsg {
     }
 
     unsafe fn cmsg_len(&self) -> size_t {
-        (*(self.msghdr.msg_control as *const cmsghdr)).cmsg_len
+        (*(self.msghdr.msg_control as *const cmsghdr)).cmsg_len as size_t
     }
 }
 
@@ -953,11 +956,15 @@ fn is_socket(fd: c_int) -> bool {
 
 // FFI stuff follows:
 
-const SCM_RIGHTS: c_int = 0x01;
-
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
     CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
+}
+
+#[allow(non_snake_case)]
+unsafe fn CMSG_DATA(cmsg: *mut cmsghdr) -> *mut c_void {
+    (cmsg as *mut libc::c_uchar).offset(CMSG_ALIGN(
+            mem::size_of::<cmsghdr>()) as isize) as *mut c_void
 }
 
 #[allow(non_snake_case)]
@@ -982,7 +989,7 @@ extern {
 
 #[repr(C)]
 struct cmsghdr {
-    cmsg_len: size_t,
+    cmsg_len: MsgControlLen,
     cmsg_level: c_int,
     cmsg_type: c_int,
 }

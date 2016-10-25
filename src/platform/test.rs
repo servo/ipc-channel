@@ -175,7 +175,8 @@ fn big_data_with_sender_transfer() {
     thread.join().unwrap();
 }
 
-#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "freebsd")))]
 fn with_n_fds(n: usize, size: usize) {
     let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| platform::channel().unwrap())
                                                     .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
@@ -207,7 +208,8 @@ fn with_n_fds(n: usize, size: usize) {
 }
 
 // These tests only apply to platforms that need fragmentation.
-#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "freebsd")))]
 mod fragment_tests {
     use platform;
     use super::with_n_fds;
