@@ -8,9 +8,9 @@
 
 As much as possible, `ipc-channel` has been designed to be a drop-in replacement for Rust channels. The mapping from the Rust channel APIs to `ipc-channel` APIs is as follows:
 
-* `channel()` → `ipc::channel().unwrap()`
-* `Sender<T>` → `ipc::IpcSender<T>` (requires `T: Serialize`)
-* `Receiver<T>` → `ipc::IpcReceiver<T>` (requires `T: Deserialize`)
+* `channel()` → `ipc::channel().unwrap()`;
+* `Sender<T>` → `ipc::IpcSender<T>` (requires `T: Serialize`);
+* `Receiver<T>` → `ipc::IpcReceiver<T>` (requires `T: Deserialize`).
 
 Note that both `IpcSender<T>` and `IpcReceiver<T>` implement `Serialize` and `Deserialize`, so you can send IPC channels over IPC channels freely, just as you can with Rust channels.
 
@@ -20,6 +20,6 @@ In order to bootstrap an IPC connection across processes, you create an instance
 
 ## Major missing features
 
-* Servers only accept one client at a time. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service. An API for multiple clients may be added later if demand exists for it.
+* Servers only accept one client at a time. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service. An API for multiple clients may be added later if demand exists for it;
 
 * No Windows support exists yet. The right way to implement this will likely be with named pipes and `DuplicateHandle`.
