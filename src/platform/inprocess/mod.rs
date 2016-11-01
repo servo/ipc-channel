@@ -268,7 +268,7 @@ impl OsIpcOneShotServer {
         let record = ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().clone();
         record.accept();
         ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
-        let (data, channels, shmems) = self.receiver.recv().unwrap();
+        let (data, channels, shmems) = try!(self.receiver.recv());
         Ok((self.receiver, data, channels, shmems))
     }
 }
