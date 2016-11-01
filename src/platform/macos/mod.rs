@@ -19,6 +19,7 @@ use std::cell::Cell;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
 use std::io::{Error, ErrorKind};
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 use std::ptr;
@@ -306,6 +307,11 @@ impl OsIpcReceiver {
 #[derive(PartialEq, Debug)]
 pub struct OsIpcSender {
     port: mach_port_t,
+    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
+    //
+    // (Rather, senders should just be cloned, as they are shared internally anyway --
+    // another layer of sharing only adds unnecessary overhead...)
+    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl Drop for OsIpcSender {
@@ -334,6 +340,7 @@ impl Clone for OsIpcSender {
         }
         OsIpcSender {
             port: self.port,
+            nosync_marker: PhantomData,
         }
     }
 }
@@ -342,6 +349,7 @@ impl OsIpcSender {
     fn from_name(port: mach_port_t) -> OsIpcSender {
         OsIpcSender {
             port: port,
+            nosync_marker: PhantomData,
         }
     }
 
@@ -480,6 +488,7 @@ impl OsOpaqueIpcChannel {
     pub fn to_sender(&mut self) -> OsIpcSender {
         OsIpcSender {
             port: mem::replace(&mut self.port, MACH_PORT_NULL),
+            nosync_marker: PhantomData,
         }
     }
 
