@@ -647,7 +647,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
 }
 
 pub struct OsIpcOneShotServer {
-    receiver: Option<OsIpcReceiver>,
+    receiver: OsIpcReceiver,
     name: String,
 }
 
@@ -662,21 +662,17 @@ impl OsIpcOneShotServer {
         let receiver = try!(OsIpcReceiver::new());
         let name = try!(receiver.register_bootstrap_name());
         Ok((OsIpcOneShotServer {
-            receiver: Some(receiver),
+            receiver: receiver,
             name: name.clone(),
         }, name))
     }
 
-    pub fn accept(mut self) -> Result<(OsIpcReceiver,
-                                       Vec<u8>,
-                                       Vec<OsOpaqueIpcChannel>,
-                                       Vec<OsIpcSharedMemory>),MachError> {
-        let (bytes, channels, shared_memory_regions) =
-            try!(self.receiver.as_mut().unwrap().recv());
-        Ok((mem::replace(&mut self.receiver, None).unwrap(),
-            bytes,
-            channels,
-            shared_memory_regions))
+    pub fn accept(self) -> Result<(OsIpcReceiver,
+                                   Vec<u8>,
+                                   Vec<OsOpaqueIpcChannel>,
+                                   Vec<OsIpcSharedMemory>),MachError> {
+        let (bytes, channels, shared_memory_regions) = try!(self.receiver.recv());
+        Ok((self.receiver.consume(), bytes, channels, shared_memory_regions))
     }
 }
 
