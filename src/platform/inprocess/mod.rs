@@ -243,7 +243,7 @@ impl OsIpcSelectionResult {
 }
 
 pub struct OsIpcOneShotServer {
-    receiver: Option<OsIpcReceiver>,
+    receiver: OsIpcReceiver,
     name: String,
 }
 
@@ -255,12 +255,12 @@ impl OsIpcOneShotServer {
         let record = ServerRecord::new(sender);
         ONE_SHOT_SERVERS.lock().unwrap().insert(name.clone(), record);
         Ok((OsIpcOneShotServer {
-            receiver: Some(receiver),
+            receiver: receiver,
             name: name.clone(),
         },name.clone()))
     }
 
-    pub fn accept(mut self) -> Result<(OsIpcReceiver,
+    pub fn accept(self) -> Result<(OsIpcReceiver,
                                     Vec<u8>,
                                     Vec<OsOpaqueIpcChannel>,
                                     Vec<OsIpcSharedMemory>),MpscError>
@@ -268,9 +268,8 @@ impl OsIpcOneShotServer {
         let record = ONE_SHOT_SERVERS.lock().unwrap().get(&self.name).unwrap().clone();
         record.accept();
         ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
-        let receiver = self.receiver.take().unwrap();
-        let (data, channels, shmems) = receiver.recv().unwrap();
-        Ok((receiver, data, channels, shmems))
+        let (data, channels, shmems) = self.receiver.recv().unwrap();
+        Ok((self.receiver, data, channels, shmems))
     }
 }
 
