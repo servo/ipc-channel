@@ -249,10 +249,7 @@ pub struct OsIpcOneShotServer {
 
 impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String),MpscError> {
-        let (sender, receiver) = match channel() {
-            Ok((s,r)) => (s,r),
-            Err(err) => return Err(err),
-        };
+        let (sender, receiver) = try!(channel());
 
         let name = Uuid::new_v4().to_string();
         let record = ServerRecord::new(sender);
