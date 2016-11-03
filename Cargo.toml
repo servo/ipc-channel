@@ -8,6 +8,7 @@ repository = "https://github.com/servo/ipc-channel"
 
 [features]
 force-inprocess = []
+unstable = []
 
 [dependencies]
 bincode = "0.6"

@@ -9,6 +9,7 @@
 
 #![cfg_attr(any(feature = "force-inprocess", target_os = "windows", target_os = "android"),
 			feature(mpsc_select))]
+#![cfg_attr(all(feature = "unstable", test), feature(specialization))]
 
 #[macro_use]
 extern crate lazy_static;

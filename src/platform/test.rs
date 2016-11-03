@@ -629,3 +629,27 @@ fn try_recv_large_delayed() {
         thread.join().unwrap();
     }
 }
+
+#[cfg(feature = "unstable")]
+mod sync_test {
+    use platform;
+
+    trait SyncTest {
+        fn test_not_sync();
+    }
+
+    impl<T> SyncTest for T {
+        default fn test_not_sync() {}
+    }
+
+    impl<T: Sync> SyncTest for T {
+        fn test_not_sync() {
+            panic!("`OsIpcSender` should not be `Sync`");
+        }
+    }
+
+    #[test]
+    fn receiver_not_sync() {
+        platform::OsIpcSender::test_not_sync();
+    }
+}
