@@ -211,12 +211,12 @@ impl IpcReceiverSet {
         })
     }
 
-    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<i64,Error>
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<u64,Error>
                   where T: Deserialize + Serialize {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
-    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<i64,Error> {
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<u64,Error> {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
@@ -307,12 +307,12 @@ impl IpcSharedMemory {
 }
 
 pub enum IpcSelectionResult {
-    MessageReceived(i64, OpaqueIpcMessage),
-    ChannelClosed(i64),
+    MessageReceived(u64, OpaqueIpcMessage),
+    ChannelClosed(u64),
 }
 
 impl IpcSelectionResult {
-    pub fn unwrap(self) -> (i64, OpaqueIpcMessage) {
+    pub fn unwrap(self) -> (u64, OpaqueIpcMessage) {
         match self {
             IpcSelectionResult::MessageReceived(id, message) => (id, message),
             IpcSelectionResult::ChannelClosed(id) => {

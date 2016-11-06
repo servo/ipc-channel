@@ -507,13 +507,13 @@ impl OsIpcReceiverSet {
         }
     }
 
-    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<i64,MachError> {
+    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
         let receiver_port = receiver.consume_port();
         let os_result = unsafe {
             mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
         };
         if os_result == KERN_SUCCESS {
-            Ok(receiver_port as i64)
+            Ok(receiver_port as u64)
         } else {
             Err(MachError(os_result))
         }
@@ -530,12 +530,12 @@ impl OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
-    ChannelClosed(i64),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+    ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
                 (id, data, channels, shared_memory_regions)
@@ -605,7 +605,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
 
         let local_port = (*message).header.msgh_local_port;
         if (*message).header.msgh_id == MACH_NOTIFY_NO_SENDERS {
-            return Ok(OsIpcSelectionResult::ChannelClosed(local_port as i64))
+            return Ok(OsIpcSelectionResult::ChannelClosed(local_port as u64))
         }
 
         let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
@@ -639,7 +639,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             libc::free(allocated_buffer)
         }
 
-        Ok(OsIpcSelectionResult::DataReceived(local_port as i64,
+        Ok(OsIpcSelectionResult::DataReceived(local_port as u64,
                                              payload,
                                              ports,
                                              shared_memory_regions))

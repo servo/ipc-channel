@@ -8,6 +8,25 @@
 // except according to those terms.
 
 mod os {
+    #[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
+    struct Incrementor {
+        last_value: u64,
+    }
+
+    #[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
+    impl Incrementor {
+        fn new() -> Incrementor {
+            Incrementor {
+                last_value: 0
+            }
+        }
+
+        fn increment(&mut self) -> u64 {
+            self.last_value += 1;
+            self.last_value
+        }
+    }
+
     #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                     target_os = "freebsd")))]
     include!("unix/mod.rs");
