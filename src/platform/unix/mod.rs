@@ -14,7 +14,7 @@ use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cmp;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
@@ -453,7 +453,6 @@ impl OsIpcReceiverSet {
             return Err(UnixError::last())
         }
 
-        let mut hangups = HashSet::new();
         for pollfd in self.pollfds.iter_mut() {
             if (pollfd.revents & POLLIN) != 0 {
                 match recv(pollfd.fd, BlockingMode::Blocking) {
@@ -465,9 +464,11 @@ impl OsIpcReceiverSet {
                                 shared_memory_regions));
                     }
                     Err(err) if err.channel_is_closed() => {
-                        hangups.insert(pollfd.fd);
-                        selection_results.push(OsIpcSelectionResult::ChannelClosed(
-                                    *self.fdids.get(&pollfd.fd).unwrap()))
+                        let id = self.fdids.remove(&pollfd.fd).unwrap();
+                        unsafe {
+                            libc::close(pollfd.fd);
+                        }
+                        selection_results.push(OsIpcSelectionResult::ChannelClosed(id))
                     }
                     Err(err) => return Err(err),
                 }
@@ -475,9 +476,11 @@ impl OsIpcReceiverSet {
             }
         }
 
-        if !hangups.is_empty() {
-            self.pollfds.retain(|pollfd| !hangups.contains(&pollfd.fd));
-        }
+        // File descriptors not in fdids are closed channels, and the descriptor
+        // has been closed. This must be done after we have finished iterating over
+        // the pollfds vec.
+        let fdids = &self.fdids;
+        self.pollfds.retain(|pollfd| fdids.contains_key(&pollfd.fd));
 
         Ok(selection_results)
     }
