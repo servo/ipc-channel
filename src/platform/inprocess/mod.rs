@@ -170,7 +170,7 @@ impl OsIpcReceiverSet {
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MpscError> {
         let mut receivers: Vec<Option<mpsc::Receiver<MpscChannelMessage>>> = Vec::with_capacity(self.receivers.len());
-        let mut r_id: i64 = -1;
+        let mut r_id: Option<i64> = None;
         let mut r_index: usize = 0;
 
         {
@@ -195,7 +195,7 @@ impl OsIpcReceiverSet {
             for (index,h) in handles.iter().enumerate() {
                 if h.id() == id {
                     r_index = index;
-                    r_id = self.receiver_ids[index] as i64;
+                    r_id = Some(self.receiver_ids[index] as i64);
                     break;
                 }
             }
@@ -206,20 +206,21 @@ impl OsIpcReceiverSet {
             mem::replace(&mut *r.receiver.borrow_mut(), mem::replace(&mut receivers[index], None));
         }
 
-        if r_id == -1 {
-            return Err(MpscError::UnknownError);
-        }
-
-        let receivers = &mut self.receivers;
-        match receivers[r_index].recv() {
-            Ok((data, channels, shmems)) =>
-                Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems)]),
-            Err(MpscError::ChannelClosedError) => {
-                receivers.remove(r_index);
-                self.receiver_ids.remove(r_index);
-                Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
-            },
-            Err(err) => Err(err),
+        match r_id {
+            None => Err(MpscError::UnknownError),
+            Some(r_id) => {
+                let receivers = &mut self.receivers;
+                match receivers[r_index].recv() {
+                    Ok((data, channels, shmems)) =>
+                        Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems)]),
+                    Err(MpscError::ChannelClosedError) => {
+                        receivers.remove(r_index);
+                        self.receiver_ids.remove(r_index);
+                        Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
+                    },
+                    Err(err) => Err(err),
+                }
+            }
         }
     }
 }
