@@ -12,11 +12,13 @@ use libc::{self, MAP_FAILED, MAP_SHARED, POLLIN, PROT_READ, PROT_WRITE, SOCK_SEQ
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, nfds_t, off_t, poll, pollfd, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
+use std::cell::Cell;
 use std::cmp;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::io::Error;
+use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 use std::ptr;
@@ -124,6 +126,11 @@ pub struct SharedFileDescriptor(c_int);
 #[derive(PartialEq, Debug, Clone)]
 pub struct OsIpcSender {
     fd: Arc<SharedFileDescriptor>,
+    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
+    //
+    // (Rather, senders should just be cloned, as they are shared internally anyway --
+    // another layer of sharing only adds unnecessary overhead...)
+    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl Drop for SharedFileDescriptor {
@@ -139,6 +146,7 @@ impl OsIpcSender {
     fn from_fd(fd: c_int) -> OsIpcSender {
         OsIpcSender {
             fd: Arc::new(SharedFileDescriptor(fd)),
+            nosync_marker: PhantomData,
         }
     }
 

@@ -106,20 +106,20 @@ impl OsIpcReceiver {
 
 #[derive(Clone, Debug)]
 pub struct OsIpcSender {
-    sender: Arc<Mutex<mpsc::Sender<MpscChannelMessage>>>,
+    sender: RefCell<mpsc::Sender<MpscChannelMessage>>,
 }
 
 impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
-        &*self.sender.lock().unwrap() as *const _ ==
-            &*other.sender.lock().unwrap() as *const _
+        &*self.sender.borrow() as *const _ ==
+            &*other.sender.borrow() as *const _
     }
 }
 
 impl OsIpcSender {
     fn new(sender: mpsc::Sender<MpscChannelMessage>) -> OsIpcSender {
         OsIpcSender {
-            sender: Arc::new(Mutex::new(sender)),
+            sender: RefCell::new(sender),
         }
     }
 
@@ -139,7 +139,7 @@ impl OsIpcSender {
                 shared_memory_regions: Vec<OsIpcSharedMemory>)
                 -> Result<(),MpscError>
     {
-        match self.sender.lock().unwrap().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
+        match self.sender.borrow().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
             Err(_) => Err(MpscError::ChannelClosedError),
             Ok(_) => Ok(()),
         }
