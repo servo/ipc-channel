@@ -520,12 +520,7 @@ impl OsIpcReceiverSet {
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MachError> {
-        match select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result]) {
-            Ok(results) => Ok(results),
-            Err(error) => {
-                Err(error)
-            }
-        }
+        select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result])
     }
 }
 
