@@ -130,7 +130,7 @@ impl OsIpcReceiver {
 }
 
 #[derive(PartialEq, Debug)]
-pub struct SharedFileDescriptor(c_int);
+struct SharedFileDescriptor(c_int);
 
 impl Drop for SharedFileDescriptor {
     fn drop(&mut self) {
