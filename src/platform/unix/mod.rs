@@ -132,6 +132,14 @@ impl OsIpcReceiver {
 #[derive(PartialEq, Debug)]
 pub struct SharedFileDescriptor(c_int);
 
+impl Drop for SharedFileDescriptor {
+    fn drop(&mut self) {
+        unsafe {
+            let result = libc::close(self.0);
+            assert!(thread::panicking() || result == 0);
+        }
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct OsIpcSender {
@@ -141,15 +149,6 @@ pub struct OsIpcSender {
     // (Rather, senders should just be cloned, as they are shared internally anyway --
     // another layer of sharing only adds unnecessary overhead...)
     nosync_marker: PhantomData<Cell<()>>,
-}
-
-impl Drop for SharedFileDescriptor {
-    fn drop(&mut self) {
-        unsafe {
-            let result = libc::close(self.0);
-            assert!(thread::panicking() || result == 0);
-        }
-    }
 }
 
 impl OsIpcSender {
