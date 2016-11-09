@@ -95,8 +95,8 @@ pub struct OsIpcReceiver {
 impl Drop for OsIpcReceiver {
     fn drop(&mut self) {
         unsafe {
-            //assert!(libc::close(self.fd) == 0)
-            libc::close(self.fd);
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -534,7 +534,8 @@ pub struct OsOpaqueIpcChannel {
 impl Drop for OsOpaqueIpcChannel {
     fn drop(&mut self) {
         unsafe {
-            libc::close(self.fd); 
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
         }
     }
 }
