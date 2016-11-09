@@ -129,7 +129,7 @@ impl OsIpcReceiver {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug)]
 pub struct SharedFileDescriptor(c_int);
 
 
