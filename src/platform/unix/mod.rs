@@ -89,14 +89,16 @@ struct PollEntry {
 
 #[derive(PartialEq, Debug)]
 pub struct OsIpcReceiver {
-    fd: c_int,
+    fd: Cell<c_int>,
 }
 
 impl Drop for OsIpcReceiver {
     fn drop(&mut self) {
         unsafe {
-            let result = libc::close(self.fd);
-            assert!(thread::panicking() || result == 0);
+            if self.fd.get() >= 0 {
+                let result = libc::close(self.fd.get());
+                assert!(thread::panicking() || result == 0);
+            }
         }
     }
 }
@@ -104,14 +106,14 @@ impl Drop for OsIpcReceiver {
 impl OsIpcReceiver {
     fn from_fd(fd: c_int) -> OsIpcReceiver {
         OsIpcReceiver {
-            fd: fd,
+            fd: Cell::new(fd),
         }
     }
 
     fn consume_fd(&self) -> c_int {
-        unsafe {
-            libc::dup(self.fd)
-        }
+        let fd = self.fd.get();
+        self.fd.set(-1);
+        fd
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
@@ -120,12 +122,12 @@ impl OsIpcReceiver {
 
     pub fn recv(&self)
                 -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd, BlockingMode::Blocking)
+        recv(self.fd.get(), BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
                     -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd, BlockingMode::Nonblocking)
+        recv(self.fd.get(), BlockingMode::Nonblocking)
     }
 }
 
@@ -353,7 +355,7 @@ impl OsIpcSender {
         // along any other file descriptors that are to be transferred in the message.
         let (dedicated_tx, dedicated_rx) = try!(channel());
         // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
-        fds.push(dedicated_rx.fd);
+        fds.push(dedicated_rx.fd.get());
 
         // Split up the packet into fragments.
         let mut byte_position = 0;
@@ -415,7 +417,7 @@ impl OsIpcChannel {
     fn fd(&self) -> c_int {
         match *self {
             OsIpcChannel::Sender(ref sender) => sender.fd.0,
-            OsIpcChannel::Receiver(ref receiver) => receiver.fd,
+            OsIpcChannel::Receiver(ref receiver) => receiver.fd.get(),
         }
     }
 }
@@ -855,7 +857,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             // Note: we always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
-            let result = libc::recv(dedicated_rx.fd,
+            let result = libc::recv(dedicated_rx.fd.get(),
                                     main_data_buffer[write_pos..].as_mut_ptr() as *mut c_void,
                                     end_pos - write_pos,
                                     0);
