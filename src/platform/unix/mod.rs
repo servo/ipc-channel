@@ -620,9 +620,7 @@ impl OsIpcOneShotServer {
             }
             try!(make_socket_lingering(client_fd));
 
-            let receiver = OsIpcReceiver {
-                fd: client_fd,
-            };
+            let receiver = OsIpcReceiver::from_fd(client_fd);
             let (data, channels, shared_memory_regions) = try!(receiver.recv());
             Ok((receiver, data, channels, shared_memory_regions))
         }
