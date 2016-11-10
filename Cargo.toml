@@ -17,6 +17,7 @@ libc = "0.2.12"
 rand = "0.3"
 serde = "0.8"
 uuid = {version = "0.3", features = ["v4"]}
+fnv = "1.0.3"
 
 [dev-dependencies]
 crossbeam = "0.2"

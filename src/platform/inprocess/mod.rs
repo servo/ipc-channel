@@ -147,30 +147,30 @@ impl OsIpcSender {
 }
 
 pub struct OsIpcReceiverSet {
-    last_index: usize,
-    receiver_ids: Vec<usize>,
+    incrementor: Incrementor,
+    receiver_ids: Vec<u64>,
     receivers: Vec<OsIpcReceiver>,
 }
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,MpscError> {
         Ok(OsIpcReceiverSet {
-            last_index: 0,
+            incrementor: Incrementor::new(),
             receiver_ids: vec![],
             receivers: vec![],
         })
     }
 
-    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<i64,MpscError> {
-        self.last_index += 1;
-        self.receiver_ids.push(self.last_index);
+    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MpscError> {
+        let last_index = self.incrementor.increment();
+        self.receiver_ids.push(last_index);
         self.receivers.push(receiver.consume());
-        Ok(self.last_index as i64)
+        Ok(last_index)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MpscError> {
         let mut receivers: Vec<Option<mpsc::Receiver<MpscChannelMessage>>> = Vec::with_capacity(self.receivers.len());
-        let mut r_id: i64 = -1;
+        let mut r_id: Option<u64> = None;
         let mut r_index: usize = 0;
 
         {
@@ -195,7 +195,7 @@ impl OsIpcReceiverSet {
             for (index,h) in handles.iter().enumerate() {
                 if h.id() == id {
                     r_index = index;
-                    r_id = self.receiver_ids[index] as i64;
+                    r_id = Some(self.receiver_ids[index]);
                     break;
                 }
             }
@@ -206,31 +206,32 @@ impl OsIpcReceiverSet {
             mem::replace(&mut *r.receiver.borrow_mut(), mem::replace(&mut receivers[index], None));
         }
 
-        if r_id == -1 {
-            return Err(MpscError::UnknownError);
-        }
-
-        let receivers = &mut self.receivers;
-        match receivers[r_index].recv() {
-            Ok((data, channels, shmems)) =>
-                Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems)]),
-            Err(MpscError::ChannelClosedError) => {
-                receivers.remove(r_index);
-                self.receiver_ids.remove(r_index);
-                Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
-            },
-            Err(err) => Err(err),
+        match r_id {
+            None => Err(MpscError::UnknownError),
+            Some(r_id) => {
+                let receivers = &mut self.receivers;
+                match receivers[r_index].recv() {
+                    Ok((data, channels, shmems)) =>
+                        Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems)]),
+                    Err(MpscError::ChannelClosedError) => {
+                        receivers.remove(r_index);
+                        self.receiver_ids.remove(r_index);
+                        Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
+                    },
+                    Err(err) => Err(err),
+                }
+            }
         }
     }
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
-    ChannelClosed(i64),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+    ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (i64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
                 (id, data, channels, shared_memory_regions)

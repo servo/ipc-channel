@@ -20,6 +20,9 @@ extern crate rand;
 extern crate serde;
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
 extern crate uuid;
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "freebsd")))]
+extern crate fnv;
 
 pub mod ipc;
 pub mod platform;

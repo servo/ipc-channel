@@ -77,9 +77,9 @@ struct RouterProxyComm {
 
 struct Router {
     msg_receiver: Receiver<RouterMsg>,
-    msg_wakeup_id: i64,
+    msg_wakeup_id: u64,
     ipc_receiver_set: IpcReceiverSet,
-    handlers: HashMap<i64,RouterHandler>,
+    handlers: HashMap<u64,RouterHandler>,
 }
 
 impl Router {
