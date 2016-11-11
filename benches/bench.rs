@@ -35,12 +35,13 @@ fn bench_size(b: &mut test::Bencher, size: usize) {
     let wait_rx = Mutex::new(wait_rx);
 
     if size > platform::OsIpcSender::get_max_fragment_size() {
+        let safe_tx = Mutex::new(tx);
         b.iter(|| {
             crossbeam::scope(|scope| {
                 scope.spawn(|| {
                     let wait_rx = wait_rx.lock().unwrap();
                     for _ in 0..ITERATIONS {
-                        tx.send(&data, vec![], vec![]).unwrap();
+                        safe_tx.lock().unwrap().send(&data, vec![], vec![]).unwrap();
                         if ITERATIONS > 1 {
                             // Prevent beginning of the next send
                             // from overlapping with receive of last fragment,
