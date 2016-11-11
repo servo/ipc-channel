@@ -37,8 +37,10 @@ fn bench_size(b: &mut test::Bencher, size: usize) {
     if size > platform::OsIpcSender::get_max_fragment_size() {
         b.iter(|| {
             crossbeam::scope(|scope| {
+                let tx = tx.clone();
                 scope.spawn(|| {
                     let wait_rx = wait_rx.lock().unwrap();
+                    let tx = tx;
                     for _ in 0..ITERATIONS {
                         tx.send(&data, vec![], vec![]).unwrap();
                         if ITERATIONS > 1 {
