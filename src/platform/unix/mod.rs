@@ -535,10 +535,12 @@ pub struct OsOpaqueIpcChannel {
 
 impl Drop for OsOpaqueIpcChannel {
     fn drop(&mut self) {
-        unsafe {
-            let result = libc::close(self.fd);
-            assert!(thread::panicking() || result == 0);
-        }
+        // Make sure we don't leak!
+        //
+        // The `OsOpaqueIpcChannel` objects should always be used,
+        // i.e. converted with `to_sender()` or `to_receiver()` --
+        // so the value should already be unset before the object gets dropped.
+        debug_assert!(self.fd == -1);
     }
 }
 
@@ -550,15 +552,11 @@ impl OsOpaqueIpcChannel {
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
-        unsafe {
-            OsIpcSender::from_fd(libc::dup(self.fd))
-        }
+        OsIpcSender::from_fd(mem::replace(&mut self.fd, -1))
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {
-        unsafe {
-            OsIpcReceiver::from_fd(libc::dup(self.fd))
-        }
+        OsIpcReceiver::from_fd(mem::replace(&mut self.fd, -1))
     }
 }
 
