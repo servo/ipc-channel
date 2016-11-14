@@ -9,6 +9,7 @@
 
 use platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use platform::{OsIpcSharedMemory};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
@@ -175,8 +176,6 @@ fn big_data_with_sender_transfer() {
     thread.join().unwrap();
 }
 
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd")))]
 fn with_n_fds(n: usize, size: usize) {
     let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| platform::channel().unwrap())
                                                     .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
@@ -266,6 +265,23 @@ mod fragment_tests {
     fn overfull_packet_with_63_fds() {
         with_n_fds(63, *FRAGMENT_SIZE + 1);
     }
+}
+
+#[test]
+fn empty() {
+    with_n_fds(0, 0);
+}
+
+#[test]
+// This currently fails with the `macos` implementation.
+//
+// It could be argued that though that this is not really a bug,
+// since sending a channel with the official high-level `ipc-channel` API
+// will always add some data during serialisation.
+// (Namely the index of the corresponding entry within the `channels` vector.)
+#[cfg_attr(all(target_os = "macos", not(feature = "force-inprocess")), ignore)]
+fn fd_only() {
+    with_n_fds(1, 0);
 }
 
 macro_rules! create_big_data_with_n_fds {
@@ -394,6 +410,181 @@ fn receiver_set() {
                 received1 = true;
             }
         }
+    }
+}
+
+#[test]
+fn receiver_set_empty() {
+    let (tx, rx) = platform::channel().unwrap();
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx).unwrap();
+
+    let data: &[u8] = b"";
+    tx.send(data, vec![], vec![]).unwrap();
+    let (received_id, received_data, _, _) =
+        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
+    assert_eq!(received_id, rx_id);
+    assert!(received_data.is_empty());
+}
+
+#[test]
+fn receiver_set_close_before_adding() {
+    let (_, rx) = platform::channel().unwrap();
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx).unwrap();
+
+    match rx_set.select().unwrap().into_iter().next().unwrap() {
+        platform::OsIpcSelectionResult::ChannelClosed(received_id) => {
+            assert_eq!(received_id, rx_id);
+        },
+        _ => { panic!("Unexpected result!"); },
+    }
+}
+
+#[test]
+fn receiver_set_close_after_adding() {
+    let (tx, rx) = platform::channel().unwrap();
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx).unwrap();
+
+    drop(tx);
+    match rx_set.select().unwrap().into_iter().next().unwrap() {
+        platform::OsIpcSelectionResult::ChannelClosed(received_id) => {
+            assert_eq!(received_id, rx_id);
+        },
+        _ => { panic!("Unexpected result!"); },
+    }
+}
+
+#[test]
+fn receiver_set_medium_data() {
+    let (tx0, rx0) = platform::channel().unwrap();
+    let (tx1, rx1) = platform::channel().unwrap();
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+    let rx0_id = rx_set.add(rx0).unwrap();
+    let rx1_id = rx_set.add(rx1).unwrap();
+
+    let data0: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8).collect();
+    let data1: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8 | 0x80).collect();
+
+    tx0.send(&*data0, vec![], vec![]).unwrap();
+    tx1.send(&*data1, vec![], vec![]).unwrap();
+    let (mut received0, mut received1) = (false, false);
+    while !received0 || !received1 {
+        for result in rx_set.select().unwrap().into_iter() {
+            let (received_id, mut received_data, _, _) = result.unwrap();
+            received_data.truncate(65536);
+            assert!(received_id == rx0_id || received_id == rx1_id);
+            if received_id == rx0_id {
+                assert_eq!(received_data, data0);
+                assert!(!received0);
+                received0 = true;
+            } else if received_id == rx1_id {
+                assert_eq!(received_data, data1);
+                assert!(!received1);
+                received1 = true;
+            }
+        }
+    }
+}
+
+#[test]
+fn receiver_set_big_data() {
+    let (tx0, rx0) = platform::channel().unwrap();
+    let (tx1, rx1) = platform::channel().unwrap();
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+    let rx0_id = rx_set.add(rx0).unwrap();
+    let rx1_id = rx_set.add(rx1).unwrap();
+
+    let data0: Vec<u8> = (0.. 1024 * 1024).map(|offset| (offset % 127) as u8).collect();
+    let data1: Vec<u8> = (0.. 1024 * 1024).map(|offset| (offset % 127) as u8 | 0x80).collect();
+    let (reference_data0, reference_data1) = (data0.clone(), data1.clone());
+
+    let thread0 = thread::spawn(move || {
+        tx0.send(&*data0, vec![], vec![]).unwrap();
+        tx0 // Don't close just yet -- the receiver-side test code below doesn't expect that...
+    });
+    let thread1 = thread::spawn(move || {
+        tx1.send(&*data1, vec![], vec![]).unwrap();
+        tx1
+    });
+
+    let (mut received0, mut received1) = (false, false);
+    while !received0 || !received1 {
+        for result in rx_set.select().unwrap().into_iter() {
+            let (received_id, mut received_data, _, _) = result.unwrap();
+            received_data.truncate(1024 * 1024);
+            assert!(received_id == rx0_id || received_id == rx1_id);
+            if received_id == rx0_id {
+                assert_eq!(received_data.len(), reference_data0.len());
+                assert_eq!(received_data, reference_data0);
+                assert!(!received0);
+                received0 = true;
+            } else if received_id == rx1_id {
+                assert_eq!(received_data.len(), reference_data1.len());
+                assert_eq!(received_data, reference_data1);
+                assert!(!received1);
+                received1 = true;
+            }
+        }
+    }
+
+    thread0.join().unwrap();
+    thread1.join().unwrap();
+}
+
+#[test]
+fn receiver_set_concurrent() {
+    let num_channels = 5;
+    let messages_per_channel = 100;
+    let max_msg_size = 16381;
+
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+
+    let (threads, mut receiver_records): (Vec<_>, HashMap<_, _>) = (0..num_channels)
+                                                                   .map(|chan_index| {
+        let (tx, rx) = platform::channel().unwrap();
+        let rx_id = rx_set.add(rx).unwrap();
+
+        let data: Vec<u8> = (0..max_msg_size)
+                            .map(|offset| (offset % 13) as u8 | (chan_index as u8) << 4)
+                            .collect();
+        let reference_data = data.clone();
+
+        let thread = thread::spawn(move || {
+            for msg_index in 0..messages_per_channel {
+                let msg_size = (msg_index * 99991 + chan_index * 90001) % max_msg_size;
+                // The `macos` back-end won't receive exact size unless it's a multiple of 4...
+                // (See https://github.com/servo/ipc-channel/pull/79 etc. )
+                let msg_size = msg_size & !3;
+                tx.send(&data[0..msg_size], vec![], vec![]).unwrap();
+            }
+        });
+        (thread, (rx_id, (reference_data, chan_index, 0usize)))
+    }).unzip();
+
+    while !receiver_records.is_empty() {
+        for result in rx_set.select().unwrap().into_iter() {
+            match result {
+                platform::OsIpcSelectionResult::DataReceived(rx_id, data, _, _) => {
+                    let &mut (ref reference_data, chan_index, ref mut msg_index)
+                             = receiver_records.get_mut(&rx_id).unwrap();
+                    let msg_size = (*msg_index * 99991 + chan_index * 90001) % max_msg_size;
+                    let msg_size = msg_size & !3;
+                    assert_eq!(data.len(), msg_size);
+                    assert_eq!(&data[..], &reference_data[..msg_size]);
+                    *msg_index += 1;
+                },
+                platform::OsIpcSelectionResult::ChannelClosed(rx_id) => {
+                    let (_, _, msg_index) = receiver_records.remove(&rx_id).unwrap();
+                    assert_eq!(msg_index, messages_per_channel);
+                },
+            }
+        }
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }
 
