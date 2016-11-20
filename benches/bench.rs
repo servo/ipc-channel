@@ -179,6 +179,88 @@ mod platform {
 }
 
 mod ipc {
+    use ipc_channel::ipc;
+    use ITERATIONS;
+
+    use test;
+
+    #[bench]
+    fn transfer_empty(b: &mut test::Bencher) {
+        let (tx, rx) = ipc::channel().unwrap();
+        b.iter(|| {
+            for _ in 0..ITERATIONS {
+                tx.send(()).unwrap();
+                rx.recv().unwrap()
+            }
+        });
+    }
+
+    fn bench_transfer_senders(b: &mut test::Bencher, count: usize) {
+        let (main_tx, main_rx) = ipc::channel().unwrap();
+        let transfer_txs: Vec<_> = (0..count).map(|_| ipc::channel::<()>().unwrap())
+                                             .map(|(tx, _)| tx).collect();
+        let mut transfer_txs = Some(transfer_txs);
+        b.iter(|| {
+            for _ in 0..ITERATIONS {
+                main_tx.send(transfer_txs.take().unwrap()).unwrap();
+                transfer_txs = Some(main_rx.recv().unwrap());
+            }
+        });
+    }
+
+    #[bench]
+    fn transfer_senders_00(b: &mut test::Bencher) {
+        bench_transfer_senders(b, 0);
+    }
+
+    #[bench]
+    fn transfer_senders_01(b: &mut test::Bencher) {
+        bench_transfer_senders(b, 1);
+    }
+
+    #[bench]
+    fn transfer_senders_08(b: &mut test::Bencher) {
+        bench_transfer_senders(b, 8);
+    }
+
+    #[bench]
+    fn transfer_senders_64(b: &mut test::Bencher) {
+        bench_transfer_senders(b, 64);
+    }
+
+    fn bench_transfer_receivers(b: &mut test::Bencher, count: usize) {
+        let (main_tx, main_rx) = ipc::channel().unwrap();
+        let transfer_rxs: Vec<_> = (0..count).map(|_| ipc::channel::<()>().unwrap())
+                                             .map(|(_, rx)| rx).collect();
+        let mut transfer_rxs = Some(transfer_rxs);
+        b.iter(|| {
+            for _ in 0..ITERATIONS {
+                main_tx.send(transfer_rxs.take().unwrap()).unwrap();
+                transfer_rxs = Some(main_rx.recv().unwrap());
+            }
+        });
+    }
+
+    #[bench]
+    fn transfer_receivers_00(b: &mut test::Bencher) {
+        bench_transfer_receivers(b, 0);
+    }
+
+    #[bench]
+    fn transfer_receivers_01(b: &mut test::Bencher) {
+        bench_transfer_receivers(b, 1);
+    }
+
+    #[bench]
+    fn transfer_receivers_08(b: &mut test::Bencher) {
+        bench_transfer_receivers(b, 8);
+    }
+
+    #[bench]
+    fn transfer_receivers_64(b: &mut test::Bencher) {
+        bench_transfer_receivers(b, 64);
+    }
+
     mod receiver_set {
         use ipc_channel::ipc::{self, IpcReceiverSet};
         use ITERATIONS;
