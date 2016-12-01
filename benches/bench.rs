@@ -186,29 +186,20 @@ mod ipc {
         // Benchmark selecting over a set of `n` receivers,
         // with `to_send` of them actually having pending data.
         fn bench_send_on_m_of_n(b: &mut test::Bencher, to_send: usize, n: usize) {
-            let mut active = Vec::with_capacity(to_send);
-            let mut dormant = Vec::with_capacity(n - to_send);
+            let mut senders = Vec::with_capacity(n);
             let mut rx_set = IpcReceiverSet::new().unwrap();
-            for _ in 0..to_send {
+            for _ in 0..n {
                 let (tx, rx) = ipc::channel().unwrap();
                 rx_set.add(rx).unwrap();
-                active.push(tx);
-            }
-            for _ in to_send..n {
-                let (tx, rx) = ipc::channel::<()>().unwrap();
-                rx_set.add(rx).unwrap();
-                dormant.push(tx);
+                senders.push(tx);
             }
             b.iter(|| {
-                for tx in active.iter() {
+                for tx in senders.iter().take(to_send) {
                     tx.send(()).unwrap();
                 }
                 let mut received = 0;
                 while received < to_send {
-                    for result in rx_set.select().unwrap().into_iter() {
-                        let (_, _) = result.unwrap();
-                        received += 1;
-                    }
+                    received += rx_set.select().unwrap().len();
                 }
             });
         }
