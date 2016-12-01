@@ -211,13 +211,6 @@ mod ipc {
             });
         }
 
-        fn add_n_rxs(rx_set: &mut IpcReceiverSet, n: usize) -> () {
-            for _ in 0..n {
-                let (_, rx) = ipc::channel::<()>().unwrap();
-                rx_set.add(rx).unwrap();
-            }
-        }
-
         #[bench]
         fn send_on_1_of_1(b: &mut test::Bencher) -> () {
             gen_select_test(b, 1, 1);
@@ -272,34 +265,40 @@ mod ipc {
             gen_select_test(b, 100, 100);
         }
 
+        fn create_set_of_n(n: usize) -> IpcReceiverSet {
+            let mut rx_set = IpcReceiverSet::new().unwrap();
+            for _ in 0..n {
+                let (_, rx) = ipc::channel::<()>().unwrap();
+                rx_set.add(rx).unwrap();
+            }
+            rx_set
+        }
+
         #[bench]
         fn create_and_destroy_empty_set(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                IpcReceiverSet::new().unwrap();
+                create_set_of_n(0);
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_1(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                let mut rx_set = IpcReceiverSet::new().unwrap();
-                add_n_rxs(&mut rx_set, 1);
+                create_set_of_n(1);
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_10(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                let mut rx_set = IpcReceiverSet::new().unwrap();
-                add_n_rxs(&mut rx_set, 10);
+                create_set_of_n(10);
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_100(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                let mut rx_set = IpcReceiverSet::new().unwrap();
-                add_n_rxs(&mut rx_set, 100);
+                create_set_of_n(100);
             });
         }
 
@@ -307,18 +306,12 @@ mod ipc {
         // Benchmark adding and removing closed receivers from the set
         fn add_and_remove_closed_receivers(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                let mut rx_set = IpcReceiverSet::new().unwrap();
-                {
-                    {
-                        let (_, rx) = ipc::channel::<()>().unwrap();
-                        rx_set.add(rx).unwrap();
-                    }
-                    // On select Receivers with a "ClosedChannel" event
-                    // will be closed
-                    rx_set.select().unwrap();
-                    let (_, rx) = ipc::channel::<()>().unwrap();
-                    rx_set.add(rx).unwrap();
-                }
+                let mut rx_set = create_set_of_n(1);
+                // On select Receivers with a "ClosedChannel" event
+                // will be closed
+                rx_set.select().unwrap();
+                let (_, rx) = ipc::channel::<()>().unwrap();
+                rx_set.add(rx).unwrap();
             });
         }
     }
