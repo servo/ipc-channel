@@ -310,8 +310,6 @@ mod ipc {
                 // On select Receivers with a "ClosedChannel" event
                 // will be closed
                 rx_set.select().unwrap();
-                let (_, rx) = ipc::channel::<()>().unwrap();
-                rx_set.add(rx).unwrap();
             });
         }
     }
