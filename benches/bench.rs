@@ -183,6 +183,8 @@ mod ipc {
         use ipc_channel::ipc::{self, IpcReceiverSet};
         use test;
 
+        // Benchmark selecting over a set of `n` receivers,
+        // with `to_send` of them actually having pending data.
         fn gen_select_test(b: &mut test::Bencher, to_send: usize, n: usize) -> () {
             let mut active = Vec::with_capacity(to_send);
             let mut dormant = Vec::with_capacity(n - to_send);
@@ -303,12 +305,14 @@ mod ipc {
         }
 
         #[bench]
-        // Benchmark adding and removing closed receivers from the set
+        // Benchmark performance of removing closed receivers from set.
+        // This also includes the time for adding receivers,
+        // as there is no way to measure the removing in isolation.
         fn add_and_remove_closed_receivers(b: &mut test::Bencher) -> () {
             b.iter(|| {
                 let mut rx_set = create_set_of_n(1);
-                // On select Receivers with a "ClosedChannel" event
-                // will be closed
+                // On `select()`, receivers with a "ClosedChannel" event will be closed,
+                // and automatically dropped from the set.
                 rx_set.select().unwrap();
             });
         }
