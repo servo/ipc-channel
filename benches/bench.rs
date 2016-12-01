@@ -280,6 +280,14 @@ mod ipc {
         }
 
         #[bench]
+        fn create_and_destroy_set_of_1(b: &mut test::Bencher) -> () {
+            b.iter(|| {
+                let mut rx_set = IpcReceiverSet::new().unwrap();
+                add_n_rxs(&mut rx_set, 1);
+            });
+        }
+
+        #[bench]
         fn create_and_destroy_set_of_10(b: &mut test::Bencher) -> () {
             b.iter(|| {
                 let mut rx_set = IpcReceiverSet::new().unwrap();
@@ -288,10 +296,10 @@ mod ipc {
         }
 
         #[bench]
-        fn create_and_destroy_set_of_5(b: &mut test::Bencher) -> () {
+        fn create_and_destroy_set_of_100(b: &mut test::Bencher) -> () {
             b.iter(|| {
                 let mut rx_set = IpcReceiverSet::new().unwrap();
-                add_n_rxs(&mut rx_set, 5);
+                add_n_rxs(&mut rx_set, 100);
             });
         }
 
