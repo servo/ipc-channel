@@ -185,7 +185,7 @@ mod ipc {
 
         // Benchmark selecting over a set of `n` receivers,
         // with `to_send` of them actually having pending data.
-        fn gen_select_test(b: &mut test::Bencher, to_send: usize, n: usize) -> () {
+        fn bench_send_on_m_of_n(b: &mut test::Bencher, to_send: usize, n: usize) -> () {
             let mut active = Vec::with_capacity(to_send);
             let mut dormant = Vec::with_capacity(n - to_send);
             let mut rx_set = IpcReceiverSet::new().unwrap();
@@ -215,56 +215,56 @@ mod ipc {
 
         #[bench]
         fn send_on_1_of_1(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 1, 1);
+            bench_send_on_m_of_n(b, 1, 1);
         }
 
         #[bench]
         fn send_on_1_of_5(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 1, 5);
+            bench_send_on_m_of_n(b, 1, 5);
         }
 
         #[bench]
         fn send_on_2_of_5(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 2, 5);
+            bench_send_on_m_of_n(b, 2, 5);
         }
 
         #[bench]
         fn send_on_5_of_5(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 5, 5);
+            bench_send_on_m_of_n(b, 5, 5);
         }
 
         #[bench]
         fn send_on_1_of_20(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 1, 20);
+            bench_send_on_m_of_n(b, 1, 20);
         }
 
         #[bench]
         fn send_on_5_of_20(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 5, 20);
+            bench_send_on_m_of_n(b, 5, 20);
         }
 
         #[bench]
         fn send_on_20_of_20(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 20, 20);
+            bench_send_on_m_of_n(b, 20, 20);
         }
 
         #[bench]
         fn send_on_1_of_100(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 1, 100);
+            bench_send_on_m_of_n(b, 1, 100);
         }
 
         #[bench]
         fn send_on_5_of_100(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 5, 100);
+            bench_send_on_m_of_n(b, 5, 100);
         }
         #[bench]
         fn send_on_20_of_100(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 20, 100);
+            bench_send_on_m_of_n(b, 20, 100);
         }
 
         #[bench]
         fn send_on_100_of_100(b: &mut test::Bencher) -> () {
-            gen_select_test(b, 100, 100);
+            bench_send_on_m_of_n(b, 100, 100);
         }
 
         fn create_set_of_n(n: usize) -> IpcReceiverSet {
