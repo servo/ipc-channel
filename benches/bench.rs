@@ -304,17 +304,35 @@ mod ipc {
             });
         }
 
-        #[bench]
         // Benchmark performance of removing closed receivers from set.
         // This also includes the time for adding receivers,
         // as there is no way to measure the removing in isolation.
-        fn add_and_remove_closed_receivers(b: &mut test::Bencher) -> () {
+        fn bench_remove_closed(b: &mut test::Bencher, n: usize) {
             b.iter(|| {
-                let mut rx_set = create_set_of_n(1);
-                // On `select()`, receivers with a "ClosedChannel" event will be closed,
-                // and automatically dropped from the set.
-                rx_set.select().unwrap();
+                let mut rx_set = create_set_of_n(n);
+
+                let mut dropped_count = 0;
+                while dropped_count < n {
+                    // On `select()`, receivers with a "ClosedChannel" event will be closed,
+                    // and automatically dropped from the set.
+                    dropped_count += rx_set.select().unwrap().len();
+                }
             });
+        }
+
+        #[bench]
+        fn add_and_remove_1_closed_receivers(b: &mut test::Bencher) {
+            bench_remove_closed(b, 1);
+        }
+
+        #[bench]
+        fn add_and_remove_10_closed_receivers(b: &mut test::Bencher) {
+            bench_remove_closed(b, 10);
+        }
+
+        #[bench]
+        fn add_and_remove_100_closed_receivers(b: &mut test::Bencher) {
+            bench_remove_closed(b, 100);
         }
     }
 }
