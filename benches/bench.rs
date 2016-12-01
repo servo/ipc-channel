@@ -211,10 +211,6 @@ mod ipc {
             });
         }
 
-        fn create_empty_set() -> Result<IpcReceiverSet, ()> {
-            Ok(IpcReceiverSet::new().unwrap())
-        }
-
         fn add_n_rxs(rx_set: &mut IpcReceiverSet, n: usize) -> () {
             for _ in 0..n {
                 let (_, rx) = ipc::channel::<()>().unwrap();
@@ -279,7 +275,7 @@ mod ipc {
         #[bench]
         fn create_and_destroy_empty_set(b: &mut test::Bencher) -> () {
             b.iter(|| {
-                create_empty_set().unwrap();
+                IpcReceiverSet::new().unwrap();
             });
         }
 
