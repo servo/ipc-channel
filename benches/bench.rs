@@ -181,6 +181,8 @@ mod platform {
 mod ipc {
     mod receiver_set {
         use ipc_channel::ipc::{self, IpcReceiverSet};
+        use ITERATIONS;
+
         use test;
 
         // Benchmark selecting over a set of `n` receivers,
@@ -194,12 +196,14 @@ mod ipc {
                 senders.push(tx);
             }
             b.iter(|| {
-                for tx in senders.iter().take(to_send) {
-                    tx.send(()).unwrap();
-                }
-                let mut received = 0;
-                while received < to_send {
-                    received += rx_set.select().unwrap().len();
+                for _ in 0..ITERATIONS {
+                    for tx in senders.iter().take(to_send) {
+                        tx.send(()).unwrap();
+                    }
+                    let mut received = 0;
+                    while received < to_send {
+                        received += rx_set.select().unwrap().len();
+                    }
                 }
             });
         }
@@ -270,28 +274,36 @@ mod ipc {
         #[bench]
         fn create_and_destroy_empty_set(b: &mut test::Bencher) {
             b.iter(|| {
-                create_set_of_n(0);
+                for _ in 0..ITERATIONS {
+                    create_set_of_n(0);
+                }
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_1(b: &mut test::Bencher) {
             b.iter(|| {
-                create_set_of_n(1);
+                for _ in 0..ITERATIONS {
+                    create_set_of_n(1);
+                }
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_10(b: &mut test::Bencher) {
             b.iter(|| {
-                create_set_of_n(10);
+                for _ in 0..ITERATIONS {
+                    create_set_of_n(10);
+                }
             });
         }
 
         #[bench]
         fn create_and_destroy_set_of_100(b: &mut test::Bencher) {
             b.iter(|| {
-                create_set_of_n(100);
+                for _ in 0..ITERATIONS {
+                    create_set_of_n(100);
+                }
             });
         }
 
@@ -300,13 +312,18 @@ mod ipc {
         // as there is no way to measure the removing in isolation.
         fn bench_remove_closed(b: &mut test::Bencher, n: usize) {
             b.iter(|| {
-                let mut rx_set = create_set_of_n(n);
+                for _ in 0..ITERATIONS {
+                    // We could keep adding/removing senders to the same set,
+                    // instead of creating a new one in each iteration.
+                    // However, this would actually make the results harder to compare...
+                    let mut rx_set = create_set_of_n(n);
 
-                let mut dropped_count = 0;
-                while dropped_count < n {
-                    // On `select()`, receivers with a "ClosedChannel" event will be closed,
-                    // and automatically dropped from the set.
-                    dropped_count += rx_set.select().unwrap().len();
+                    let mut dropped_count = 0;
+                    while dropped_count < n {
+                        // On `select()`, receivers with a "ClosedChannel" event will be closed,
+                        // and automatically dropped from the set.
+                        dropped_count += rx_set.select().unwrap().len();
+                    }
                 }
             });
         }
