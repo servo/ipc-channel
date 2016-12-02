@@ -9,6 +9,7 @@
 
 use platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use platform::{OsIpcSharedMemory};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
@@ -394,6 +395,61 @@ fn receiver_set() {
                 received1 = true;
             }
         }
+    }
+}
+
+#[test]
+fn receiver_set_concurrent() {
+    let num_channels = 5;
+    let messages_per_channel = 100;
+    let max_msg_size = 16381;
+
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+
+    let (threads, mut receiver_records): (Vec<_>, HashMap<_, _>) = (0..num_channels)
+                                                                   .map(|chan_index| {
+        let (tx, rx) = platform::channel().unwrap();
+        let rx_id = rx_set.add(rx).unwrap();
+
+        let data: Vec<u8> = (0..max_msg_size)
+                            .map(|offset| (offset % 13) as u8 | (chan_index as u8) << 4)
+                            .collect();
+        let reference_data = data.clone();
+
+        let thread = thread::spawn(move || {
+            for msg_index in 0..messages_per_channel {
+                let msg_size = (msg_index * 99991 + chan_index * 90001) % max_msg_size;
+                // The `macos` back-end won't receive exact size unless it's a multiple of 4...
+                // (See https://github.com/servo/ipc-channel/pull/79 etc. )
+                let msg_size = msg_size & !3;
+                tx.send(&data[0..msg_size], vec![], vec![]).unwrap();
+            }
+        });
+        (thread, (rx_id, (reference_data, chan_index, 0usize)))
+    }).unzip();
+
+    while !receiver_records.is_empty() {
+        for result in rx_set.select().unwrap().into_iter() {
+            match result {
+                platform::OsIpcSelectionResult::DataReceived(rx_id, data, _, _) => {
+                    let &mut (ref reference_data, chan_index, ref mut msg_index)
+                             = receiver_records.get_mut(&rx_id).unwrap();
+                    let msg_size = (*msg_index * 99991 + chan_index * 90001) % max_msg_size;
+                    let msg_size = msg_size & !3;
+                    assert_eq!(data.len(), msg_size);
+                    assert_eq!(&data[..], &reference_data[..msg_size]);
+                    *msg_index += 1;
+                },
+                platform::OsIpcSelectionResult::ChannelClosed(rx_id) => {
+                    let (_, _, msg_index) = receiver_records.remove(&rx_id).unwrap();
+                    assert_eq!(msg_index, messages_per_channel);
+                },
+            }
+        }
+    }
+
+    for thread in threads {
+        thread.join().unwrap();
     }
 }
 
