@@ -1081,3 +1081,95 @@ mod sync_test {
         platform::OsIpcSender::test_not_sync();
     }
 }
+
+// Note! This test is actually used by the
+// cross_process_two_step_transfer_spawn() test below.  Running it by
+// itself is meaningless, but it passes if run this way.
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[test]
+#[ignore]
+fn cross_process_two_step_transfer_server()
+{
+    let cookie: &[u8] = b"cookie";
+    let channel_name = get_channel_name_arg();
+    if channel_name.is_none() {
+        return;
+    }
+
+    // connect by name to our other process
+    let super_tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
+
+    // create a channel for real communication between the two processes
+    let (sub_tx, sub_rx) = platform::channel().unwrap();
+
+    // send the other process the tx side, so it can send us the channels
+    super_tx.send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+
+    // get two_rx from the other process
+    let (_, mut received_channels, _) = sub_rx.recv().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let two_rx = received_channels[0].to_receiver();
+
+    // get one_rx from two_rx's buffer
+    let (_, mut received_channels, _) = two_rx.recv().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let one_rx = received_channels[0].to_receiver();
+
+    // get a cookie from one_rx
+    let (data, _, _) = one_rx.recv().unwrap();
+    assert_eq!(&data[..], cookie);
+
+    // finally, send a cookie back
+    super_tx.send(&data, vec![], vec![]).unwrap();
+
+    // terminate
+    unsafe { libc::exit(0); }
+}
+
+// TODO -- this fails on OSX with a MACH_SEND_INVALID_RIGHT!
+// Needs investigation.
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg_attr(target_os = "macos", ignore)]
+#[test]
+fn cross_process_two_step_transfer_spawn() {
+    let cookie: &[u8] = b"cookie";
+
+    // create channel 1
+    let (one_tx, one_rx) = platform::channel().unwrap();
+    // put data in channel 1's pipe
+    one_tx.send(cookie, vec![], vec![]).unwrap();
+
+    // create channel 2
+    let (two_tx, two_rx) = platform::channel().unwrap();
+    // put channel 1's rx end in channel 2's pipe
+    two_tx.send(&[], vec![OsIpcChannel::Receiver(one_rx)], vec![]).unwrap();
+
+    // create a one-shot server, and spawn another process
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let mut child_pid = Command::new(env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg("cross_process_two_step_transfer_server")
+        .arg(format!("channel_name:{}", name))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to execute server process");
+
+    // The other process will have sent us a transmit channel in received channels
+    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let sub_tx = received_channels[0].to_sender();
+
+    // Send the outer payload channel, so the server can use it to
+    // retrive the inner payload and the cookie
+    sub_tx.send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![]).unwrap();
+
+    // Then we wait for the cookie to make its way back to us
+    let (received_data, received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
+    let child_exit_code = child_pid.wait().expect("failed to wait on child");
+    assert!(child_exit_code.success());
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (cookie, vec![], vec![]));
+}
