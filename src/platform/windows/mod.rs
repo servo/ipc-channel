@@ -118,7 +118,15 @@ impl<'data> Message<'data> {
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
         if self.oob_len > 0 {
-            Some(bincode::serde::deserialize::<OutOfBandMessage>(self.oob_bytes()).unwrap())
+            let oob = bincode::serde::deserialize::<OutOfBandMessage>(self.oob_bytes())
+                .expect("Failed to deserialize OOB data");
+            // On windows, since we're duplicating handles intended for a specific
+            // process.
+            if oob.target_process_id != *CURRENT_PROCESS_ID {
+                panic!("Windows IPC channel received handles intended for process {}, but this is {}",
+                       oob.target_process_id, *CURRENT_PROCESS_ID);
+            }
+            Some(oob)
         } else {
             None
         }
@@ -134,14 +142,16 @@ impl<'data> Message<'data> {
 // the data message.
 #[derive(Debug)]
 struct OutOfBandMessage {
+    target_process_id: u32, // the process ID of the intended target process
     channel_handles: Vec<intptr_t>,
     shmem_handles: Vec<(intptr_t, u64)>, // handle and size
     big_data_receiver_handle: Option<(intptr_t, u64)>, // handle and size
 }
 
 impl OutOfBandMessage {
-    fn new() -> OutOfBandMessage {
+    fn new(target_id: u32) -> OutOfBandMessage {
         OutOfBandMessage {
+            target_process_id: target_id,
             channel_handles: vec![],
             shmem_handles: vec![],
             big_data_receiver_handle: None,
@@ -159,7 +169,8 @@ impl serde::Serialize for OutOfBandMessage {
     fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
         where S: serde::Serializer
     {
-        ((&self.channel_handles,
+        ((self.target_process_id,
+          &self.channel_handles,
           &self.shmem_handles,
           &self.big_data_receiver_handle)).serialize(serializer)
     }
@@ -169,9 +180,10 @@ impl serde::Deserialize for OutOfBandMessage {
     fn deserialize<D>(deserializer: &mut D) -> Result<OutOfBandMessage, D::Error>
         where D: serde::Deserializer
     {
-        let (channel_handles, shmem_handles, big_data_receiver_handle) =
+        let (target_process_id, channel_handles, shmem_handles, big_data_receiver_handle) =
             try!(serde::Deserialize::deserialize(deserializer));
         Ok(OutOfBandMessage {
+            target_process_id: target_process_id,
             channel_handles: channel_handles,
             shmem_handles: shmem_handles,
             big_data_receiver_handle: big_data_receiver_handle
@@ -889,14 +901,11 @@ impl OsIpcSender {
         }
     }
 
-    // TODO(vlad): if we could guarantee that a server handle can't be passed
-    // after it's already been used to start receiving data, we could
-    // store the server handle instead of needing to look it up each time.
-    fn get_pipe_server_process_handle(&self) -> Result<WinHandle,WinError> {
+    fn get_pipe_server_process_handle_and_pid(&self) -> Result<(WinHandle, winapi::ULONG),WinError> {
         unsafe {
             let server_pid = try!(self.get_pipe_server_process_id());
             if server_pid == *CURRENT_PROCESS_ID {
-                return Ok(WinHandle::new(*CURRENT_PROCESS_HANDLE as HANDLE));
+                return Ok((WinHandle::new(*CURRENT_PROCESS_HANDLE as HANDLE), server_pid));
             }
 
             let raw_handle = kernel32::OpenProcess(winapi::PROCESS_DUP_HANDLE,
@@ -906,7 +915,7 @@ impl OsIpcSender {
                 return Err(WinError::last("OpenProcess"));
             }
 
-            Ok(WinHandle::new(raw_handle))
+            Ok((WinHandle::new(raw_handle), server_pid))
         }
     }
 
@@ -940,13 +949,13 @@ impl OsIpcSender {
         // to.
         assert!(data.len() < u32::max_value() as usize);
 
-        let server_h = if !shared_memory_regions.is_empty() || !ports.is_empty() {
-            try!(self.get_pipe_server_process_handle())
+        let (server_h, server_pid) = if !shared_memory_regions.is_empty() || !ports.is_empty() {
+            try!(self.get_pipe_server_process_handle_and_pid())
         } else {
-            WinHandle::invalid()
+            (WinHandle::invalid(), 0)
         };
 
-        let mut oob = OutOfBandMessage::new();
+        let mut oob = OutOfBandMessage::new(server_pid);
 
         for ref shmem in shared_memory_regions {
             // shmem.handle, shmem.length
@@ -977,15 +986,16 @@ impl OsIpcSender {
                 // We need to create a channel for the big data
                 let (sender, receiver) = try!(channel());
 
-                let server_h = if server_h.is_valid() {
-                    server_h
+                let (server_h, server_pid) = if server_h.is_valid() {
+                    (server_h, server_pid)
                 } else {
-                    try!(self.get_pipe_server_process_handle())
+                    try!(self.get_pipe_server_process_handle_and_pid())
                 };
 
                 // Put the receiver in the OOB data
                 let mut raw_receiver_handle = try!(move_handle_to_process(&mut receiver.reader.borrow_mut().handle, &server_h));
                 oob.big_data_receiver_handle = Some((raw_receiver_handle.take() as intptr_t, data.len() as u64));
+                oob.target_process_id = server_pid;
 
                 Some(sender)
             } else {
