@@ -707,8 +707,8 @@ fn cross_process_spawn() {
         .arg("cross_process_server")
         .arg(format!("channel_name:{}", name))
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("failed to execute server process");
 
@@ -780,8 +780,8 @@ fn cross_process_sender_transfer_spawn() {
         .arg("cross_process_sender_transfer_server")
         .arg(format!("channel_name:{}", name))
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("failed to execute server process");
 
@@ -1003,6 +1003,7 @@ mod sync_test {
 // cross_process_sender_transfer_spawn() test below.  Running it by
 // itself is meaningless.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[cfg_attr(target_os = "windows", should_panic(expected = "received handles intended for process"))]
 #[test]
 #[ignore]
 fn cross_process_two_step_transfer_server()
@@ -1053,6 +1054,7 @@ fn cross_process_two_step_transfer_server()
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+#[cfg_attr(target_os = "windows", should_panic(expected = "ChannelClosed"))]
 #[test]
 fn cross_process_two_step_transfer_spawn() {
     let cookie: &[u8] = b"cookie";
@@ -1071,12 +1073,11 @@ fn cross_process_two_step_transfer_spawn() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let mut child_pid = Command::new(env::current_exe().unwrap())
         .arg("--ignored")
-        .arg("--nocapture")
         .arg("cross_process_two_step_transfer_server")
         .arg(format!("channel_name:{}", name))
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("failed to execute server process");
 
@@ -1091,7 +1092,8 @@ fn cross_process_two_step_transfer_spawn() {
     // Then we wait for the cookie to make its way back to us
     let (mut received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
-    child_pid.wait().expect("failed to wait on child");
+    let child_exit_code = child_pid.wait().expect("failed to wait on child");
+    assert!(child_exit_code.success());
     received_data.truncate(cookie.len());
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (cookie, vec![], vec![]));
