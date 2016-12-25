@@ -89,14 +89,16 @@ struct PollEntry {
 
 #[derive(PartialEq, Debug)]
 pub struct OsIpcReceiver {
-    fd: c_int,
+    fd: Cell<c_int>,
 }
 
 impl Drop for OsIpcReceiver {
     fn drop(&mut self) {
         unsafe {
-            //assert!(libc::close(self.fd) == 0)
-            libc::close(self.fd);
+            if self.fd.get() >= 0 {
+                let result = libc::close(self.fd.get());
+                assert!(thread::panicking() || result == 0);
+            }
         }
     }
 }
@@ -104,14 +106,14 @@ impl Drop for OsIpcReceiver {
 impl OsIpcReceiver {
     fn from_fd(fd: c_int) -> OsIpcReceiver {
         OsIpcReceiver {
-            fd: fd,
+            fd: Cell::new(fd),
         }
     }
 
     fn consume_fd(&self) -> c_int {
-        unsafe {
-            libc::dup(self.fd)
-        }
+        let fd = self.fd.get();
+        self.fd.set(-1);
+        fd
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
@@ -120,18 +122,26 @@ impl OsIpcReceiver {
 
     pub fn recv(&self)
                 -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd, BlockingMode::Blocking)
+        recv(self.fd.get(), BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
                     -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd, BlockingMode::Nonblocking)
+        recv(self.fd.get(), BlockingMode::Nonblocking)
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
-pub struct SharedFileDescriptor(c_int);
+#[derive(PartialEq, Debug)]
+struct SharedFileDescriptor(c_int);
 
+impl Drop for SharedFileDescriptor {
+    fn drop(&mut self) {
+        unsafe {
+            let result = libc::close(self.0);
+            assert!(thread::panicking() || result == 0);
+        }
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct OsIpcSender {
@@ -141,15 +151,6 @@ pub struct OsIpcSender {
     // (Rather, senders should just be cloned, as they are shared internally anyway --
     // another layer of sharing only adds unnecessary overhead...)
     nosync_marker: PhantomData<Cell<()>>,
-}
-
-impl Drop for SharedFileDescriptor {
-    fn drop(&mut self) {
-        unsafe {
-            let result = libc::close(self.0);
-            assert!(thread::panicking() || result == 0);
-        }
-    }
 }
 
 impl OsIpcSender {
@@ -354,7 +355,7 @@ impl OsIpcSender {
         // along any other file descriptors that are to be transferred in the message.
         let (dedicated_tx, dedicated_rx) = try!(channel());
         // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
-        fds.push(dedicated_rx.fd);
+        fds.push(dedicated_rx.fd.get());
 
         // Split up the packet into fragments.
         let mut byte_position = 0;
@@ -416,7 +417,7 @@ impl OsIpcChannel {
     fn fd(&self) -> c_int {
         match *self {
             OsIpcChannel::Sender(ref sender) => sender.fd.0,
-            OsIpcChannel::Receiver(ref receiver) => receiver.fd,
+            OsIpcChannel::Receiver(ref receiver) => receiver.fd.get(),
         }
     }
 }
@@ -534,9 +535,12 @@ pub struct OsOpaqueIpcChannel {
 
 impl Drop for OsOpaqueIpcChannel {
     fn drop(&mut self) {
-        unsafe {
-            libc::close(self.fd); 
-        }
+        // Make sure we don't leak!
+        //
+        // The `OsOpaqueIpcChannel` objects should always be used,
+        // i.e. converted with `to_sender()` or `to_receiver()` --
+        // so the value should already be unset before the object gets dropped.
+        debug_assert!(self.fd == -1);
     }
 }
 
@@ -548,15 +552,11 @@ impl OsOpaqueIpcChannel {
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
-        unsafe {
-            OsIpcSender::from_fd(libc::dup(self.fd))
-        }
+        OsIpcSender::from_fd(mem::replace(&mut self.fd, -1))
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {
-        unsafe {
-            OsIpcReceiver::from_fd(libc::dup(self.fd))
-        }
+        OsIpcReceiver::from_fd(mem::replace(&mut self.fd, -1))
     }
 }
 
@@ -620,9 +620,7 @@ impl OsIpcOneShotServer {
             }
             try!(make_socket_lingering(client_fd));
 
-            let receiver = OsIpcReceiver {
-                fd: client_fd,
-            };
+            let receiver = OsIpcReceiver::from_fd(client_fd);
             let (data, channels, shared_memory_regions) = try!(receiver.recv());
             Ok((receiver, data, channels, shared_memory_regions))
         }
@@ -857,7 +855,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             // Note: we always use blocking mode for followup fragments,
             // to make sure that once we start receiving a multi-fragment message,
             // we don't abort in the middle of it...
-            let result = libc::recv(dedicated_rx.fd,
+            let result = libc::recv(dedicated_rx.fd.get(),
                                     main_data_buffer[write_pos..].as_mut_ptr() as *mut c_void,
                                     end_pos - write_pos,
                                     0);
