@@ -838,7 +838,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
 
     // Extend the buffer to hold the entire message, without initialising the memory.
     let len = main_data_buffer.len();
-    main_data_buffer.reserve(total_size - len);
+    main_data_buffer.reserve_exact(total_size - len);
 
     // Receive followup fragments directly into the main buffer.
     while main_data_buffer.len() < total_size {
