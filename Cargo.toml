@@ -7,7 +7,6 @@ license = "MIT/Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
 
 [features]
-default = ["win32-trace"]
 force-inprocess = []
 memfd = ["syscall"]
 unstable = []

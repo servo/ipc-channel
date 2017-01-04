@@ -120,10 +120,11 @@ impl<'data> Message<'data> {
         if self.oob_len > 0 {
             let oob = bincode::serde::deserialize::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
-            // On windows, since we're duplicating handles intended for a specific
-            // process.
             if oob.target_process_id != *CURRENT_PROCESS_ID {
-                panic!("Windows IPC channel received handles intended for process {}, but this is {}",
+                panic!("Windows IPC channel received handles intended for pid {}, but this is pid {}. \
+                       This likely happened because a receiver was transferred while it had outstanding data \
+                       that contained a channel or shared memory in its pipe. \
+                       This isn't supported in the Windows implementation.",
                        oob.target_process_id, *CURRENT_PROCESS_ID);
             }
             Some(oob)
@@ -137,12 +138,29 @@ impl<'data> Message<'data> {
     }
 }
 
-// If we have any channel handles or shmem segments,
-// then we'll send an OutOfBandMessage after
-// the data message.
+// If we have any channel handles or shmem segments, then we'll send an
+// OutOfBandMessage after the data message.
+//
+// This includes the receiver's process ID, which the receiver checks to
+// make sure that the message was originally sent to it, and was not sitting
+// in another channel's buffer when that channel got transferred to another
+// process.  On Windows, we duplicate handles on the sender side to a specific
+// reciever.  If the wrong receiver gets it, those handles are not valid.
+//
+// TODO(vlad): We could attempt to recover from the above situation by
+// duplicating from the intended target process to ourselves (the receiver).
+// That would only work if the intended process a) still exists; b) can be
+// opened by the receiver with handle dup privileges.  Another approach
+// could be to use a separate dedicated process intended purely for handle
+// passing, though that process would need to be global to any processes
+// amongst which you want to share channels or connect one-shot servers to.
+// There may be a system process that we could use for this purpose, but
+// I haven't foundone -- and in the system process case, we'd need to ensure
+// that we don't leak the handles (e.g. dup a handle to the system process,
+// and then everything dies -- we don't want those resources to be leaked).
 #[derive(Debug)]
 struct OutOfBandMessage {
-    target_process_id: u32, // the process ID of the intended target process
+    target_process_id: u32,
     channel_handles: Vec<intptr_t>,
     shmem_handles: Vec<(intptr_t, u64)>, // handle and size
     big_data_receiver_handle: Option<(intptr_t, u64)>, // handle and size

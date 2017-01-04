@@ -26,6 +26,19 @@ use libc::{kill, SIGSTOP, SIGCONT};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
 
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
+fn get_channel_name_arg() -> Option<String> {
+    for arg in env::args() {
+        let arg_str = "channel_name:";
+        if arg.starts_with(arg_str) {
+            return Some(arg[arg_str.len()..].to_owned());
+        }
+    }
+    None
+}
+
 #[test]
 fn simple() {
     let (tx, rx) = platform::channel().unwrap();
@@ -671,22 +684,15 @@ fn server_connect_first() {
 }
 
 // Note! This test is actually used by the cross_process_spawn() test
-// below.  Running it by itself is meaningless.
+// below as a second process.  Running it by itself is meaningless, but
+// passes.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
 #[test]
 #[ignore]
 fn cross_process_server()
 {
-    let mut channel_name: Option<String> = None;
     let data: &[u8] = b"1234567";
-
-    for arg in env::args() {
-        if arg.starts_with("channel_name:") {
-            let (_, name) = arg.split_at("channel_name:".len());
-            channel_name = Some(String::from(name));
-        }
-    }
-
+    let channel_name = get_channel_name_arg();
     if channel_name.is_none() {
         return;
     }
@@ -739,23 +745,15 @@ fn cross_process_fork() {
                (data, vec![], vec![]));
 }
 
-// Note! This test is actually used by the
-// cross_process_sender_transfer_spawn() test below.  Running it by
-// itself is meaningless.
+// Note! This test is actually used by the cross_process_sender_transfer_spawn() test
+// below as a second process.  Running it by itself is meaningless, but
+// passes.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
 #[test]
 #[ignore]
 fn cross_process_sender_transfer_server()
 {
-    let mut channel_name: Option<String> = None;
-
-    for arg in env::args() {
-        if arg.starts_with("channel_name:") {
-            let (_, name) = arg.split_at("channel_name:".len());
-            channel_name = Some(String::from(name));
-        }
-    }
-
+    let channel_name = get_channel_name_arg();
     if channel_name.is_none() {
         return;
     }
@@ -787,7 +785,7 @@ fn cross_process_sender_transfer_spawn() {
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let sub_tx = received_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
@@ -817,7 +815,7 @@ fn cross_process_sender_transfer_fork() {
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let sub_tx = received_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
@@ -1000,24 +998,15 @@ mod sync_test {
 }
 
 // Note! This test is actually used by the
-// cross_process_sender_transfer_spawn() test below.  Running it by
-// itself is meaningless.
+// cross_process_two_step_transfer_spawn() test below.  Running it by
+// itself is meaningless, but it passes if run this way.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
-#[cfg_attr(target_os = "windows", should_panic(expected = "received handles intended for process"))]
 #[test]
 #[ignore]
 fn cross_process_two_step_transfer_server()
 {
     let cookie: &[u8] = b"cookie";
-    let mut channel_name: Option<String> = None;
-
-    for arg in env::args() {
-        if arg.starts_with("channel_name:") {
-            let (_, name) = arg.split_at("channel_name:".len());
-            channel_name = Some(String::from(name));
-        }
-    }
-
+    let channel_name = get_channel_name_arg();
     if channel_name.is_none() {
         return;
     }
@@ -1034,12 +1023,12 @@ fn cross_process_two_step_transfer_server()
     // get two_rx from the other process
     let (_, mut received_channels, _) = sub_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let two_rx = received_channels.pop().unwrap().to_receiver();
+    let two_rx = received_channels[0].to_receiver();
 
     // get one_rx from two_rx's buffer
     let (_, mut received_channels, _) = two_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let one_rx = received_channels.pop().unwrap().to_receiver();
+    let one_rx = received_channels[0].to_receiver();
 
     // get a cookie from one_rx
     let (mut data, _, _) = one_rx.recv().unwrap();
@@ -1053,8 +1042,11 @@ fn cross_process_two_step_transfer_server()
     unsafe { libc::exit(0); }
 }
 
+// This test panics on Windows, because the other process will panic
+// when it detects that it receives handles that are intended for another
+// process.  It's marked as ignore/known-fail on Windows for this reason.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
-#[cfg_attr(target_os = "windows", should_panic(expected = "ChannelClosed"))]
+#[cfg_attr(target_os = "windows", ignore)]
 #[test]
 fn cross_process_two_step_transfer_spawn() {
     let cookie: &[u8] = b"cookie";
@@ -1066,7 +1058,7 @@ fn cross_process_two_step_transfer_spawn() {
 
     // create channel 2
     let (two_tx, two_rx) = platform::channel().unwrap();
-    // put channel 1's rx channel in channel 2's pipe
+    // put channel 1's rx end in channel 2's pipe
     two_tx.send(&[], vec![OsIpcChannel::Receiver(one_rx)], vec![]).unwrap();
 
     // create a one-shot server, and spawn another process
@@ -1084,9 +1076,10 @@ fn cross_process_two_step_transfer_spawn() {
     // The other process will have sent us a transmit channel in received channels
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let sub_tx = received_channels[0].to_sender();
 
-    // We use the transmit portion to send channel 2's rx to the other process
+    // Send the outer payload channel, so the server can use it to
+    // retrive the inner payload and the cookie
     sub_tx.send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![]).unwrap();
 
     // Then we wait for the cookie to make its way back to us
