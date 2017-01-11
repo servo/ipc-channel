@@ -29,13 +29,6 @@ impl Incrementor {
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
 mod unix;
-
-#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
-mod macos;
-
-#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
-mod inprocess;
-
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
 mod os {
@@ -43,10 +36,14 @@ mod os {
 }
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
+mod macos;
+#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
 mod os {
     pub use super::macos::*;
 }
 
+#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
+mod inprocess;
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
 mod os {
     pub use super::inprocess::*;
