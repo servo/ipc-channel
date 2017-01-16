@@ -8,21 +8,22 @@
 // except according to those terms.
 
 #[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
-struct Incrementor {
-    last_value: u64,
-}
-
-#[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
-impl Incrementor {
-    fn new() -> Incrementor {
-        Incrementor {
-            last_value: 0
-        }
+mod incrementor {
+    pub struct Incrementor {
+        last_value: u64,
     }
 
-    fn increment(&mut self) -> u64 {
-        self.last_value += 1;
-        self.last_value
+    impl Incrementor {
+        pub fn new() -> Incrementor {
+            Incrementor {
+                last_value: 0
+            }
+        }
+
+        pub fn increment(&mut self) -> u64 {
+            self.last_value += 1;
+            self.last_value
+        }
     }
 }
 
