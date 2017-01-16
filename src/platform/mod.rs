@@ -7,7 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
 mod incrementor {
     pub struct Incrementor {
         last_value: u64,
