@@ -7,35 +7,46 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-mod os {
-    #[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
-    struct Incrementor {
+mod incrementor {
+    pub struct Incrementor {
         last_value: u64,
     }
 
-    #[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
     impl Incrementor {
-        fn new() -> Incrementor {
+        pub fn new() -> Incrementor {
             Incrementor {
                 last_value: 0
             }
         }
 
-        fn increment(&mut self) -> u64 {
+        pub fn increment(&mut self) -> u64 {
             self.last_value += 1;
             self.last_value
         }
     }
+}
 
-    #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                    target_os = "freebsd")))]
-    include!("unix/mod.rs");
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "freebsd")))]
+mod unix;
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "freebsd")))]
+mod os {
+    pub use super::unix::*;
+}
 
-    #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
-    include!("macos/mod.rs");
+#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
+mod macos;
+#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
+mod os {
+    pub use super::macos::*;
+}
 
-    #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
-    include!("inprocess/mod.rs");
+#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
+mod inprocess;
+#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
+mod os {
+    pub use super::inprocess::*;
 }
 
 pub use self::os::{OsIpcChannel, OsIpcOneShotServer, OsIpcReceiver, OsIpcReceiverSet};

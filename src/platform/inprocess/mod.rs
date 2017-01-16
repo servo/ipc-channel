@@ -19,8 +19,9 @@ use std::cmp::{PartialEq};
 use std::ops::Deref;
 use std::mem;
 use std::usize;
-
 use uuid::Uuid;
+
+use super::incrementor::Incrementor;
 
 #[derive(Clone)]
 struct ServerRecord {
