@@ -38,13 +38,23 @@ mod inprocess;
 
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
-pub use self::unix::*;
+mod os {
+    pub use super::unix::*;
+}
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
-pub use self::macos::*;
+mod os {
+    pub use super::macos::*;
+}
 
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
-pub use self::inprocess::*;
+mod os {
+    pub use super::inprocess::*;
+}
+
+pub use self::os::{OsIpcChannel, OsIpcOneShotServer, OsIpcReceiver, OsIpcReceiverSet};
+pub use self::os::{OsIpcSelectionResult, OsIpcSender, OsIpcSharedMemory};
+pub use self::os::{OsOpaqueIpcChannel, channel};
 
 #[cfg(test)]
 mod test;
