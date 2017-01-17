@@ -354,12 +354,14 @@ impl OpaqueIpcMessage {
                 let mut data = &*self.data;
                 let mut deserializer = bincode::serde::Deserializer::new(&mut data,
                                                                          SizeLimit::Infinite);
-                let result = try!(Deserialize::deserialize(&mut deserializer));
+                let result = Deserialize::deserialize(&mut deserializer);
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_shared_memory_regions);
                 mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_channels);
-                Ok(result)
+                /* Error check comes after doing cleanup,
+                 * since we need the cleanup both in the success and the error cases. */
+                Ok(result?)
             })
         })
     }
