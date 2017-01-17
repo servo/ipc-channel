@@ -162,9 +162,7 @@ impl<T> IpcSender<T> where T: Serialize {
                         &mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
                         old_os_ipc_shared_memory_regions);
                 };
-                self.os_sender.send(&bytes[..],
-                                    os_ipc_channels,
-                                    os_ipc_shared_memory_regions).map_err(|e| SerializeError::from(e))
+                Ok(self.os_sender.send(&bytes[..], os_ipc_channels, os_ipc_shared_memory_regions)?)
             })
         })
     }
