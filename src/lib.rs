@@ -29,7 +29,6 @@ extern crate fnv;
 
 pub mod ipc;
 pub mod platform;
-mod refcell;
 pub mod router;
 
 #[cfg(test)]
