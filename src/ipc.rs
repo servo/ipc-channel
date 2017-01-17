@@ -11,7 +11,7 @@ use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender}
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
 use bincode::{self, SizeLimit};
-use bincode::serde::DeserializeError;
+use bincode::serde::{DeserializeError, SerializeError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -140,7 +140,7 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
-    pub fn send(&self, data: T) -> Result<(),Error> {
+    pub fn send(&self, data: T) -> Result<(),SerializeError> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
@@ -154,7 +154,7 @@ impl<T> IpcSender<T> where T: Serialize {
                 let os_ipc_channels;
                 {
                     let mut serializer = bincode::serde::Serializer::new(&mut bytes);
-                    data.serialize(&mut serializer).unwrap();
+                    data.serialize(&mut serializer)?;
                     os_ipc_channels =
                         mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(),
                                      old_os_ipc_channels);
@@ -164,7 +164,7 @@ impl<T> IpcSender<T> where T: Serialize {
                 };
                 self.os_sender.send(&bytes[..],
                                     os_ipc_channels,
-                                    os_ipc_shared_memory_regions).map_err(|e| Error::from(e))
+                                    os_ipc_shared_memory_regions).map_err(|e| SerializeError::from(e))
             })
         })
     }

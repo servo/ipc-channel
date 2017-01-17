@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bincode::serde::DeserializeError;
+use bincode::serde::{DeserializeError, SerializeError};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;
@@ -389,6 +389,12 @@ impl MpscError {
 impl From<MpscError> for DeserializeError {
     fn from(mpsc_error: MpscError) -> DeserializeError {
         DeserializeError::IoError(mpsc_error.into())
+    }
+}
+
+impl From<MpscError> for SerializeError {
+    fn from(mpsc_error: MpscError) -> SerializeError {
+        SerializeError::IoError(mpsc_error.into())
     }
 }
 
