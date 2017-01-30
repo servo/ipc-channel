@@ -11,12 +11,12 @@ use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender}
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
 use bincode::{self, SizeLimit};
-use bincode::serde::DeserializeError;
+use bincode::serde::{DeserializeError, SerializeError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use refcell::{RefCell, BorrowState};
+use std::cell::RefCell;
 use std::cmp::min;
 use std::fmt::{self, Debug, Formatter};
-use std::io::{Error, ErrorKind};
+use std::io::Error;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -140,19 +140,11 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
-    pub fn send(&self, data: T) -> Result<(),Error> {
+    pub fn send(&self, data: T) -> Result<(),SerializeError> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                     |os_ipc_shared_memory_regions_for_serialization| {
-                if os_ipc_channels_for_serialization.borrow_state() != BorrowState::Unused {
-                    return Err(recursive_io_error());
-                }
-
-                if os_ipc_shared_memory_regions_for_serialization.borrow_state() != BorrowState::Unused {
-                    return Err(recursive_io_error());
-                }
-
                 let old_os_ipc_channels =
                     mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(), Vec::new());
                 let old_os_ipc_shared_memory_regions =
@@ -162,7 +154,7 @@ impl<T> IpcSender<T> where T: Serialize {
                 let os_ipc_channels;
                 {
                     let mut serializer = bincode::serde::Serializer::new(&mut bytes);
-                    data.serialize(&mut serializer).unwrap();
+                    data.serialize(&mut serializer)?;
                     os_ipc_channels =
                         mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(),
                                      old_os_ipc_channels);
@@ -170,9 +162,7 @@ impl<T> IpcSender<T> where T: Serialize {
                         &mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
                         old_os_ipc_shared_memory_regions);
                 };
-                self.os_sender.send(&bytes[..],
-                                    os_ipc_channels,
-                                    os_ipc_shared_memory_regions).map_err(|e| Error::from(e))
+                Ok(self.os_sender.send(&bytes[..], os_ipc_channels, os_ipc_shared_memory_regions)?)
             })
         })
     }
@@ -357,14 +347,6 @@ impl OpaqueIpcMessage {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
                     |os_ipc_shared_memory_regions_for_deserialization| {
-               if os_ipc_channels_for_deserialization.borrow_state() != BorrowState::Unused {
-                    return Err(DeserializeError::IoError(recursive_io_error()));
-                }
-
-                if os_ipc_shared_memory_regions_for_deserialization.borrow_state() != BorrowState::Unused {
-                    return Err(DeserializeError::IoError(recursive_io_error()));
-                }
-
                 mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_channels);
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
@@ -372,12 +354,14 @@ impl OpaqueIpcMessage {
                 let mut data = &*self.data;
                 let mut deserializer = bincode::serde::Deserializer::new(&mut data,
                                                                          SizeLimit::Infinite);
-                let result = try!(Deserialize::deserialize(&mut deserializer));
+                let result = Deserialize::deserialize(&mut deserializer);
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_shared_memory_regions);
                 mem::swap(&mut *os_ipc_channels_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_channels);
-                Ok(result)
+                /* Error check comes after doing cleanup,
+                 * since we need the cleanup both in the success and the error cases. */
+                Ok(result?)
             })
         })
     }
@@ -549,8 +533,3 @@ fn deserialize_os_ipc_sender<D>(deserializer: &mut D)
         Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
     })
 }
-
-fn recursive_io_error() -> Error {
-    Error::new(ErrorKind::Other, "recursive IPC channel use during serialization")
-}
-

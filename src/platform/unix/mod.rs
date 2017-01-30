@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use fnv::FnvHasher;
-use bincode::serde::DeserializeError;
+use bincode::serde::{DeserializeError, SerializeError};
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, off_t, recvmsg, sendmsg};
@@ -758,6 +758,12 @@ impl UnixError {
 impl From<UnixError> for DeserializeError {
     fn from(unix_error: UnixError) -> DeserializeError {
         DeserializeError::IoError(unix_error.into())
+    }
+}
+
+impl From<UnixError> for SerializeError {
+    fn from(unix_error: UnixError) -> SerializeError {
+        SerializeError::IoError(unix_error.into())
     }
 }
 
