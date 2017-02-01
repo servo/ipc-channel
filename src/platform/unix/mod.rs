@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use {DeserializeError, SerializeError};
+use bincode;
 use fnv::FnvHasher;
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
@@ -766,15 +766,9 @@ impl UnixError {
     }
 }
 
-impl From<UnixError> for DeserializeError {
-    fn from(unix_error: UnixError) -> DeserializeError {
-        DeserializeError::IoError(unix_error.into())
-    }
-}
-
-impl From<UnixError> for SerializeError {
-    fn from(unix_error: UnixError) -> SerializeError {
-        SerializeError::IoError(unix_error.into())
+impl From<UnixError> for bincode::Error {
+    fn from(unix_error: UnixError) -> Self {
+        Error::from(unix_error).into()
     }
 }
 
