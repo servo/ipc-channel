@@ -225,7 +225,7 @@ impl OsIpcSender {
             fds.push(channel.fd());
         }
         for shared_memory_region in shared_memory_regions.iter() {
-            fds.push(shared_memory_region.fd);
+            fds.push(shared_memory_region.store.fd());
         }
 
         // `len` is the total length of the message.
@@ -662,10 +662,69 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
     Ok(())
 }
 
+struct BackingStore {
+    fd: c_int
+}
+
+impl BackingStore {
+    pub fn new(length: usize) -> BackingStore {
+        unsafe {
+            let string = CString::new(TEMP_FILE_TEMPLATE).unwrap();
+            let string_buffer = strdup(string.as_ptr());
+            let fd = mkstemp(string_buffer);
+            assert!(fd >= 0);
+            assert!(maybe_unlink(string_buffer) == 0);
+            libc::free(string_buffer as *mut c_void);
+            assert!(libc::ftruncate(fd, length as off_t) == 0);
+            Self::from_fd(fd)
+        }
+    }
+
+    pub fn from_fd(fd: c_int) -> BackingStore {
+        BackingStore {
+            fd: fd,
+        }
+    }
+
+    pub fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    pub unsafe fn map_file(&self, length: Option<size_t>) -> (*mut u8, size_t) {
+        let length = length.unwrap_or_else(|| {
+            let mut st = mem::uninitialized();
+            assert!(libc::fstat(self.fd, &mut st) == 0);
+            st.st_size as size_t
+        });
+        if length == 0 {
+            // This will cause `mmap` to fail, so handle it explicitly.
+            return (ptr::null_mut(), length)
+        }
+        let address = libc::mmap(ptr::null_mut(),
+                                 length,
+                                 PROT_READ | PROT_WRITE,
+                                 MAP_SHARED,
+                                 self.fd,
+                                 0);
+        assert!(address != ptr::null_mut());
+        assert!(address != MAP_FAILED);
+        (address as *mut u8, length)
+    }
+}
+
+impl Drop for BackingStore {
+    fn drop(&mut self) {
+        unsafe {
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
+        }
+    }
+}
+
 pub struct OsIpcSharedMemory {
     ptr: *mut u8,
     length: usize,
-    fd: c_int,
+    store: BackingStore
 }
 
 unsafe impl Send for OsIpcSharedMemory {}
@@ -678,8 +737,6 @@ impl Drop for OsIpcSharedMemory {
                 let result = libc::munmap(self.ptr as *mut c_void, self.length);
                 assert!(thread::panicking() || result == 0);
             }
-            let result = libc::close(self.fd);
-            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -687,9 +744,9 @@ impl Drop for OsIpcSharedMemory {
 impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
         unsafe {
-            let new_fd = libc::dup(self.fd);
-            let (address, _) = map_file(new_fd, Some(self.length));
-            OsIpcSharedMemory::from_raw_parts(address, self.length, new_fd)
+            let store = BackingStore::from_fd(libc::dup(self.store.fd()));
+            let (address, _) = store.map_file(Some(self.length));
+            OsIpcSharedMemory::from_raw_parts(address, self.length, store)
         }
     }
 }
@@ -718,36 +775,38 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
-    unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> OsIpcSharedMemory {
+    unsafe fn from_raw_parts(ptr: *mut u8, length: usize,
+                             store: BackingStore) -> OsIpcSharedMemory {
         OsIpcSharedMemory {
             ptr: ptr,
             length: length,
-            fd: fd,
+            store: store,
         }
     }
 
     unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemory {
-        let (ptr, length) = map_file(fd, None);
-        OsIpcSharedMemory::from_raw_parts(ptr, length, fd)
+        let store = BackingStore::from_fd(fd);
+        let (ptr, length) = store.map_file(None);
+        OsIpcSharedMemory::from_raw_parts(ptr, length, store)
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
         unsafe {
-            let fd = create_memory_backing_store(length);
-            let (address, _) = map_file(fd, Some(length));
+            let store = BackingStore::new(length);
+            let (address, _) = store.map_file(Some(length));
             for element in slice::from_raw_parts_mut(address, length) {
                 *element = byte;
             }
-            OsIpcSharedMemory::from_raw_parts(address, length, fd)
+            OsIpcSharedMemory::from_raw_parts(address, length, store)
         }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> OsIpcSharedMemory {
         unsafe {
-            let fd = create_memory_backing_store(bytes.len());
-            let (address, _) = map_file(fd, Some(bytes.len()));
+            let store = BackingStore::new(bytes.len());
+            let (address, _) = store.map_file(Some(bytes.len()));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
-            OsIpcSharedMemory::from_raw_parts(address, bytes.len(), fd)
+            OsIpcSharedMemory::from_raw_parts(address, bytes.len(), store)
         }
     }
 }
@@ -898,38 +957,6 @@ fn maybe_unlink(_: *const c_char) -> c_int {
 #[cfg(not(target_os="android"))]
 unsafe fn maybe_unlink(c: *const c_char) -> c_int {
     libc::unlink(c)
-}
-
-unsafe fn create_memory_backing_store(length: usize) -> c_int {
-    let string = CString::new(TEMP_FILE_TEMPLATE).unwrap();
-    let string_buffer = strdup(string.as_ptr());
-    let fd = mkstemp(string_buffer);
-    assert!(fd >= 0);
-    assert!(maybe_unlink(string_buffer) == 0);
-    libc::free(string_buffer as *mut c_void);
-    assert!(libc::ftruncate(fd, length as off_t) == 0);
-    fd
-}
-
-unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
-    let length = length.unwrap_or_else(|| {
-        let mut st = mem::uninitialized();
-        assert!(libc::fstat(fd, &mut st) == 0);
-        st.st_size as size_t
-    });
-    if length == 0 {
-        // This will cause `mmap` to fail, so handle it explicitly.
-        return (ptr::null_mut(), length)
-    }
-    let address = libc::mmap(ptr::null_mut(),
-                             length,
-                             PROT_READ | PROT_WRITE,
-                             MAP_SHARED,
-                             fd,
-                             0);
-    assert!(address != ptr::null_mut());
-    assert!(address != MAP_FAILED);
-    (address as *mut u8, length)
 }
 
 struct UnixCmsg {
