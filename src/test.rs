@@ -30,7 +30,10 @@ use std::io::Error;
 pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
     match libc::fork() {
         -1 => panic!("Fork failed: {}", Error::last_os_error()),
-        0 => { child_func(); unreachable!() },
+        0 => {
+            child_func();
+            libc::exit(0);
+        },
         pid => pid,
     }
 }
@@ -148,7 +151,6 @@ fn cross_process_embedded_senders() {
         rx1.recv().unwrap();
         let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
         tx2.send(person.clone()).unwrap();
-        libc::exit(0);
     })};
     let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
     tx1.send(person.clone()).unwrap();
