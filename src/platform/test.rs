@@ -14,8 +14,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
-use libc;
 use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
@@ -634,7 +632,6 @@ fn cross_process() {
     let child_pid = unsafe { fork(|| {
         let tx = OsIpcSender::connect(name).unwrap();
         tx.send(data, vec![], vec![]).unwrap();
-        libc::exit(0);
     })};
 
     let (_, mut received_data, received_channels, received_shared_memory_regions) =
@@ -658,7 +655,6 @@ fn cross_process_sender_transfer() {
         sub_rx.recv().unwrap();
         let data: &[u8] = b"bar";
         super_tx.send(data, vec![], vec![]).unwrap();
-        libc::exit(0);
     })};
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
