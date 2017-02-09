@@ -577,29 +577,32 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                                  timeout,
                                  MACH_PORT_NULL) {
             MACH_RCV_TOO_LARGE => {
-                // the actual size gets written into msgh_size by the kernel
-                let max_trailer_size = mem::size_of::<mach_sys::mach_msg_max_trailer_t>() as mach_sys::mach_msg_size_t;
-                let actual_size = (*message).header.msgh_size + max_trailer_size;
-                allocated_buffer = Some(libc::malloc(actual_size as size_t));
-                setup_receive_buffer(slice::from_raw_parts_mut(
-                                        allocated_buffer.unwrap() as *mut u8,
-                                        actual_size as usize),
-                                     port);
-                message = allocated_buffer.unwrap() as *mut Message;
-                match mach_sys::mach_msg(message as *mut _,
-                                         flags,
-                                         0,
-                                         actual_size,
-                                         port,
-                                         timeout,
-                                         MACH_PORT_NULL) {
-                    MACH_MSG_SUCCESS => {},
-                    MACH_RCV_TOO_LARGE => {
-                        panic!("message was bigger than we were told");
-                    }
-                    os_result => {
-                        libc::free(allocated_buffer.unwrap() as *mut _);
-                        return Err(MachError(os_result))
+                loop {
+                    // the actual size gets written into msgh_size by the kernel
+                    let max_trailer_size = mem::size_of::<mach_sys::mach_msg_max_trailer_t>() as mach_sys::mach_msg_size_t;
+                    let actual_size = (*message).header.msgh_size + max_trailer_size;
+                    allocated_buffer = Some(libc::malloc(actual_size as size_t));
+                    setup_receive_buffer(slice::from_raw_parts_mut(
+                                            allocated_buffer.unwrap() as *mut u8,
+                                            actual_size as usize),
+                                         port);
+                    message = allocated_buffer.unwrap() as *mut Message;
+                    match mach_sys::mach_msg(message as *mut _,
+                                             flags,
+                                             0,
+                                             actual_size,
+                                             port,
+                                             timeout,
+                                             MACH_PORT_NULL) {
+                        MACH_MSG_SUCCESS => break,
+                        MACH_RCV_TOO_LARGE => {
+                            libc::free(allocated_buffer.unwrap() as *mut _);
+                            continue;
+                        }
+                        os_result => {
+                            libc::free(allocated_buffer.unwrap() as *mut _);
+                            return Err(MachError(os_result))
+                        }
                     }
                 }
             }
