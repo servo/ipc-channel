@@ -7,8 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc::{self, IpcReceiver, IpcReceiverSet, IpcSender, IpcSharedMemory};
-use ipc::{OpaqueIpcSender};
+use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use ipc::IpcReceiver;
 use router::ROUTER;
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -53,10 +54,6 @@ impl Wait for libc::pid_t {
 }
 
 type Person = (String, u32);
-type PersonAndSender = (Person, IpcSender<Person>);
-type PersonAndOpaqueSender = (Person, OpaqueIpcSender);
-type PersonAndReceiver = (Person, IpcReceiver<Person>);
-type PersonAndSharedMemory = (Person, IpcSharedMemory);
 
 #[test]
 fn simple() {
