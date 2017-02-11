@@ -16,6 +16,8 @@ use std::thread;
 
 use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+use libc::{kill, SIGSTOP, SIGCONT};
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
 use test::{fork, Wait};
 
 #[test]
@@ -409,6 +411,44 @@ fn receiver_set() {
             }
         }
     }
+}
+
+#[test]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+fn receiver_set_eintr() {
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let child_pid = unsafe {
+        fork(|| {
+            let (tx0, rx0) = platform::channel().unwrap();
+            let mut rx_set = OsIpcReceiverSet::new().unwrap();
+            let rx_id = rx_set.add(rx0).unwrap();
+            // Let the parent know we're ready
+            let tx1 = OsIpcSender::connect(name).unwrap();
+            tx1.send(b" Ready! ", vec![OsIpcChannel::Sender(tx0)], vec![]).unwrap();
+            // Send the result of the select back to the parent
+            let result = rx_set.select().unwrap();
+            let mut result_iter = result.into_iter();
+            let (id, data, _, _) = result_iter.next().unwrap().unwrap();
+            assert_eq!(rx_id, id);
+            assert_eq!(b"Test".as_ref(), &*data);
+            assert!(result_iter.next().is_none());
+            tx1.send(b"Success!", vec![], vec![]).unwrap();
+        })
+    };
+    // Wait until the child is ready
+    let (server, res, mut channels, _) = server.accept().unwrap();
+    assert!(res == b" Ready! ");
+    let tx1 = channels.first_mut().unwrap().to_sender();
+    unsafe {
+        kill(child_pid, SIGSTOP);
+        thread::sleep(Duration::from_millis(42));
+        kill(child_pid, SIGCONT);
+    }
+    // The interrupt shouldn't affect the following send
+    tx1.send(b"Test", vec![], vec![]).unwrap();
+    let (res, _, _) = server.recv().unwrap();
+    assert!(res == b"Success!");
+    child_pid.wait();
 }
 
 #[test]

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -472,10 +472,19 @@ impl OsIpcReceiverSet {
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,UnixError> {
         let mut selection_results = Vec::new();
-        match self.poll.poll(&mut self.events, None) {
-            Ok(sz) if sz > 0 => {},
-            _ => { return Err(UnixError::last()); }
-        };
+        let mut num_events = 0;
+        while num_events == 0 {
+            match self.poll.poll(&mut self.events, None) {
+                Ok(sz) => {
+                    num_events = sz;
+                },
+                Err(ref e) => {
+                    if e.kind() != ErrorKind::Interrupted {
+                        return Err(UnixError::last());
+                    }
+                }
+            }
+        }
 
         for evt in self.events.iter() {
             let evt_token = evt.token();
