@@ -947,6 +947,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
+#[cfg(not(all(target_os="linux", feature="memfd")))]
 fn create_shmem(name: CString, length: usize) -> c_int {
     unsafe {
         // NB: the FreeBSD man page for shm_unlink states that it requires
@@ -956,6 +957,16 @@ fn create_shmem(name: CString, length: usize) -> c_int {
                                 0o600);
         assert!(fd >= 0);
         assert!(libc::shm_unlink(name.as_ptr()) == 0);
+        assert!(libc::ftruncate(fd, length as off_t) == 0);
+        fd
+    }
+}
+
+#[cfg(all(feature="memfd", target_os="linux"))]
+fn create_shmem(name: CString, length: usize) -> c_int {
+    unsafe {
+        let fd = memfd_create(name.as_ptr(), 0);
+        assert!(fd >= 0);
         assert!(libc::ftruncate(fd, length as off_t) == 0);
         fd
     }
@@ -1035,6 +1046,11 @@ fn is_socket(fd: c_int) -> bool {
 }
 
 // FFI stuff follows:
+
+#[cfg(all(feature="memfd", target_os="linux"))]
+unsafe fn memfd_create(name: *const c_char, flags: usize) -> c_int {
+    syscall!(MEMFD_CREATE, name, flags) as c_int
+}
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {

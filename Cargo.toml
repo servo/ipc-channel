@@ -8,6 +8,7 @@ repository = "https://github.com/servo/ipc-channel"
 
 [features]
 force-inprocess = []
+memfd = ["syscall"]
 unstable = []
 
 [dependencies]
@@ -21,6 +22,8 @@ fnv = "1.0.3"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 mio = "0.6.1"
+
+syscall = { version = "0.2.1", optional = true }
 
 [dev-dependencies]
 crossbeam = "0.2"

@@ -26,6 +26,11 @@ extern crate mio;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
 extern crate fnv;
+#[cfg(all(feature = "memfd", not(feature = "force-inprocess"),
+          target_os="linux"))]
+#[macro_use]
+extern crate syscall;
+
 
 pub mod ipc;
 pub mod platform;
