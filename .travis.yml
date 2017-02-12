@@ -1,15 +1,23 @@
 language: rust
 sudo: false
-rust:
-  - nightly
 
-os:
-  - linux
-  - osx
-
-env:
-  - FEATURES="unstable"
-  - FEATURES="unstable force-inprocess"
+matrix:
+  include:
+    - os: linux
+      rust: nightly
+      env: FEATURES="unstable"
+    - os: linux
+      rust: nightly
+      env: FEATURES="unstable force-inprocess"
+    - os: linux
+      rust: nightly
+      env: FEATURES="unstable memfd"
+    - os: osx
+      rust: nightly
+      env: FEATURES="unstable"
+    - os: osx
+      rust: nightly
+      env: FEATURES="unstable force-inprocess"
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
