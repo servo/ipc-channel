@@ -825,12 +825,12 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         let bytes_read = try!(cmsg.recv(fd, blocking_mode));
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
-        let cmsg_fds = cmsg.cmsg_buffer.offset(1) as *const c_int;
+        let cmsg_fds = CMSG_DATA(cmsg.cmsg_buffer) as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
         let channel_length = if cmsg_length == 0 {
             0
         } else {
-            (cmsg.cmsg_len() - mem::size_of::<cmsghdr>()) / mem::size_of::<c_int>()
+            (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
         };
         for index in 0..channel_length {
             let fd = *cmsg_fds.offset(index as isize);
@@ -953,8 +953,7 @@ impl Drop for UnixCmsg {
 
 impl UnixCmsg {
     unsafe fn new(iovec: &mut [iovec]) -> UnixCmsg {
-        let cmsg_length = mem::size_of::<cmsghdr>() + (MAX_FDS_IN_CMSG as usize) *
-            mem::size_of::<c_int>();
+        let cmsg_length = CMSG_SPACE(MAX_FDS_IN_CMSG as usize * mem::size_of::<c_int>());
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
         UnixCmsg {
             cmsg_buffer: cmsg_buffer,
