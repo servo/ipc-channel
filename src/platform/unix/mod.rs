@@ -509,7 +509,7 @@ impl OsIpcReceiverSet {
                     }
                 },
                 (true, None) => {
-                    panic!("Readable event for unknown token: {:?}", evt_token)
+                    debug!("Readable event for unknown token: {:?}", evt_token)
                 },
                 (false, _) => {
                     panic!("Received an event that was not readable for token: {:?}", evt_token)
