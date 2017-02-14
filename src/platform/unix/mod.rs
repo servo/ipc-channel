@@ -881,7 +881,13 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         };
 
         if result == 0 {
-            return Err(UnixError(libc::ECONNRESET))
+            // If we stop receiving data before we got the expected amount,
+            // something must have gone seriously wrong.
+            //
+            // EIO doesn't seem like a really good choice --
+            // but probably about the best we can do
+            // without completely overhauling the Error types used here...
+            return Err(UnixError(libc::EIO))
         } else if result < 0 {
             return Err(UnixError::last())
         };
