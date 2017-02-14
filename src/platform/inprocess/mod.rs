@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bincode::serde::{DeserializeError, SerializeError};
+use {DeserializeError, SerializeError};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;

@@ -10,8 +10,8 @@
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
+use {DeserializeError, SerializeError};
 use bincode::{self, SizeLimit};
-use bincode::serde::{DeserializeError, SerializeError};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
