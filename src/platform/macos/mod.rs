@@ -12,7 +12,7 @@ use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 
-use bincode::serde::{DeserializeError, SerializeError};
+use {DeserializeError, SerializeError};
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
