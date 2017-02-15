@@ -25,7 +25,7 @@ extern crate uuid;
 extern crate mio;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
-extern crate fnv;
+extern crate slab;
 
 pub mod ipc;
 pub mod platform;

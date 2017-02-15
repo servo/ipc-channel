@@ -17,10 +17,10 @@ libc = "0.2.12"
 rand = "0.3"
 serde = "0.8"
 uuid = {version = "0.3", features = ["v4"]}
-fnv = "1.0.3"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 mio = "0.6.1"
+slab = "0.3.0"
 
 [dev-dependencies]
 crossbeam = "0.2"

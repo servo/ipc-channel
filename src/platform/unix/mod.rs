@@ -8,17 +8,14 @@
 // except according to those terms.
 
 use {DeserializeError, SerializeError};
-use fnv::FnvHasher;
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mkstemp, mode_t, msghdr, off_t, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cell::Cell;
 use std::cmp;
-use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fmt::{self, Debug, Formatter};
-use std::hash::BuildHasherDefault;
 use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem;
@@ -29,6 +26,7 @@ use std::sync::Arc;
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
+use slab::Slab;
 
 use super::incrementor::Incrementor;
 
@@ -427,13 +425,13 @@ impl OsIpcChannel {
 pub struct OsIpcReceiverSet {
     incrementor: Incrementor,
     poll: Poll,
-    pollfds: HashMap<Token, PollEntry, BuildHasherDefault<FnvHasher>>,
+    pollfds: Slab<PollEntry, Token>,
     events: Events
 }
 
 impl Drop for OsIpcReceiverSet {
     fn drop(&mut self) {
-        for &PollEntry { id: _, fd } in self.pollfds.values() {
+        for &PollEntry { id: _, fd } in self.pollfds.iter() {
             let result = unsafe {
                 libc::close(fd)
             };
@@ -444,11 +442,10 @@ impl Drop for OsIpcReceiverSet {
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,UnixError> {
-        let fnv = BuildHasherDefault::<FnvHasher>::default();
         Ok(OsIpcReceiverSet {
             incrementor: Incrementor::new(),
             poll: try!(Poll::new()),
-            pollfds: HashMap::with_hasher(fnv),
+            pollfds: Slab::with_capacity(10),
             events: Events::with_capacity(10)
         })
     }
@@ -457,17 +454,27 @@ impl OsIpcReceiverSet {
         let last_index = self.incrementor.increment();
         let fd = receiver.consume_fd();
         let io = EventedFd(&fd);
-        let fd_token = Token(fd as usize);
         let poll_entry = PollEntry {
             id: last_index,
             fd: fd
         };
-        try!(self.poll.register(&io,
-                                fd_token,
-                                Ready::readable(),
-                                PollOpt::level()));
-        self.pollfds.insert(fd_token, poll_entry);
-        Ok(last_index)
+        if self.pollfds.has_available() {
+            let len = self.pollfds.len();
+            self.pollfds.reserve_exact(len << 1);
+        }
+        let token = match self.pollfds.insert(poll_entry) {
+            Ok(token) => token,
+            Err(_) => {
+                return Err(UnixError::last());
+            }
+        };
+        match self.poll.register(&io,
+                                 token,
+                                 Ready::readable(),
+                                 PollOpt::level()) {
+            Ok(_) => Ok(last_index),
+            Err(e) => Err(e.into())
+        }
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,UnixError> {
@@ -488,7 +495,7 @@ impl OsIpcReceiverSet {
 
         for evt in self.events.iter() {
             let evt_token = evt.token();
-            match (evt.kind().is_readable(), self.pollfds.get(&evt_token)) {
+            match (evt.kind().is_readable(), self.pollfds.get(evt_token)) {
                 (true, Some(&poll_entry)) => {
                     match recv(poll_entry.fd, BlockingMode::Blocking) {
                         Ok((data, channels, shared_memory_regions)) => {
@@ -499,7 +506,7 @@ impl OsIpcReceiverSet {
                                     shared_memory_regions));
                         }
                         Err(err) if err.channel_is_closed() => {
-                            self.pollfds.remove(&evt_token).unwrap();
+                            self.pollfds.remove(evt_token).unwrap();
                             unsafe {
                                 libc::close(poll_entry.fd);
                             }
