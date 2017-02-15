@@ -500,6 +500,7 @@ impl OsIpcReceiverSet {
                         }
                         Err(err) if err.channel_is_closed() => {
                             self.pollfds.remove(&evt_token).unwrap();
+                            self.poll.deregister(&EventedFd(&poll_entry.fd)).unwrap();
                             unsafe {
                                 libc::close(poll_entry.fd);
                             }
@@ -509,7 +510,8 @@ impl OsIpcReceiverSet {
                     }
                 },
                 (true, None) => {
-                    panic!("Readable event for unknown token: {:?}", evt_token)
+                    panic!("Readable event for unknown token: {:?}, kind: {:?}",
+                           evt_token, evt.kind());
                 },
                 (false, _) => {
                     panic!("Received an event that was not readable for token: {:?}", evt_token)
