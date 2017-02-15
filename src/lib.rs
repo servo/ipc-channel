@@ -16,6 +16,10 @@ extern crate lazy_static;
 
 extern crate bincode;
 extern crate libc;
+#[cfg_attr(all(not(feature = "force-inprocess"),
+           any(target_os = "linux",  target_os = "freebsd")),
+           macro_use)]
+extern crate log;
 extern crate rand;
 extern crate serde;
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
