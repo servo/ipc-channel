@@ -34,4 +34,4 @@ pub mod router;
 #[cfg(test)]
 mod test;
 
-pub use bincode::serde::{DeserializeError, SerializeError};
+pub use bincode::Error;

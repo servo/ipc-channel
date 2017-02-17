@@ -395,7 +395,7 @@ struct HasWeirdSerializer (Option<String>);
 thread_local! { static WEIRD_CHANNEL: RefCell<Option<IpcSender<HasWeirdSerializer>>> = RefCell::new(None) }
 
 impl Serialize for HasWeirdSerializer {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: Serializer
     {
         if self.0.is_some() {
@@ -406,7 +406,7 @@ impl Serialize for HasWeirdSerializer {
 }
 
 impl Deserialize for HasWeirdSerializer {
-    fn deserialize<D>(deserializer: &mut D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where D: Deserializer
     {
         Ok(HasWeirdSerializer(try!(Deserialize::deserialize(deserializer))))
