@@ -11,7 +11,7 @@ use bincode;
 use fnv::FnvHasher;
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
-use libc::{iovec, mkstemp, mode_t, msghdr, off_t, recvmsg, sendmsg};
+use libc::{iovec, mode_t, msghdr, off_t, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cell::Cell;
 use std::cmp;
@@ -26,6 +26,8 @@ use std::ops::Deref;
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::time::UNIX_EPOCH;
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
@@ -40,12 +42,6 @@ const SCM_RIGHTS: c_int = 0x01;
 // is not the size we are actually allowed to use...
 // Empirically, we have to deduct 32 bytes from that.
 const RESERVED_SIZE: usize = 32;
-
-#[cfg(target_os="android")]
-const TEMP_FILE_TEMPLATE: &'static str = "/sdcard/servo/ipc-channel-shared-memory.XXXXXX";
-
-#[cfg(not(target_os="android"))]
-const TEMP_FILE_TEMPLATE: &'static str = "/tmp/ipc-channel-shared-memory.XXXXXX";
 
 #[cfg(target_os = "linux")]
 type IovLen = usize;
@@ -71,6 +67,14 @@ lazy_static! {
         tx.get_system_sendbuf_size().expect("Failed to obtain maximum send size for socket")
     };
 }
+
+// The pid of the current process which is used to create unique IDs
+lazy_static! {
+    static ref PID: c_int = unsafe { libc::getpid() };
+}
+
+// A global count used to create unique IDs
+static SHM_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
     let mut results = [0, 0];
@@ -225,7 +229,7 @@ impl OsIpcSender {
             fds.push(channel.fd());
         }
         for shared_memory_region in shared_memory_regions.iter() {
-            fds.push(shared_memory_region.fd);
+            fds.push(shared_memory_region.store.fd());
         }
 
         // `len` is the total length of the message.
@@ -662,10 +666,67 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(),UnixError> {
     Ok(())
 }
 
+struct BackingStore {
+    fd: c_int
+}
+
+impl BackingStore {
+    pub fn new(length: usize) -> BackingStore {
+        let count = SHM_COUNT.fetch_add(1, Ordering::Relaxed);
+        let timestamp = UNIX_EPOCH.elapsed().unwrap();
+        let name = CString::new(format!("/ipc-channel-shared-memory.{}.{}.{}.{}",
+                                        count, *PID,
+                                        timestamp.as_secs(),
+                                        timestamp.subsec_nanos())).unwrap();
+        let fd = create_shmem(name, length);
+        Self::from_fd(fd)
+    }
+
+    pub fn from_fd(fd: c_int) -> BackingStore {
+        BackingStore {
+            fd: fd,
+        }
+    }
+
+    pub fn fd(&self) -> c_int {
+        self.fd
+    }
+
+    pub unsafe fn map_file(&self, length: Option<size_t>) -> (*mut u8, size_t) {
+        let length = length.unwrap_or_else(|| {
+            let mut st = mem::uninitialized();
+            assert!(libc::fstat(self.fd, &mut st) == 0);
+            st.st_size as size_t
+        });
+        if length == 0 {
+            // This will cause `mmap` to fail, so handle it explicitly.
+            return (ptr::null_mut(), length)
+        }
+        let address = libc::mmap(ptr::null_mut(),
+                                 length,
+                                 PROT_READ | PROT_WRITE,
+                                 MAP_SHARED,
+                                 self.fd,
+                                 0);
+        assert!(address != ptr::null_mut());
+        assert!(address != MAP_FAILED);
+        (address as *mut u8, length)
+    }
+}
+
+impl Drop for BackingStore {
+    fn drop(&mut self) {
+        unsafe {
+            let result = libc::close(self.fd);
+            assert!(thread::panicking() || result == 0);
+        }
+    }
+}
+
 pub struct OsIpcSharedMemory {
     ptr: *mut u8,
     length: usize,
-    fd: c_int,
+    store: BackingStore
 }
 
 unsafe impl Send for OsIpcSharedMemory {}
@@ -678,8 +739,6 @@ impl Drop for OsIpcSharedMemory {
                 let result = libc::munmap(self.ptr as *mut c_void, self.length);
                 assert!(thread::panicking() || result == 0);
             }
-            let result = libc::close(self.fd);
-            assert!(thread::panicking() || result == 0);
         }
     }
 }
@@ -687,9 +746,9 @@ impl Drop for OsIpcSharedMemory {
 impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
         unsafe {
-            let new_fd = libc::dup(self.fd);
-            let (address, _) = map_file(new_fd, Some(self.length));
-            OsIpcSharedMemory::from_raw_parts(address, self.length, new_fd)
+            let store = BackingStore::from_fd(libc::dup(self.store.fd()));
+            let (address, _) = store.map_file(Some(self.length));
+            OsIpcSharedMemory::from_raw_parts(address, self.length, store)
         }
     }
 }
@@ -718,36 +777,38 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
-    unsafe fn from_raw_parts(ptr: *mut u8, length: usize, fd: c_int) -> OsIpcSharedMemory {
+    unsafe fn from_raw_parts(ptr: *mut u8, length: usize,
+                             store: BackingStore) -> OsIpcSharedMemory {
         OsIpcSharedMemory {
             ptr: ptr,
             length: length,
-            fd: fd,
+            store: store,
         }
     }
 
     unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemory {
-        let (ptr, length) = map_file(fd, None);
-        OsIpcSharedMemory::from_raw_parts(ptr, length, fd)
+        let store = BackingStore::from_fd(fd);
+        let (ptr, length) = store.map_file(None);
+        OsIpcSharedMemory::from_raw_parts(ptr, length, store)
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
         unsafe {
-            let fd = create_memory_backing_store(length);
-            let (address, _) = map_file(fd, Some(length));
+            let store = BackingStore::new(length);
+            let (address, _) = store.map_file(Some(length));
             for element in slice::from_raw_parts_mut(address, length) {
                 *element = byte;
             }
-            OsIpcSharedMemory::from_raw_parts(address, length, fd)
+            OsIpcSharedMemory::from_raw_parts(address, length, store)
         }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> OsIpcSharedMemory {
         unsafe {
-            let fd = create_memory_backing_store(bytes.len());
-            let (address, _) = map_file(fd, Some(bytes.len()));
+            let store = BackingStore::new(bytes.len());
+            let (address, _) = store.map_file(Some(bytes.len()));
             ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
-            OsIpcSharedMemory::from_raw_parts(address, bytes.len(), fd)
+            OsIpcSharedMemory::from_raw_parts(address, bytes.len(), store)
         }
     }
 }
@@ -886,50 +947,29 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
-#[cfg(target_os="android")]
-fn maybe_unlink(_: *const c_char) -> c_int {
-    // Calling `unlink` on a file stored on an sdcard immediately deletes it.
-    // FIXME: use a better temporary directory than the sdcard via the Java APIs
-    // and threading that value into Servo.
-    // https://code.google.com/p/android/issues/detail?id=19017
-    0
-}
-
-#[cfg(not(target_os="android"))]
-unsafe fn maybe_unlink(c: *const c_char) -> c_int {
-    libc::unlink(c)
-}
-
-unsafe fn create_memory_backing_store(length: usize) -> c_int {
-    let string = CString::new(TEMP_FILE_TEMPLATE).unwrap();
-    let string_buffer = strdup(string.as_ptr());
-    let fd = mkstemp(string_buffer);
-    assert!(fd >= 0);
-    assert!(maybe_unlink(string_buffer) == 0);
-    libc::free(string_buffer as *mut c_void);
-    assert!(libc::ftruncate(fd, length as off_t) == 0);
-    fd
-}
-
-unsafe fn map_file(fd: c_int, length: Option<size_t>) -> (*mut u8, size_t) {
-    let length = length.unwrap_or_else(|| {
-        let mut st = mem::uninitialized();
-        assert!(libc::fstat(fd, &mut st) == 0);
-        st.st_size as size_t
-    });
-    if length == 0 {
-        // This will cause `mmap` to fail, so handle it explicitly.
-        return (ptr::null_mut(), length)
+#[cfg(not(all(target_os="linux", feature="memfd")))]
+fn create_shmem(name: CString, length: usize) -> c_int {
+    unsafe {
+        // NB: the FreeBSD man page for shm_unlink states that it requires
+        // write permissions, but testing shows that read-write is required.
+        let fd = libc::shm_open(name.as_ptr(),
+                                libc::O_CREAT | libc::O_RDWR | libc::O_EXCL,
+                                0o600);
+        assert!(fd >= 0);
+        assert!(libc::shm_unlink(name.as_ptr()) == 0);
+        assert!(libc::ftruncate(fd, length as off_t) == 0);
+        fd
     }
-    let address = libc::mmap(ptr::null_mut(),
-                             length,
-                             PROT_READ | PROT_WRITE,
-                             MAP_SHARED,
-                             fd,
-                             0);
-    assert!(address != ptr::null_mut());
-    assert!(address != MAP_FAILED);
-    (address as *mut u8, length)
+}
+
+#[cfg(all(feature="memfd", target_os="linux"))]
+fn create_shmem(name: CString, length: usize) -> c_int {
+    unsafe {
+        let fd = memfd_create(name.as_ptr(), 0);
+        assert!(fd >= 0);
+        assert!(libc::ftruncate(fd, length as off_t) == 0);
+        fd
+    }
 }
 
 struct UnixCmsg {
@@ -1007,6 +1047,11 @@ fn is_socket(fd: c_int) -> bool {
 
 // FFI stuff follows:
 
+#[cfg(all(feature="memfd", target_os="linux"))]
+unsafe fn memfd_create(name: *const c_char, flags: usize) -> c_int {
+    syscall!(MEMFD_CREATE, name, flags) as c_int
+}
+
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
     CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
@@ -1035,7 +1080,6 @@ fn S_ISSOCK(mode: mode_t) -> bool {
 
 extern {
     fn mktemp(template: *mut c_char) -> *mut c_char;
-    fn strdup(string: *const c_char) -> *mut c_char;
 }
 
 #[repr(C)]
