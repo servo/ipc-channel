@@ -12,6 +12,7 @@ memfd = ["syscall"]
 unstable = []
 
 [dependencies]
+byteorder = "1.0.0"
 bincode = "1.0.0-alpha2"
 lazy_static = "0.2"
 libc = "0.2.12"
