@@ -10,7 +10,7 @@
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
-use bincode::{self, SizeLimit};
+use bincode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -351,7 +351,7 @@ impl OpaqueIpcMessage {
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_shared_memory_regions);
                 let mut data = &*self.data;
-                let mut deserializer = bincode::Deserializer::new(&mut data, SizeLimit::Infinite);
+                let mut deserializer = bincode::Deserializer::new(&mut data, bincode::Infinite);
                 let result = Deserialize::deserialize(&mut deserializer);
                 mem::swap(&mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
                           &mut self.os_ipc_shared_memory_regions);
