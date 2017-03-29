@@ -18,6 +18,7 @@ extern crate bincode;
 extern crate libc;
 extern crate rand;
 extern crate serde;
+extern crate serde_roundtrip;
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
 extern crate uuid;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",

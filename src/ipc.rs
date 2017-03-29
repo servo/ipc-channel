@@ -12,6 +12,7 @@ use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOp
 
 use bincode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_roundtrip::RoundTrip;
 use std::cell::RefCell;
 use std::cmp::min;
 use std::fmt::{self, Debug, Formatter};
@@ -139,7 +140,9 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
-    pub fn send(&self, data: T) -> Result<(), bincode::Error> {
+    fn send_data<S>(&self, data: S) -> Result<(), bincode::Error> where
+        S: Serialize,
+    {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
@@ -164,6 +167,17 @@ impl<T> IpcSender<T> where T: Serialize {
                 Ok(self.os_sender.send(&bytes[..], os_ipc_channels, os_ipc_shared_memory_regions)?)
             })
         })
+    }
+
+    pub fn send(&self, data: T) -> Result<(), bincode::Error> {
+        self.send_data(data)
+    }
+
+    pub fn send_borrowed<S>(&self, data: S) -> Result<(), bincode::Error> where
+        S: RoundTrip<T>,
+        T: Deserialize,
+    {
+        self.send_data(data)
     }
 
     pub fn to_opaque(self) -> OpaqueIpcSender {

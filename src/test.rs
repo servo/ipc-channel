@@ -322,6 +322,16 @@ fn embedded_opaque_senders() {
 }
 
 #[test]
+fn send_borrowed() {
+    let person = ("Patrick Walton", 29);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send_borrowed(&person).unwrap();
+    let received_person: Person = rx.recv().unwrap();
+    assert_eq!(person.0, received_person.0);
+    assert_eq!(person.1, received_person.1);
+}
+
+#[test]
 fn try_recv() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
