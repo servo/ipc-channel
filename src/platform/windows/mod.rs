@@ -7,11 +7,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use bincode::serde::DeserializeError;
+use serde;
 use bincode;
 use kernel32;
 use libc::intptr_t;
-use serde;
 use std::cell::{Cell, RefCell};
 use std::cmp::PartialEq;
 use std::default::Default;
@@ -26,7 +25,7 @@ use std::slice;
 use uuid::Uuid;
 use winapi::{HANDLE, INVALID_HANDLE_VALUE, LPVOID};
 use winapi;
-use super::Incrementor;
+use super::incrementor::Incrementor;
 
 lazy_static! {
     static ref CURRENT_PROCESS_ID: winapi::ULONG = unsafe { kernel32::GetCurrentProcessId() };
@@ -118,7 +117,8 @@ impl<'data> Message<'data> {
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
         if self.oob_len > 0 {
-            let oob = bincode::serde::deserialize::<OutOfBandMessage>(self.oob_bytes())
+
+            let oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
             if oob.target_process_id != *CURRENT_PROCESS_ID {
                 panic!("Windows IPC channel received handles intended for pid {}, but this is pid {}. \
@@ -184,7 +184,7 @@ impl OutOfBandMessage {
 }
 
 impl serde::Serialize for OutOfBandMessage {
-    fn serialize<S>(&self, serializer: &mut S) -> Result<(), S::Error>
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where S: serde::Serializer
     {
         ((self.target_process_id,
@@ -195,7 +195,7 @@ impl serde::Serialize for OutOfBandMessage {
 }
 
 impl serde::Deserialize for OutOfBandMessage {
-    fn deserialize<D>(deserializer: &mut D) -> Result<OutOfBandMessage, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<OutOfBandMessage, D::Error>
         where D: serde::Deserializer
     {
         let (target_process_id, channel_handles, shmem_handles, big_data_receiver_handle) =
@@ -938,7 +938,7 @@ impl OsIpcSender {
     }
 
     fn needs_fragmentation(data_len: usize, oob: &OutOfBandMessage) -> bool {
-        let oob_size = if oob.needs_to_be_sent() { bincode::serde::serialized_size(oob) } else { 0 };
+        let oob_size = if oob.needs_to_be_sent() { bincode::serialized_size(oob) } else { 0 };
 
         // make sure we don't have too much oob data to begin with
         assert!((oob_size as usize) < (PIPE_BUFFER_SIZE-MessageHeader::size()), "too much oob data");
@@ -1023,7 +1023,7 @@ impl OsIpcSender {
         // If we need to send OOB data, serialize it
         let mut oob_data: Vec<u8> = vec![];
         if oob.needs_to_be_sent() {
-            oob_data = bincode::serde::serialize(&oob, bincode::SizeLimit::Infinite).unwrap();
+            oob_data = bincode::serialize(&oob, bincode::Infinite).unwrap();
         }
 
         unsafe {
@@ -1463,9 +1463,9 @@ impl WinError {
     }
 }
 
-impl From<WinError> for DeserializeError {
-    fn from(error: WinError) -> DeserializeError {
-        DeserializeError::IoError(error.into())
+impl From<WinError> for bincode::Error {
+    fn from(error: WinError) -> bincode::Error {
+        Error::from(error).into()
     }
 }
 
