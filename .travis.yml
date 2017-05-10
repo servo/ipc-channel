@@ -1,6 +1,7 @@
 language: rust
 sudo: false
 
+
 matrix:
   include:
     - os: linux
