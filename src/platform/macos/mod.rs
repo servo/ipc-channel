@@ -435,12 +435,6 @@ impl OsIpcSender {
             data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
             ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
 
-            let mut ptr = message as *const u32;
-            let end = (message as *const u8).offset(size as isize) as *const u32;
-            while ptr < end {
-                ptr = ptr.offset(1);
-            }
-
             let os_result = mach_sys::mach_msg(message as *mut _,
                                                MACH_SEND_MSG,
                                                (*message).header.msgh_size,
