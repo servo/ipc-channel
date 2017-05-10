@@ -140,7 +140,7 @@ impl OsIpcReceiver {
             mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
         };
         if os_result != KERN_SUCCESS {
-            return Err(MachError(os_result))
+            return Err(MachError::from(os_result))
         }
         let limits = mach_port_limits_t {
             mpl_qlimit: MACH_PORT_QLIMIT_MAX,
@@ -155,7 +155,7 @@ impl OsIpcReceiver {
         if os_result == KERN_SUCCESS {
             Ok(OsIpcReceiver::from_name(port))
         } else {
-            Err(MachError(os_result))
+            Err(MachError::from(os_result))
         }
     }
 
@@ -190,7 +190,7 @@ impl OsIpcReceiver {
                 debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
                 Ok(OsIpcSender::from_name(right))
             } else {
-                Err(MachError(os_result))
+                Err(MachError::from(os_result))
             }
         }
     }
@@ -204,7 +204,7 @@ impl OsIpcReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
 
 
@@ -216,7 +216,7 @@ impl OsIpcReceiver {
                                                               &mut right,
                                                               &mut acquired_right);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
@@ -230,7 +230,7 @@ impl OsIpcReceiver {
                     continue
                 }
                 if os_result != BOOTSTRAP_SUCCESS {
-                    return Err(MachError(os_result))
+                    return Err(MachError::from(os_result))
                 }
                 break
             }
@@ -245,7 +245,7 @@ impl OsIpcReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
 
             let c_name = CString::new(name).unwrap();
@@ -256,7 +256,7 @@ impl OsIpcReceiver {
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(())
             } else {
-                Err(MachError(os_result))
+                Err(MachError::from(os_result))
             }
         }
     }
@@ -274,7 +274,7 @@ impl OsIpcReceiver {
                                                          MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
                                                          &mut 0);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
         }
         Ok(())
@@ -288,7 +288,7 @@ impl OsIpcReceiver {
                 OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
                     Ok((data, channels, shared_memory_regions))
                 }
-                OsIpcSelectionResult::ChannelClosed(_) => Err(MachError(MACH_NOTIFY_NO_SENDERS)),
+                OsIpcSelectionResult::ChannelClosed(_) => Err(MachError::from(MACH_NOTIFY_NO_SENDERS)),
             }
         })
     }
@@ -360,7 +360,7 @@ impl OsIpcSender {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
 
             let mut port = 0;
@@ -369,7 +369,7 @@ impl OsIpcSender {
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(OsIpcSender::from_name(port))
             } else {
-                Err(MachError(os_result))
+                Err(MachError::from(os_result))
             }
         }
     }
@@ -427,14 +427,13 @@ impl OsIpcSender {
             // Zero out the last word for paranoia's sake.
             *((message as *mut u8).offset(size as isize - 4) as *mut u32) = 0;
 
-            let data_dest = shared_memory_descriptor_dest as *mut u8;
-            ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data.len());
+            let mut data_dest = shared_memory_descriptor_dest as *mut u8;
+            let data_size = data.len();
+            let data_size_dest = data_dest as *mut usize;
+            *data_size_dest = data_size;
 
-            let mut ptr = message as *const u32;
-            let end = (message as *const u8).offset(size as isize) as *const u32;
-            while ptr < end {
-                ptr = ptr.offset(1);
-            }
+            data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
+            ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
 
             let os_result = mach_sys::mach_msg(message as *mut _,
                                                MACH_SEND_MSG,
@@ -445,7 +444,7 @@ impl OsIpcSender {
                                                MACH_PORT_NULL);
             libc::free(message as *mut _);
             if os_result != MACH_MSG_SUCCESS {
-                return Err(MachError(os_result))
+                return Err(MachError::from(os_result))
             }
             Ok(())
         }
@@ -512,7 +511,7 @@ impl OsIpcReceiverSet {
                 port: Cell::new(port),
             })
         } else {
-            Err(MachError(os_result))
+            Err(MachError::from(os_result))
         }
     }
 
@@ -524,7 +523,7 @@ impl OsIpcReceiverSet {
         if os_result == KERN_SUCCESS {
             Ok(receiver_port as u64)
         } else {
-            Err(MachError(os_result))
+            Err(MachError::from(os_result))
         }
     }
 
@@ -601,13 +600,13 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                         }
                         os_result => {
                             libc::free(allocated_buffer.unwrap() as *mut _);
-                            return Err(MachError(os_result))
+                            return Err(MachError::from(os_result))
                         }
                     }
                 }
             }
             MACH_MSG_SUCCESS => {}
-            os_result => return Err(MachError(os_result)),
+            os_result => return Err(MachError::from(os_result)),
         }
 
         let local_port = (*message).header.msgh_local_port;
@@ -637,9 +636,12 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             descriptors_remaining -= 1;
         }
 
-        let payload_ptr = shared_memory_descriptor as *mut u8;
-        let payload_size = message as usize + ((*message).header.msgh_size as usize) -
+        let mut payload_ptr = shared_memory_descriptor as *mut u8;
+        let payload_size = *(payload_ptr as *mut usize);
+        let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
             (shared_memory_descriptor as usize);
+        assert!(payload_size <= max_payload_size);
+        payload_ptr = payload_ptr.offset(mem::size_of::<usize>() as isize);
         let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
 
         if let Some(allocated_buffer) = allocated_buffer {
@@ -809,9 +811,9 @@ impl Message {
         let mut size = mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
             mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            data_length;
+            mem::size_of::<usize>() + data_length;
 
-        // Round up to the next 4 bytes.
+        // Round up to the next 4 bytes; mach_msg_send returns an error for unaligned sizes.
         if (size & 0x3) != 0 {
             size = (size & !0x3) + 4;
         }
@@ -820,13 +822,54 @@ impl Message {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct MachError(pub kern_return_t);
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MachError {
+    Success,
+    IpcSpace,
+    VmSpace,
+    IpcKernel,
+    VmKernel,
+    RcvInProgress,
+    RcvInvalidName,
+    RcvTimedOut,
+    RcvTooLarge,
+    RcvInterrupted,
+    RcvPortChanged,
+    RcvInvalidNotify,
+    RcvInvalidData,
+    RcvPortDied,
+    RcvInSet,
+    RcvHeaderError,
+    RcvBodyError,
+    RcvInvalidType,
+    RcvScatterSmall,
+    RcvInvalidTrailer,
+    RcvInProgressTimed,
+    NotifyNoSenders,
+    SendInterrupted,
+    SendInvalidData,
+    SendInvalidDest,
+    SendInvalidHeader,
+    SendInvalidMemory,
+    SendInvalidNotify,
+    SendInvalidReply,
+    SendInvalidRight,
+    SendInvalidRtOolSize,
+    SendInvalidTrailer,
+    SendInvalidType,
+    SendInvalidVoucher,
+    SendInProgress,
+    SendMsgTooSmall,
+    SendNoBuffer,
+    SendTimedOut,
+    SendTooLarge,
+    Unknown(kern_return_t),
+}
 
 impl MachError {
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
-        self.0 == MACH_NOTIFY_NO_SENDERS
+        *self == MachError::NotifyNoSenders
     }
 }
 
@@ -836,123 +879,174 @@ impl From<MachError> for bincode::Error {
     }
 }
 
+impl From<kern_return_t> for MachError {
+    fn from(code: kern_return_t) -> MachError {
+        match code {
+            MACH_MSG_SUCCESS => MachError::Success,
+            MACH_MSG_IPC_KERNEL => MachError::IpcKernel,
+            MACH_MSG_IPC_SPACE => MachError::IpcSpace,
+            MACH_MSG_VM_KERNEL => MachError::VmKernel,
+            MACH_MSG_VM_SPACE => MachError::VmSpace,
+            MACH_RCV_BODY_ERROR => MachError::RcvBodyError,
+            MACH_RCV_HEADER_ERROR => MachError::RcvHeaderError,
+            MACH_RCV_INTERRUPTED => MachError::RcvInterrupted,
+            MACH_RCV_INVALID_DATA => MachError::RcvInvalidData,
+            MACH_RCV_INVALID_NAME => MachError::RcvInvalidName,
+            MACH_RCV_INVALID_NOTIFY => MachError::RcvInvalidNotify,
+            MACH_RCV_INVALID_TRAILER => MachError::RcvInvalidTrailer,
+            MACH_RCV_INVALID_TYPE => MachError::RcvInvalidType,
+            MACH_RCV_IN_PROGRESS => MachError::RcvInProgress,
+            MACH_RCV_IN_PROGRESS_TIMED => MachError::RcvInProgressTimed,
+            MACH_RCV_IN_SET => MachError::RcvInSet,
+            MACH_RCV_PORT_CHANGED => MachError::RcvPortChanged,
+            MACH_RCV_PORT_DIED => MachError::RcvPortDied,
+            MACH_RCV_SCATTER_SMALL => MachError::RcvScatterSmall,
+            MACH_RCV_TIMED_OUT => MachError::RcvTimedOut,
+            MACH_RCV_TOO_LARGE => MachError::RcvTooLarge,
+            MACH_NOTIFY_NO_SENDERS => MachError::NotifyNoSenders,
+            MACH_SEND_INTERRUPTED => MachError::SendInterrupted,
+            MACH_SEND_INVALID_DATA => MachError::SendInvalidData,
+            MACH_SEND_INVALID_DEST => MachError::SendInvalidDest,
+            MACH_SEND_INVALID_HEADER => MachError::SendInvalidHeader,
+            MACH_SEND_INVALID_MEMORY => MachError::SendInvalidMemory,
+            MACH_SEND_INVALID_NOTIFY => MachError::SendInvalidNotify,
+            MACH_SEND_INVALID_REPLY => MachError::SendInvalidReply,
+            MACH_SEND_INVALID_RIGHT => MachError::SendInvalidRight,
+            MACH_SEND_INVALID_RT_OOL_SIZE => MachError::SendInvalidRtOolSize,
+            MACH_SEND_INVALID_TRAILER => MachError::SendInvalidTrailer,
+            MACH_SEND_INVALID_TYPE => MachError::SendInvalidType,
+            MACH_SEND_INVALID_VOUCHER => MachError::SendInvalidVoucher,
+            MACH_SEND_IN_PROGRESS => MachError::SendInProgress,
+            MACH_SEND_MSG_TOO_SMALL => MachError::SendMsgTooSmall,
+            MACH_SEND_NO_BUFFER => MachError::SendNoBuffer,
+            MACH_SEND_TIMED_OUT => MachError::SendTimedOut,
+            MACH_SEND_TOO_LARGE => MachError::SendTooLarge,
+            code => MachError::Unknown(code),
+        }
+    }
+}
+
 impl From<MachError> for Error {
     /// These error descriptions are from `mach/message.h`.
     fn from(mach_error: MachError) -> Error {
-        match mach_error.0 {
-            MACH_MSG_SUCCESS => Error::new(ErrorKind::Other, "Success"),
-            MACH_MSG_IPC_SPACE => {
+        match mach_error {
+            MachError::Success => Error::new(ErrorKind::Other, "Success"),
+            MachError::IpcSpace => {
                 Error::new(ErrorKind::Other,
                            "No room in IPC name space for another capability name.")
             }
-            MACH_MSG_VM_SPACE => {
+            MachError::VmSpace => {
                 Error::new(ErrorKind::Other,
                            "No room in VM address space for out-of-line memory.")
             }
-            MACH_MSG_IPC_KERNEL => {
+            MachError::IpcKernel => {
                 Error::new(ErrorKind::Other,
                            "Kernel resource shortage handling an IPC capability.")
             }
-            MACH_MSG_VM_KERNEL => {
+            MachError::VmKernel => {
                 Error::new(ErrorKind::Other,
                            "Kernel resource shortage handling out-of-line memory.")
             }
-            MACH_SEND_IN_PROGRESS => {
+            MachError::SendInProgress => {
                 Error::new(ErrorKind::Interrupted,
                            "Thread is waiting to send.  (Internal use only.)")
             }
-            MACH_SEND_INVALID_DATA => Error::new(ErrorKind::InvalidData, "Bogus in-line data."),
-            MACH_SEND_INVALID_DEST => Error::new(ErrorKind::NotFound, "Bogus destination port."),
-            MACH_SEND_TIMED_OUT => {
+            MachError::SendInvalidData => Error::new(ErrorKind::InvalidData, "Bogus in-line data."),
+            MachError::SendInvalidDest => Error::new(ErrorKind::NotFound, "Bogus destination port."),
+            MachError::SendTimedOut => {
                 Error::new(ErrorKind::TimedOut, "Message not sent before timeout expired.")
             }
-            MACH_SEND_INVALID_VOUCHER => Error::new(ErrorKind::NotFound, "Bogus voucher port."),
-            MACH_SEND_INTERRUPTED => Error::new(ErrorKind::Interrupted, "Software interrupt."),
-            MACH_SEND_MSG_TOO_SMALL => {
+            MachError::SendInvalidVoucher => Error::new(ErrorKind::NotFound, "Bogus voucher port."),
+            MachError::SendInterrupted => Error::new(ErrorKind::Interrupted, "Software interrupt."),
+            MachError::SendMsgTooSmall => {
                 Error::new(ErrorKind::InvalidData, "Data doesn't contain a complete message.")
             }
-            MACH_SEND_INVALID_REPLY => Error::new(ErrorKind::InvalidInput, "Bogus reply port."),
-            MACH_SEND_INVALID_RIGHT => {
+            MachError::SendInvalidReply => Error::new(ErrorKind::InvalidInput, "Bogus reply port."),
+            MachError::SendInvalidRight => {
                 Error::new(ErrorKind::InvalidInput, "Bogus port rights in the message body.")
             }
-            MACH_SEND_INVALID_NOTIFY => {
+            MachError::SendInvalidNotify => {
                 Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
             }
-            MACH_SEND_INVALID_MEMORY => {
+            MachError::SendInvalidMemory => {
                 Error::new(ErrorKind::InvalidInput, "Invalid out-of-line memory pointer.")
             }
-            MACH_SEND_NO_BUFFER => {
+            MachError::SendNoBuffer => {
                 Error::new(ErrorKind::Other, "No message buffer is available.")
             }
-            MACH_SEND_TOO_LARGE => {
+            MachError::SendTooLarge => {
                 Error::new(ErrorKind::InvalidData, "Send is too large for port")
             }
-            MACH_SEND_INVALID_TYPE => {
+            MachError::SendInvalidType => {
                 Error::new(ErrorKind::InvalidInput, "Invalid msg-type specification.")
             }
-            MACH_SEND_INVALID_HEADER => {
+            MachError::SendInvalidHeader => {
                 Error::new(ErrorKind::InvalidInput, "A field in the header had a bad value.")
             }
-            MACH_SEND_INVALID_TRAILER => {
+            MachError::SendInvalidTrailer => {
                 Error::new(ErrorKind::InvalidData,
                            "The trailer to be sent does not match kernel format.")
             }
-            MACH_SEND_INVALID_RT_OOL_SIZE => {
+            MachError::SendInvalidRtOolSize => {
                 Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
             }
-            MACH_RCV_IN_PROGRESS => {
+            MachError::RcvInProgress => {
                 Error::new(ErrorKind::Interrupted,
                            "Thread is waiting for receive.  (Internal use only.)")
             }
-            MACH_RCV_INVALID_NAME => {
+            MachError::RcvInvalidName => {
                 Error::new(ErrorKind::InvalidInput, "Bogus name for receive port/port-set.")
             }
-            MACH_RCV_TIMED_OUT => {
+            MachError::RcvTimedOut => {
                 Error::new(ErrorKind::TimedOut, "Didn't get a message within the timeout value.")
             }
-            MACH_RCV_TOO_LARGE => {
+            MachError::RcvTooLarge => {
                 Error::new(ErrorKind::InvalidInput,
                            "Message buffer is not large enough for inline data.")
             }
-            MACH_RCV_INTERRUPTED => Error::new(ErrorKind::Interrupted, "Software interrupt."),
-            MACH_RCV_PORT_CHANGED => {
+            MachError::RcvInterrupted => Error::new(ErrorKind::Interrupted, "Software interrupt."),
+            MachError::RcvPortChanged => {
                 Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
             }
-            MACH_RCV_INVALID_NOTIFY => {
+            MachError::RcvInvalidNotify => {
                 Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
             }
-            MACH_RCV_INVALID_DATA => {
+            MachError::RcvInvalidData => {
                 Error::new(ErrorKind::InvalidInput, "Bogus message buffer for inline data.")
             }
-            MACH_RCV_PORT_DIED => {
+            MachError::RcvPortDied => {
                 Error::new(ErrorKind::BrokenPipe, "Port/set was sent away/died during receive.")
             }
-            MACH_RCV_IN_SET => {
+            MachError::RcvInSet => {
                 Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
             }
-            MACH_RCV_HEADER_ERROR => {
+            MachError::RcvHeaderError => {
                 Error::new(ErrorKind::Other, "Error receiving message header.  See special bits.")
             }
-            MACH_RCV_BODY_ERROR => {
+            MachError::RcvBodyError => {
                 Error::new(ErrorKind::Other, "Error receiving message body.  See special bits.")
             }
-            MACH_RCV_INVALID_TYPE => {
+            MachError::RcvInvalidType => {
                 Error::new(ErrorKind::InvalidInput,
                            "Invalid msg-type specification in scatter list.")
             }
-            MACH_RCV_SCATTER_SMALL => {
+            MachError::RcvScatterSmall => {
                 Error::new(ErrorKind::InvalidInput,
                            "Out-of-line overwrite region is not large enough")
             }
-            MACH_RCV_INVALID_TRAILER => {
+            MachError::RcvInvalidTrailer => {
                 Error::new(ErrorKind::InvalidInput,
                            "trailer type or number of trailer elements not supported")
             }
-            MACH_RCV_IN_PROGRESS_TIMED => {
+            MachError::RcvInProgressTimed => {
                 Error::new(ErrorKind::Interrupted,
                            "Waiting for receive with timeout. (Internal use only.)")
             }
-            mach_error_number => {
+            MachError::NotifyNoSenders => {
+                Error::new(ErrorKind::ConnectionReset,
+                           "No senders exist for this port.")
+            }
+            MachError::Unknown(mach_error_number) => {
                 Error::new(ErrorKind::Other,
                            format!("Unknown Mach error: {:x}", mach_error_number))
             }
