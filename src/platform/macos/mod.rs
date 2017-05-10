@@ -427,8 +427,13 @@ impl OsIpcSender {
             // Zero out the last word for paranoia's sake.
             *((message as *mut u8).offset(size as isize - 4) as *mut u32) = 0;
 
-            let data_dest = shared_memory_descriptor_dest as *mut u8;
-            ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data.len());
+            let mut data_dest = shared_memory_descriptor_dest as *mut u8;
+            let data_size = data.len();
+            let data_size_dest = data_dest as *mut usize;
+            *data_size_dest = data_size;
+
+            data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
+            ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
 
             let mut ptr = message as *const u32;
             let end = (message as *const u8).offset(size as isize) as *const u32;
@@ -637,9 +642,12 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             descriptors_remaining -= 1;
         }
 
-        let payload_ptr = shared_memory_descriptor as *mut u8;
-        let payload_size = message as usize + ((*message).header.msgh_size as usize) -
+        let mut payload_ptr = shared_memory_descriptor as *mut u8;
+        let payload_size = *(payload_ptr as *mut usize);
+        let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
             (shared_memory_descriptor as usize);
+        assert!(payload_size <= max_payload_size);
+        payload_ptr = payload_ptr.offset(mem::size_of::<usize>() as isize);
         let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
 
         if let Some(allocated_buffer) = allocated_buffer {
@@ -809,9 +817,9 @@ impl Message {
         let mut size = mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
             mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            data_length;
+            mem::size_of::<usize>() + data_length;
 
-        // Round up to the next 4 bytes.
+        // Round up to the next 4 bytes; mach_msg_send returns an error for unaligned sizes.
         if (size & 0x3) != 0 {
             size = (size & !0x3) + 4;
         }
