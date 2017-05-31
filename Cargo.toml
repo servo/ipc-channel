@@ -19,6 +19,7 @@ rand = "0.3"
 serde = "0.9"
 uuid = {version = "0.4", features = ["v4"]}
 fnv = "1.0.3"
+futures = "0.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 mio = "0.6.1"

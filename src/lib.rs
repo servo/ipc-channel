@@ -30,6 +30,7 @@ extern crate fnv;
           target_os="linux"))]
 #[macro_use]
 extern crate syscall;
+extern crate futures;
 
 
 pub mod ipc;

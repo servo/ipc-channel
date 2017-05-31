@@ -10,12 +10,13 @@
 use platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
 
+use futures::{Stream, Sink, Poll, Async, StartSend};
 use bincode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::fmt::{self, Debug, Formatter};
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -82,6 +83,24 @@ impl<T> IpcReceiver<T> where T: Deserialize + Serialize {
     pub fn to_opaque(self) -> OpaqueIpcReceiver {
         OpaqueIpcReceiver {
             os_receiver: self.os_receiver,
+        }
+    }
+}
+
+impl<T> Stream for IpcReceiver<T> where T: Deserialize + Serialize {
+    type Item = T;
+    type Error = bincode::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match self.try_recv() {
+            Ok(msg) => Ok(Async::Ready(Some(msg))),
+            Err(e) => match *e {
+                bincode::ErrorKind::IoError(ref e) if e.kind() == ErrorKind::ConnectionReset =>
+                    Ok(Async::Ready(None)),
+                bincode::ErrorKind::IoError(ref e) if e.kind() == ErrorKind::WouldBlock =>
+                    Ok(Async::NotReady),
+                _ => Err(e),
+            },
         }
     }
 }
@@ -170,6 +189,19 @@ impl<T> IpcSender<T> where T: Serialize {
         OpaqueIpcSender {
             os_sender: self.os_sender,
         }
+    }
+}
+
+impl<T> Sink for IpcSender<T> where T: Serialize {
+    type SinkItem = T;
+    type SinkError = bincode::Error;
+
+    fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
+        unimplemented!();
+    }
+
+    fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        unimplemented!();
     }
 }
 
