@@ -406,9 +406,9 @@ impl Serialize for HasWeirdSerializer {
     }
 }
 
-impl Deserialize for HasWeirdSerializer {
+impl<'de> Deserialize<'de> for HasWeirdSerializer {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where D: Deserializer
+        where D: Deserializer<'de>
     {
         Ok(HasWeirdSerializer(try!(Deserialize::deserialize(deserializer))))
     }

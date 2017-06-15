@@ -47,7 +47,7 @@ impl RouterProxy {
     pub fn route_ipc_receiver_to_mpsc_sender<T>(&self,
                                                 ipc_receiver: IpcReceiver<T>,
                                                 mpsc_sender: Sender<T>)
-                                                where T: Deserialize +
+                                                where T: for<'de> Deserialize<'de> +
                                                          Serialize +
                                                          Send +
                                                          'static {
@@ -60,7 +60,7 @@ impl RouterProxy {
     /// use of a `Router`.
     pub fn route_ipc_receiver_to_new_mpsc_receiver<T>(&self, ipc_receiver: IpcReceiver<T>)
                                                   -> Receiver<T>
-                                                  where T: Deserialize +
+                                                  where T: for<'de> Deserialize<'de> +
                                                            Serialize +
                                                            Send +
                                                            'static {
