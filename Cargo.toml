@@ -10,6 +10,7 @@ repository = "https://github.com/servo/ipc-channel"
 force-inprocess = []
 memfd = ["syscall"]
 unstable = []
+win32-trace = []
 
 [dependencies]
 bincode = "0.8"
@@ -27,3 +28,7 @@ syscall = { version = "0.2.1", optional = true }
 
 [dev-dependencies]
 crossbeam = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = "0.2"
+kernel32-sys = "0.2"
