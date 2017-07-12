@@ -661,13 +661,12 @@ fn cross_process_server()
 {
     let data: &[u8] = b"1234567";
     let channel_name = get_channel_name_arg("server");
-    if channel_name.is_none() {
-        return;
-    }
+    if let Some(channel_name) = channel_name {
+        let tx = OsIpcSender::connect(channel_name).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
 
-    let tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
-    tx.send(data, vec![], vec![]).unwrap();
-    unsafe { libc::exit(0); }
+        unsafe { libc::exit(0); }
+    }
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
@@ -720,18 +719,17 @@ fn cross_process_fork() {
 fn cross_process_sender_transfer_server()
 {
     let channel_name = get_channel_name_arg("server");
-    if channel_name.is_none() {
-        return;
-    }
+    if let Some(channel_name) = channel_name {
+        let super_tx = OsIpcSender::connect(channel_name).unwrap();
+        let (sub_tx, sub_rx) = platform::channel().unwrap();
+        let data: &[u8] = b"foo";
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        sub_rx.recv().unwrap();
+        let data: &[u8] = b"bar";
+        super_tx.send(data, vec![], vec![]).unwrap();
 
-    let super_tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
-    let (sub_tx, sub_rx) = platform::channel().unwrap();
-    let data: &[u8] = b"foo";
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
-    sub_rx.recv().unwrap();
-    let data: &[u8] = b"bar";
-    super_tx.send(data, vec![], vec![]).unwrap();
-    unsafe { libc::exit(0); }
+        unsafe { libc::exit(0); }
+    }
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
@@ -967,38 +965,36 @@ fn cross_process_two_step_transfer_server()
 {
     let cookie: &[u8] = b"cookie";
     let channel_name = get_channel_name_arg("server");
-    if channel_name.is_none() {
-        return;
+    if let Some(channel_name) = channel_name {
+        // connect by name to our other process
+        let super_tx = OsIpcSender::connect(channel_name).unwrap();
+
+        // create a channel for real communication between the two processes
+        let (sub_tx, sub_rx) = platform::channel().unwrap();
+
+        // send the other process the tx side, so it can send us the channels
+        super_tx.send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+
+        // get two_rx from the other process
+        let (_, mut received_channels, _) = sub_rx.recv().unwrap();
+        assert_eq!(received_channels.len(), 1);
+        let two_rx = received_channels[0].to_receiver();
+
+        // get one_rx from two_rx's buffer
+        let (_, mut received_channels, _) = two_rx.recv().unwrap();
+        assert_eq!(received_channels.len(), 1);
+        let one_rx = received_channels[0].to_receiver();
+
+        // get a cookie from one_rx
+        let (data, _, _) = one_rx.recv().unwrap();
+        assert_eq!(&data[..], cookie);
+
+        // finally, send a cookie back
+        super_tx.send(&data, vec![], vec![]).unwrap();
+
+        // terminate
+        unsafe { libc::exit(0); }
     }
-
-    // connect by name to our other process
-    let super_tx = OsIpcSender::connect(channel_name.unwrap()).unwrap();
-
-    // create a channel for real communication between the two processes
-    let (sub_tx, sub_rx) = platform::channel().unwrap();
-
-    // send the other process the tx side, so it can send us the channels
-    super_tx.send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
-
-    // get two_rx from the other process
-    let (_, mut received_channels, _) = sub_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let two_rx = received_channels[0].to_receiver();
-
-    // get one_rx from two_rx's buffer
-    let (_, mut received_channels, _) = two_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let one_rx = received_channels[0].to_receiver();
-
-    // get a cookie from one_rx
-    let (data, _, _) = one_rx.recv().unwrap();
-    assert_eq!(&data[..], cookie);
-
-    // finally, send a cookie back
-    super_tx.send(&data, vec![], vec![]).unwrap();
-
-    // terminate
-    unsafe { libc::exit(0); }
 }
 
 // TODO -- this fails on OSX with a MACH_SEND_INVALID_RIGHT!
