@@ -163,25 +163,18 @@ fn select() {
 fn cross_process_embedded_senders_server() {
     let person = ("Patrick Walton".to_owned(), 29);
 
-    let server0_name = if let Some(name) = get_channel_name_arg("server0") {
-        name
-    } else {
-        return
-    };
-    let server2_name = if let Some(name) = get_channel_name_arg("server2") {
-        name
-    } else {
-        return
-    };
+    let server0_name = get_channel_name_arg("server0");
+    let server2_name = get_channel_name_arg("server2");
+    if let (Some(server0_name), Some(server2_name)) = (server0_name, server2_name) {
+        let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
+        let tx0 = IpcSender::connect(server0_name).unwrap();
+        tx0.send(tx1).unwrap();
+        rx1.recv().unwrap();
+        let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
+        tx2.send(person.clone()).unwrap();
 
-    let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
-    let tx0 = IpcSender::connect(server0_name).unwrap();
-    tx0.send(tx1).unwrap();
-    rx1.recv().unwrap();
-    let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
-    tx2.send(person.clone()).unwrap();
-
-    unsafe { libc::exit(0); }
+        unsafe { libc::exit(0); }
+    }
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
