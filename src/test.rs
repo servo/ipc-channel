@@ -15,6 +15,8 @@ use router::ROUTER;
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+use std::env;
 use std::iter;
 #[cfg(not(windows))]
 use std::ptr;
@@ -53,6 +55,19 @@ impl Wait for libc::pid_t {
             libc::waitpid(self, ptr::null_mut(), 0);
         }
     }
+}
+
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+pub fn get_channel_name_arg(which: &str) -> Option<String> {
+    for arg in env::args() {
+        let arg_str = &*format!("channel_name-{}:", which);
+        if arg.starts_with(arg_str) {
+            return Some(arg[arg_str.len()..].to_owned());
+        }
+    }
+    None
 }
 
 type Person = (String, u32);
