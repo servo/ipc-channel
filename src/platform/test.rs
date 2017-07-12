@@ -29,9 +29,9 @@ use test::{fork, Wait};
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-fn get_channel_name_arg() -> Option<String> {
+pub fn get_channel_name_arg(which: &str) -> Option<String> {
     for arg in env::args() {
-        let arg_str = "channel_name:";
+        let arg_str = &*format!("channel_name-{}:", which);
         if arg.starts_with(arg_str) {
             return Some(arg[arg_str.len()..].to_owned());
         }
@@ -671,7 +671,7 @@ fn server_connect_first() {
 fn cross_process_server()
 {
     let data: &[u8] = b"1234567";
-    let channel_name = get_channel_name_arg();
+    let channel_name = get_channel_name_arg("server");
     if channel_name.is_none() {
         return;
     }
@@ -690,7 +690,7 @@ fn cross_process_spawn() {
     let mut child_pid = Command::new(env::current_exe().unwrap())
         .arg("--ignored")
         .arg("cross_process_server")
-        .arg(format!("channel_name:{}", name))
+        .arg(format!("channel_name-server:{}", name))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -730,7 +730,7 @@ fn cross_process_fork() {
 #[ignore]
 fn cross_process_sender_transfer_server()
 {
-    let channel_name = get_channel_name_arg();
+    let channel_name = get_channel_name_arg("server");
     if channel_name.is_none() {
         return;
     }
@@ -753,7 +753,7 @@ fn cross_process_sender_transfer_spawn() {
     let mut child_pid = Command::new(env::current_exe().unwrap())
         .arg("--ignored")
         .arg("cross_process_sender_transfer_server")
-        .arg(format!("channel_name:{}", name))
+        .arg(format!("channel_name-server:{}", name))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -977,7 +977,7 @@ mod sync_test {
 fn cross_process_two_step_transfer_server()
 {
     let cookie: &[u8] = b"cookie";
-    let channel_name = get_channel_name_arg();
+    let channel_name = get_channel_name_arg("server");
     if channel_name.is_none() {
         return;
     }
@@ -1035,7 +1035,7 @@ fn cross_process_two_step_transfer_spawn() {
     let mut child_pid = Command::new(env::current_exe().unwrap())
         .arg("--ignored")
         .arg("cross_process_two_step_transfer_server")
-        .arg(format!("channel_name:{}", name))
+        .arg(format!("channel_name-server:{}", name))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
