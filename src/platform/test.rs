@@ -29,15 +29,7 @@ use crate::test::{fork, Wait};
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-pub fn get_channel_name_arg(which: &str) -> Option<String> {
-    for arg in env::args() {
-        let arg_str = &*format!("channel_name-{}:", which);
-        if arg.starts_with(arg_str) {
-            return Some(arg[arg_str.len()..].to_owned());
-        }
-    }
-    None
-}
+use test::get_channel_name_arg;
 
 #[test]
 fn simple() {
