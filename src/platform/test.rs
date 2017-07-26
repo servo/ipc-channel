@@ -10,13 +10,9 @@
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use crate::platform::{OsIpcSharedMemory};
 use std::collections::HashMap;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use std::env;
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc;
@@ -29,7 +25,7 @@ use crate::test::{fork, Wait};
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use test::get_channel_name_arg;
+use test::{get_channel_name_arg, spawn_server};
 
 #[test]
 fn simple() {
@@ -691,15 +687,7 @@ fn cross_process_spawn() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
-    let mut child_pid = Command::new(env::current_exe().unwrap())
-        .arg("--ignored")
-        .arg("cross_process_server")
-        .arg(format!("channel_name-server:{}", name))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to execute server process");
+    let mut child_pid = spawn_server("cross_process_server", &[("server", &*name)]);
 
     let (_, received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
@@ -753,15 +741,8 @@ fn cross_process_sender_transfer_server()
 fn cross_process_sender_transfer_spawn() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
-    let mut child_pid = Command::new(env::current_exe().unwrap())
-        .arg("--ignored")
-        .arg("cross_process_sender_transfer_server")
-        .arg(format!("channel_name-server:{}", name))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to execute server process");
+    let mut child_pid = spawn_server("cross_process_sender_transfer_server",
+                                     &[("server", &*name)]);
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
@@ -1147,15 +1128,8 @@ fn cross_process_two_step_transfer_spawn() {
 
     // create a one-shot server, and spawn another process
     let (server, name) = OsIpcOneShotServer::new().unwrap();
-    let mut child_pid = Command::new(env::current_exe().unwrap())
-        .arg("--ignored")
-        .arg("cross_process_two_step_transfer_server")
-        .arg(format!("channel_name-server:{}", name))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to execute server process");
+    let mut child_pid = spawn_server("cross_process_two_step_transfer_server",
+                                     &[("server", &*name)]);
 
     // The other process will have sent us a transmit channel in received channels
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();

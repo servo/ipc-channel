@@ -35,7 +35,7 @@ use std::iter;
     target_os = "android",
     target_os = "ios"
 )))]
-use std::process::{Command, Stdio};
+use std::process::{self, Command, Stdio};
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "windows",
@@ -115,6 +115,22 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
         }
     }
     None
+}
+
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
+    Command::new(env::current_exe().unwrap())
+        .arg("--ignored")
+        .arg(test_name)
+        .args(server_args.iter()
+                         .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to execute server process")
 }
 
 type Person = (String, u32);
@@ -255,16 +271,8 @@ fn cross_process_embedded_senders_spawn() {
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();
     let (server2, server2_name) = IpcOneShotServer::new().unwrap();
 
-    let mut child_pid = Command::new(env::current_exe().unwrap())
-        .arg("--ignored")
-        .arg("cross_process_embedded_senders_server")
-        .arg(format!("channel_name-server0:{}", server0_name))
-        .arg(format!("channel_name-server2:{}", server2_name))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to execute server process");
+    let mut child_pid = spawn_server("cross_process_embedded_senders_server",
+                                     &[("server0", &*server0_name), ("server2", &*server2_name)]);
 
     let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
     tx1.send(person.clone()).unwrap();
