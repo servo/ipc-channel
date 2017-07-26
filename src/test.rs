@@ -77,7 +77,6 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
     Command::new(env::current_exe().unwrap())
-        .arg("--ignored")
         .arg(test_name)
         .args(server_args.iter()
                          .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)))
@@ -170,13 +169,9 @@ fn select() {
     }
 }
 
-// Note! This test is actually used by the cross_process_embedded_senders_spawn() test
-// below as a second process.  Running it by itself is meaningless, but
-// passes.
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
-#[ignore]
-fn cross_process_embedded_senders_server() {
+fn cross_process_embedded_senders_spawn() {
     let person = ("Patrick Walton".to_owned(), 29);
 
     let server0_name = get_channel_name_arg("server0");
@@ -191,17 +186,10 @@ fn cross_process_embedded_senders_server() {
 
         unsafe { libc::exit(0); }
     }
-}
-
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-#[test]
-fn cross_process_embedded_senders_spawn() {
-    let person = ("Patrick Walton".to_owned(), 29);
 
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();
     let (server2, server2_name) = IpcOneShotServer::new().unwrap();
-
-    let mut child_pid = spawn_server("cross_process_embedded_senders_server",
+    let mut child_pid = spawn_server("cross_process_embedded_senders_spawn",
                                      &[("server0", &*server0_name), ("server2", &*server2_name)]);
 
     let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
