@@ -10,6 +10,7 @@ repository = "https://github.com/servo/ipc-channel"
 force-inprocess = []
 memfd = ["syscall"]
 unstable = []
+async = ["futures"]
 
 [dependencies]
 bincode = "0.8"
@@ -24,6 +25,7 @@ fnv = "1.0.3"
 mio = "0.6.1"
 
 syscall = { version = "0.2.1", optional = true }
+futures = { version = "0.1", optional = true }
 
 [dev-dependencies]
 crossbeam = "0.2"

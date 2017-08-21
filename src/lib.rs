@@ -31,6 +31,9 @@ extern crate fnv;
 #[macro_use]
 extern crate syscall;
 
+#[cfg(feature = "async")]
+extern crate futures;
+
 
 pub mod ipc;
 pub mod platform;
