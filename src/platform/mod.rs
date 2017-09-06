@@ -43,9 +43,9 @@ mod os {
     pub use super::macos::*;
 }
 
-#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
+#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"))]
 mod inprocess;
-#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android"))]
+#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"))]
 mod os {
     pub use super::inprocess::*;
 }

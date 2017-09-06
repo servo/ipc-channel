@@ -15,9 +15,9 @@ use std::time::{Duration, Instant};
 use std::thread;
 
 use platform::{OsIpcSender, OsIpcOneShotServer};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc::{kill, SIGSTOP, SIGCONT};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use test::{fork, Wait};
 
 #[test]
@@ -396,7 +396,7 @@ fn receiver_set() {
 }
 
 #[test]
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 fn receiver_set_eintr() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let child_pid = unsafe {
@@ -644,7 +644,7 @@ fn server_connect_first() {
                (data, vec![], vec![]));
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
@@ -662,7 +662,7 @@ fn cross_process() {
                (data, vec![], vec![]));
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_sender_transfer() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
