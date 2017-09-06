@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcReceiver;
 use router::ROUTER;
 use libc;
@@ -20,13 +20,13 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcOneShotServer;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use std::io::Error;
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 // I'm not actually sure invoking this is indeed unsafe -- but better safe than sorry...
 pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
     match libc::fork() {
@@ -135,7 +135,7 @@ fn select() {
     }
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_embedded_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
