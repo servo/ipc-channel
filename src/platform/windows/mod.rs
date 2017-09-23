@@ -34,11 +34,13 @@ lazy_static! {
 }
 
 /// Debug macro to better track what's going on in case of errors.
-macro_rules! win32_trace { ($($rest:tt)*) => {
-    if cfg!(feature = "win32-trace") {
-        if *DEBUG_TRACE_ENABLED { println!($($rest)*); }
+macro_rules! win32_trace {
+    ($($rest:tt)*) => {
+        if cfg!(feature = "win32-trace") {
+            if *DEBUG_TRACE_ENABLED { println!($($rest)*); }
+        }
     }
-} }
+}
 
 /// When we create the pipe, how big of a write buffer do we specify?
 ///
