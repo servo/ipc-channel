@@ -357,16 +357,21 @@ fn shared_memory() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
-    // On Windows, we don't have a way to check whether two handles
-    // refer to the same underlying object before Windows 10.  It's questionable
-    // if this test *really* wants that anyway.
-    if cfg!(not(windows)) {
-        assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
-    } else {
-        assert_eq!(received_person_and_shared_memory.0, person_and_shared_memory.0);
-    }
+    assert_eq!(received_person_and_shared_memory.0, person_and_shared_memory.0);
     assert!(person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
     assert!(received_person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
+}
+
+#[test]
+// The Windows implementation can't handle this case due to system API limitations.
+#[cfg_attr(all(target_os = "windows", not(feature = "force-inprocess")), ignore)]
+fn shared_memory_object_equality() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person_and_shared_memory.clone()).unwrap();
+    let received_person_and_shared_memory = rx.recv().unwrap();
+    assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
 }
 
 #[test]
