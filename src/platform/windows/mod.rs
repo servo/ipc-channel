@@ -1186,7 +1186,7 @@ impl OsIpcReceiverSet {
             // we need to (maybe) remove an element from it below.
             {
                 let reader_index = reader_index.unwrap();
-                let mut reader = &mut self.readers[reader_index];
+                let reader = &mut self.readers[reader_index];
 
                 win32_trace!("[# {:?}] result for receiver {:?}", *self.iocp, *reader.handle);
 
