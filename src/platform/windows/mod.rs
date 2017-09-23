@@ -297,10 +297,16 @@ impl Deref for WinHandle {
 
 impl PartialEq for WinHandle {
     fn eq(&self, other: &WinHandle) -> bool {
-        // FIXME this is not correct!  We need to compare the object
-        // the handles refer to.  On Windows 10, we have:
+        // FIXME This does not actually implement the desired behaviour:
+        // we want a way to compare the underlying objects the handles refer to,
+        // rather than just comparing the handles.
+        //
+        // On Windows 10, we could use:
+        // ```
         // unsafe { kernel32::CompareObjectHandles(self.h, other.h) == winapi::TRUE }
-        // But that 
+        // ```
+        //
+        // This API call however is not available on older versions.
         self.h == other.h
     }
 }
@@ -1270,6 +1276,13 @@ impl Clone for OsIpcSharedMemory {
 
 impl PartialEq for OsIpcSharedMemory {
     fn eq(&self, other: &OsIpcSharedMemory) -> bool {
+        // Due to the way `WinHandle.eq()` is currently implemented,
+        // this only finds equality when comparing the very same SHM structure --
+        // it doesn't recognize cloned SHM structures as equal.
+        // (Neither when cloned explicitly, nor implicitly through an IPC transfer.)
+        //
+        // It's not clear though whether the inability to test this
+        // is really a meaningful limitation...
         self.handle == other.handle
     }
 }
