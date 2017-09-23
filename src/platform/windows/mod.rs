@@ -33,21 +33,22 @@ lazy_static! {
     static ref DEBUG_TRACE_ENABLED: bool = { env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some() };
 }
 
-// some debug bump macros to better track what's going on in case of errors
+/// Debug macro to better track what's going on in case of errors.
 macro_rules! win32_trace { ($($rest:tt)*) => {
     if cfg!(feature = "win32-trace") {
         if *DEBUG_TRACE_ENABLED { println!($($rest)*); }
     }
 } }
 
-// When we create the pipe, how big of a write buffer do we specify?
-// This is reserved in the nonpaged pool.  The fragment size is the
-// max we can write to the pipe without fragmentation, and the
-// buffer size is what we tell the pipe it is, so we have room
-// for out of band data etc.
+/// When we create the pipe, how big of a write buffer do we specify?
+///
+/// This is reserved in the nonpaged pool.  The fragment size is the
+/// max we can write to the pipe without fragmentation, and the
+/// buffer size is what we tell the pipe it is, so we have room
+/// for out of band data etc.
 const MAX_FRAGMENT_SIZE: usize = 64 * 1024;
 
-// Size of the pipe's write buffer, with excess room for the header.
+/// Size of the pipe's write buffer, with excess room for the header.
 const PIPE_BUFFER_SIZE: usize = MAX_FRAGMENT_SIZE + 4 * 1024;
 
 #[allow(non_snake_case)]
@@ -67,7 +68,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),WinError> {
     Ok((sender, receiver))
 }
 
-// Holds data len and out-of-band data len
+/// Holds data len and out-of-band data len.
 struct MessageHeader(u32, u32);
 
 impl MessageHeader {
@@ -137,26 +138,26 @@ impl<'data> Message<'data> {
     }
 }
 
-// If we have any channel handles or shmem segments, then we'll send an
-// OutOfBandMessage after the data message.
-//
-// This includes the receiver's process ID, which the receiver checks to
-// make sure that the message was originally sent to it, and was not sitting
-// in another channel's buffer when that channel got transferred to another
-// process.  On Windows, we duplicate handles on the sender side to a specific
-// reciever.  If the wrong receiver gets it, those handles are not valid.
-//
-// TODO(vlad): We could attempt to recover from the above situation by
-// duplicating from the intended target process to ourselves (the receiver).
-// That would only work if the intended process a) still exists; b) can be
-// opened by the receiver with handle dup privileges.  Another approach
-// could be to use a separate dedicated process intended purely for handle
-// passing, though that process would need to be global to any processes
-// amongst which you want to share channels or connect one-shot servers to.
-// There may be a system process that we could use for this purpose, but
-// I haven't foundone -- and in the system process case, we'd need to ensure
-// that we don't leak the handles (e.g. dup a handle to the system process,
-// and then everything dies -- we don't want those resources to be leaked).
+/// If we have any channel handles or shmem segments, then we'll send an
+/// OutOfBandMessage after the data message.
+///
+/// This includes the receiver's process ID, which the receiver checks to
+/// make sure that the message was originally sent to it, and was not sitting
+/// in another channel's buffer when that channel got transferred to another
+/// process.  On Windows, we duplicate handles on the sender side to a specific
+/// reciever.  If the wrong receiver gets it, those handles are not valid.
+///
+/// TODO(vlad): We could attempt to recover from the above situation by
+/// duplicating from the intended target process to ourselves (the receiver).
+/// That would only work if the intended process a) still exists; b) can be
+/// opened by the receiver with handle dup privileges.  Another approach
+/// could be to use a separate dedicated process intended purely for handle
+/// passing, though that process would need to be global to any processes
+/// amongst which you want to share channels or connect one-shot servers to.
+/// There may be a system process that we could use for this purpose, but
+/// I haven't found one -- and in the system process case, we'd need to ensure
+/// that we don't leak the handles (e.g. dup a handle to the system process,
+/// and then everything dies -- we don't want those resources to be leaked).
 #[derive(Debug)]
 struct OutOfBandMessage {
     target_process_id: u32,
@@ -216,11 +217,11 @@ fn make_pipe_name(pipe_id: &Uuid) -> CString {
     CString::new(format!("\\\\.\\pipe\\rust-ipc-{}", pipe_id.to_string())).unwrap()
 }
 
-// Duplicate a given handle from this process to the target one, passing the
-// given flags to DuplicateHandle.
-//
-// Unlike win32 DuplicateHandle, this will preserve INVALID_HANDLE_VALUE (which is
-// also the pseudohandle for the current process).
+/// Duplicate a given handle from this process to the target one, passing the
+/// given flags to DuplicateHandle.
+///
+/// Unlike win32 DuplicateHandle, this will preserve INVALID_HANDLE_VALUE (which is
+/// also the pseudohandle for the current process).
 unsafe fn dup_handle_to_process_with_flags(handle: HANDLE, other_process: HANDLE, flags: winapi::DWORD)
                                     -> Result<HANDLE,WinError>
 {
@@ -239,12 +240,12 @@ unsafe fn dup_handle_to_process_with_flags(handle: HANDLE, other_process: HANDLE
     }
 }
 
-// duplicate a handle in the current process
+/// Duplicate a handle in the current process.
 fn dup_handle(handle: &WinHandle) -> Result<WinHandle,WinError> {
     dup_handle_to_process(handle, &WinHandle::new(*CURRENT_PROCESS_HANDLE as HANDLE))
 }
 
-// duplicate a handle to the target process
+/// Duplicate a handle to the target process.
 fn dup_handle_to_process(handle: &WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
     unsafe {
         let h = try!(dup_handle_to_process_with_flags(
@@ -253,7 +254,7 @@ fn dup_handle_to_process(handle: &WinHandle, other_process: &WinHandle) -> Resul
     }
 }
 
-// duplicate a handle to the target process, closing the source handle
+/// Duplicate a handle to the target process, closing the source handle.
 fn move_handle_to_process(handle: &mut WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
     unsafe {
         let h = try!(dup_handle_to_process_with_flags(
@@ -333,29 +334,34 @@ enum GetMessageResult {
     Message(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
 }
 
-// MessageReader implements blocking/nonblocking reads of messages
-// from the handle
+/// Main object keeping track of a receive handle and its associated state.
+///
+/// Implements blocking/nonblocking reads of messages from the handle.
 #[derive(Debug)]
 struct MessageReader {
-    // The pipe read handle
+    /// The pipe read handle.
     handle: WinHandle,
 
-    // The OVERLAPPED struct for async IO on this receiver; we'll only
-    // ever have one in flight
+    /// The OVERLAPPED struct for async IO on this receiver.
+    ///
+    /// We'll only ever have one in flight.
     ov: Box<winapi::OVERLAPPED>,
 
-    // A read buffer for any pending reads
+    /// A read buffer for any pending reads.
     read_buf: Vec<u8>,
 
-    // If we have already issued an async read
+    /// Whether we have already issued an async read.
     read_in_progress: bool,
 
-    // If we received a BROKEN_PIPE or other error
-    // indicating that the remote end has closed the pipe
+    /// Whether we received a BROKEN_PIPE or other error
+    /// indicating that the remote end has closed the pipe.
     closed: bool,
 
-    // If this is part of a Set, then this is the ID that is used to identify
-    // this reader.  If this is None, then this isn't part of a set.
+    /// Token identifying the reader/receiver within an `OsIpcReceiverSet`.
+    ///
+    /// This is returned to callers of `OsIpcReceiverSet.add()` and `OsIpcReceiverSet.select()`.
+    ///
+    /// `None` if this `MessageReader` is not part of any set.
     set_id: Option<u64>,
 }
 
@@ -380,7 +386,7 @@ impl MessageReader {
         }
     }
 
-    // Called when we receive an IO Completion Packet for this handle.
+    /// Called when we receive an IO Completion Packet for this handle.
     fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
         win32_trace!("[$ {:?}] notify_completion", self.handle);
 
@@ -415,7 +421,7 @@ impl MessageReader {
         Ok(())
     }
 
-    // kick off an asynchronous read
+    /// Kick off an asynchronous read.
     fn start_read(&mut self) -> Result<(),WinError> {
         if self.read_in_progress || self.closed {
             return Ok(());
@@ -557,9 +563,12 @@ impl MessageReader {
         }
     }
 
-    // This is a specialized read when the buffser size is known ahead of time,
-    // and without our typical message framing.  It's only valid to call this
-    // as the one and only call after creating a MessageReader.
+    /// Specialized read for out-of-band data ports.
+    ///
+    /// Here the buffer size is known in advance,
+    /// and the transfer doesn't have our typical message framing.
+    ///
+    /// It's only valid to call this as the one and only call after creating a MessageReader.
     fn read_raw_sized(&mut self, size: usize) -> Result<Vec<u8>,WinError> {
         assert!(self.read_buf.len() == 0);
 
@@ -609,8 +618,16 @@ impl MessageReader {
 
 #[derive(Debug)]
 pub struct OsIpcReceiver {
-    // A MessageReader that implements most of the work of this
-    // MessageReader
+    /// The receive handle and its associated state.
+    ///
+    /// We can't just deal with raw handles like in the other platform back-ends,
+    /// since this implementation -- using plain pipes with no native packet handling --
+    /// requires keeping track of various bits of receiver state,
+    /// which must not be separated from the handle itself.
+    ///
+    /// Note: Inner mutability is necessary,
+    /// since the `consume()` method needs to move out the reader
+    /// despite only getting a shared reference to `self`.
     reader: RefCell<MessageReader>,
 }
 
@@ -743,7 +760,9 @@ impl OsIpcReceiver {
         self.receive_message(false)
     }
 
-    // Do a pipe connect.  Only used for one-shot servers
+    /// Do a pipe connect.
+    ///
+    /// Only used for one-shot servers.
     fn accept(&mut self) -> Result<(),WinError> {
         unsafe {
             let reader_borrow = self.reader.borrow();
@@ -791,9 +810,10 @@ impl OsIpcReceiver {
         }
     }
 
-    // Does a single explicitly-sized recv from the handle, consuming
-    // the receiver in the process.  This is used for receiving data
-    // from the out-of-band big data buffer.
+    /// Does a single explicitly-sized recv from the handle,
+    /// consuming the receiver in the process.
+    ///
+    /// This is used for receiving data from the out-of-band big data buffer.
     fn recv_raw(self, size: usize) -> Result<Vec<u8>, WinError> {
         self.reader.borrow_mut().read_raw_sized(size)
     }
@@ -801,7 +821,6 @@ impl OsIpcReceiver {
 
 #[derive(Debug, PartialEq)]
 pub struct OsIpcSender {
-    // The client hande itself
     handle: WinHandle,
     // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
     //
@@ -821,8 +840,12 @@ impl Clone for OsIpcSender {
     }
 }
 
-// Write_msg, unlike write_buf, requires that bytes be sent
-// in one operation.
+/// Atomic write to a handle.
+///
+/// Fails if the data can't be written in a single system call.
+/// This is important, since otherwise concurrent sending
+/// could result in parts of different messages getting intermixed,
+/// and we would not be able to extract the individual messages.
 fn write_msg(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
     if bytes.len() == 0 {
         return Ok(());
@@ -848,6 +871,10 @@ fn write_msg(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
     Ok(())
 }
 
+/// Non-atomic write to a handle.
+///
+/// Can be used for writes to an exclusive pipe,
+/// where the send being split up into several calls poses no danger.
 fn write_buf(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
     let total = bytes.len();
     if total == 0 {
@@ -893,7 +920,7 @@ impl OsIpcSender {
         }
     }
 
-    // Connect to a pipe server
+    /// Connect to a pipe server.
     fn connect_named(pipe_name: &CString) -> Result<OsIpcSender,WinError> {
         unsafe {
             let handle =
@@ -952,8 +979,7 @@ impl OsIpcSender {
         data_len >= bytes_left_for_data
     }
 
-    // An internal-use-only send method that sends just raw data, with
-    // no header.
+    /// An internal-use-only send method that sends just raw data, with no header.
     fn send_raw(&self, data: &[u8]) -> Result<(),WinError> {
         win32_trace!("[c {:?}] writing {} bytes raw to (pid {}->{})", *self.handle, data.len(), *CURRENT_PROCESS_ID,
              try!(self.get_pipe_server_process_id()));
@@ -1063,13 +1089,13 @@ pub enum OsIpcSelectionResult {
 }
 
 pub struct OsIpcReceiverSet {
-    // Our incrementor, for unique handle IDs
+    /// Our incrementor, for unique handle IDs.
     incrementor: RangeFrom<u64>,
 
-    // the IOCP that we select on
+    /// The IOCP that we select on.
     iocp: WinHandle,
 
-    // The set of receivers, stored as MessageReaders
+    /// The set of receivers, stored as MessageReaders.
     readers: Vec<MessageReader>,
 }
 
