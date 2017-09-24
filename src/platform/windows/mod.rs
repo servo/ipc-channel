@@ -391,25 +391,43 @@ impl MessageReader {
 
         win32_trace!("[$ {:?}] start_read", self.handle);
 
-        unsafe {
-            let buf_len = self.read_buf.len();
-            let mut buf_cap = self.read_buf.capacity();
-            let mut bytes_read: u32 = 0;
+        if self.read_buf.len() == self.read_buf.capacity() {
+            self.read_buf.reserve(PIPE_BUFFER_SIZE);
+        }
 
-            if buf_len == buf_cap {
-                self.read_buf.reserve(PIPE_BUFFER_SIZE);
-                buf_cap = self.read_buf.capacity();
-            }
+        unsafe {
+            // Temporarily extend the vector to span its entire capacity,
+            // so we can safely sub-slice it for the actual read.
+            let buf_len = self.read_buf.len();
+            let buf_cap = self.read_buf.capacity();
+            self.read_buf.set_len(buf_cap);
 
             // issue the read to the buffer, at the current length offset
             *self.ov.deref_mut() = mem::zeroed();
-            let buf_ptr = self.read_buf.as_mut_ptr() as LPVOID;
-            let max_read_bytes = buf_cap - buf_len;
-            let ok = kernel32::ReadFile(*self.handle,
-                                        buf_ptr.offset(buf_len as isize),
-                                        max_read_bytes as u32,
-                                        &mut bytes_read,
-                                        self.ov.deref_mut());
+            let mut bytes_read: u32 = 0;
+            let ok = {
+                let remaining_buf = &mut self.read_buf[buf_len..];
+                kernel32::ReadFile(*self.handle,
+                                   remaining_buf.as_mut_ptr() as LPVOID,
+                                   remaining_buf.len() as u32,
+                                   &mut bytes_read,
+                                   self.ov.deref_mut())
+            };
+
+            // Reset the vector to only expose the already filled part.
+            //
+            // This means that the async read
+            // will actually fill memory beyond the exposed part of the vector.
+            // While this use of a vector is officially sanctioned for such cases,
+            // it still feel rather icky to me...
+            //
+            // On the other hand, this way we make sure
+            // the buffer never appears to have more valid data
+            // than what is actually present,
+            // which could pose a potential danger in its own right.
+            // Also, it avoids the need to keep a separate state variable --
+            // which would bear some risk of getting out of sync.
+            self.read_buf.set_len(buf_len);
 
             // ReadFile can return TRUE; if it does, an IO completion
             // packet is still posted to any port, and the OVERLAPPED
@@ -584,17 +602,26 @@ impl MessageReader {
                 let ov = self.ov.deref_mut();
                 *ov = mem::zeroed();
 
+                // Temporarily extend the vector to span its entire capacity,
+                // so we can safely sub-slice it for the actual read.
                 let buf_len = buf.len();
-                let dest_ptr = buf.as_mut_ptr().offset(buf_len as isize) as LPVOID;
+                let buf_cap = buf.capacity();
+                buf.set_len(buf_cap);
 
-                let bytes_left = (size - buf_len) as u32;
                 let mut bytes_read: u32 = 0;
+                let ok = {
+                    let remaining_buf = &mut buf[buf_len..];
+                    kernel32::ReadFile(*self.handle,
+                                       remaining_buf.as_mut_ptr() as LPVOID,
+                                       remaining_buf.len() as u32,
+                                       &mut bytes_read,
+                                       ov)
+                };
 
-                let ok = kernel32::ReadFile(*self.handle,
-                                            dest_ptr,
-                                            bytes_left,
-                                            &mut bytes_read,
-                                            ov);
+                // Restore the original size before error handling,
+                // so we never leave the function with the buffer exposing uninitialized data.
+                buf.set_len(buf_len);
+
                 if ok == winapi::FALSE && GetLastError() != winapi::ERROR_IO_PENDING {
                     return Err(WinError::last("ReadFile"));
                 }
