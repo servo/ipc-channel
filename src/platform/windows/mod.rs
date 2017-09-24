@@ -331,11 +331,6 @@ impl WinHandle {
     }
 }
 
-enum GetMessageResult {
-    NoMessage,
-    Message(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
-}
-
 /// Main object keeping track of a receive handle and its associated state.
 ///
 /// Implements blocking/nonblocking reads of messages from the handle.
@@ -490,7 +485,8 @@ impl MessageReader {
     // This is split between get_message and get_message_inner, so that
     // this function can handle removing bytes from the buffer, since
     // get_message_inner borrows the buffer.
-    fn get_message(&mut self) -> Result<GetMessageResult, WinError> {
+    fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
+                                        WinError> {
         let drain_bytes;
         let result;
         if let Some(message) = Message::from_bytes(&self.read_buf) {
@@ -525,10 +521,10 @@ impl MessageReader {
             win32_trace!("[$ {:?}] get_message success -> {} bytes, {} channels, {} shmems",
                 self.handle, buf_data.len(), channels.len(), shmems.len());
             drain_bytes = Some(message.size());
-            result = GetMessageResult::Message(buf_data, channels, shmems);
+            result = Some((buf_data, channels, shmems));
         } else {
             drain_bytes = None;
-            result = GetMessageResult::NoMessage;
+            result = None;
         }
 
         if let Some(size) = drain_bytes {
@@ -703,9 +699,9 @@ impl OsIpcReceiver {
                 // First, try to fetch a message, in case we have one pending
                 // in the reader's receive buffer
                 match try!(reader.get_message()) {
-                    GetMessageResult::Message(data, channels, shmems) =>
+                    Some((data, channels, shmems)) =>
                         return Ok((data, channels, shmems)),
-                    GetMessageResult::NoMessage =>
+                    None =>
                         {},
                 }
 
@@ -1226,11 +1222,11 @@ impl OsIpcReceiverSet {
                 // then drain as many messages as we can
                 loop {
                     match try!(reader.get_message()) {
-                        GetMessageResult::Message(data, channels, shmems) => {
+                        Some((data, channels, shmems)) => {
                             win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
                             selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
                         },
-                        GetMessageResult::NoMessage => {
+                        None => {
                             win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", *self.iocp, *reader.handle, reader.set_id.unwrap());
                             break;
                         },
