@@ -449,7 +449,12 @@ impl MessageReader {
     }
 
     /// Called when we receive an IO Completion Packet for this handle.
-    fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
+    ///
+    /// Unsafe, since calling this with an invalid object or at the wrong time
+    /// could result in uninitialized data being passed off as valid.
+    /// While this may seem less critical than other memory errors,
+    /// it can also break type safety.
+    unsafe fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
         win32_trace!("[$ {:?}] notify_completion", self.handle);
 
         // mark a read as no longer in progress even before we check errors
@@ -472,13 +477,11 @@ impl MessageReader {
             panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
         }
 
-        unsafe {
-            let new_size = self.read_buf.len() + nbytes as usize;
-            win32_trace!("nbytes: {}, offset {}, buf len {}->{}, capacity {}",
-                nbytes, offset, self.read_buf.len(), new_size, self.read_buf.capacity());
-            assert!(new_size <= self.read_buf.capacity());
-            self.read_buf.set_len(new_size);
-        }
+        let new_size = self.read_buf.len() + nbytes as usize;
+        win32_trace!("nbytes: {}, offset {}, buf len {}->{}, capacity {}",
+            nbytes, offset, self.read_buf.len(), new_size, self.read_buf.capacity());
+        assert!(new_size <= self.read_buf.capacity());
+        self.read_buf.set_len(new_size);
 
         Ok(())
     }
@@ -1213,7 +1216,7 @@ impl OsIpcReceiverSet {
                 win32_trace!("[# {:?}] result for receiver {:?}", *self.iocp, *reader.handle);
 
                 // tell it about the completed IO op
-                try!(reader.notify_completion(io_err));
+                unsafe { try!(reader.notify_completion(io_err)); }
 
                 // then drain as many messages as we can
                 loop {
