@@ -387,41 +387,6 @@ impl MessageReader {
         }
     }
 
-    /// Called when we receive an IO Completion Packet for this handle.
-    fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
-        win32_trace!("[$ {:?}] notify_completion", self.handle);
-
-        // mark a read as no longer in progress even before we check errors
-        self.read_in_progress = false;
-
-        if err == winapi::ERROR_BROKEN_PIPE {
-            assert!(!self.closed, "we shouldn't get an async BROKEN_PIPE after we already got one");
-            self.closed = true;
-            return Ok(());
-        }
-
-        let nbytes = self.ov.InternalHigh as u32;
-        let offset = self.ov.Offset;
-
-        assert!(offset == 0);
-
-        // if the remote end closed...
-        if err != winapi::ERROR_SUCCESS {
-            // This should never happen
-            panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
-        }
-
-        unsafe {
-            let new_size = self.read_buf.len() + nbytes as usize;
-            win32_trace!("nbytes: {}, offset {}, buf len {}->{}, capacity {}",
-                nbytes, offset, self.read_buf.len(), new_size, self.read_buf.capacity());
-            assert!(new_size <= self.read_buf.capacity());
-            self.read_buf.set_len(new_size);
-        }
-
-        Ok(())
-    }
-
     /// Kick off an asynchronous read.
     fn start_read(&mut self) -> Result<(),WinError> {
         if self.read_in_progress || self.closed {
@@ -481,6 +446,41 @@ impl MessageReader {
                 Ok(())
             }
         }
+    }
+
+    /// Called when we receive an IO Completion Packet for this handle.
+    fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
+        win32_trace!("[$ {:?}] notify_completion", self.handle);
+
+        // mark a read as no longer in progress even before we check errors
+        self.read_in_progress = false;
+
+        if err == winapi::ERROR_BROKEN_PIPE {
+            assert!(!self.closed, "we shouldn't get an async BROKEN_PIPE after we already got one");
+            self.closed = true;
+            return Ok(());
+        }
+
+        let nbytes = self.ov.InternalHigh as u32;
+        let offset = self.ov.Offset;
+
+        assert!(offset == 0);
+
+        // if the remote end closed...
+        if err != winapi::ERROR_SUCCESS {
+            // This should never happen
+            panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
+        }
+
+        unsafe {
+            let new_size = self.read_buf.len() + nbytes as usize;
+            win32_trace!("nbytes: {}, offset {}, buf len {}->{}, capacity {}",
+                nbytes, offset, self.read_buf.len(), new_size, self.read_buf.capacity());
+            assert!(new_size <= self.read_buf.capacity());
+            self.read_buf.set_len(new_size);
+        }
+
+        Ok(())
     }
 
     // This is split between get_message and get_message_inner, so that
