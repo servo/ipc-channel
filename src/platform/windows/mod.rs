@@ -396,17 +396,17 @@ impl MessageReader {
 
         win32_trace!("[$ {:?}] start_read", self.handle);
 
-        let buf_len = self.read_buf.len();
-        let mut buf_cap = self.read_buf.capacity();
-        let mut bytes_read: u32 = 0;
-
-        if buf_len == buf_cap {
-            self.read_buf.reserve(PIPE_BUFFER_SIZE);
-            buf_cap = self.read_buf.capacity();
-        }
-
-        // issue the read to the buffer, at the current length offset
         unsafe {
+            let buf_len = self.read_buf.len();
+            let mut buf_cap = self.read_buf.capacity();
+            let mut bytes_read: u32 = 0;
+
+            if buf_len == buf_cap {
+                self.read_buf.reserve(PIPE_BUFFER_SIZE);
+                buf_cap = self.read_buf.capacity();
+            }
+
+            // issue the read to the buffer, at the current length offset
             *self.ov.deref_mut() = mem::zeroed();
             let buf_ptr = self.read_buf.as_mut_ptr() as LPVOID;
             let max_read_bytes = buf_cap - buf_len;
