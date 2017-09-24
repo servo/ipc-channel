@@ -865,8 +865,6 @@ pub struct OsIpcSender {
     nosync_marker: PhantomData<Cell<()>>,
 }
 
-unsafe impl Send for OsIpcSender { }
-
 impl Clone for OsIpcSender {
     fn clone(&self) -> OsIpcSender {
         unsafe {
