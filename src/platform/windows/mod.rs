@@ -1437,11 +1437,11 @@ impl OsOpaqueIpcChannel {
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {
-        unsafe { OsIpcReceiver::from_handle(self.handle) }
+        unsafe { OsIpcReceiver::from_handle(mem::replace(&mut self.handle, INVALID_HANDLE_VALUE)) }
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
-        unsafe { OsIpcSender::from_handle(self.handle) }
+        unsafe { OsIpcSender::from_handle(mem::replace(&mut self.handle, INVALID_HANDLE_VALUE)) }
     }
 }
 
