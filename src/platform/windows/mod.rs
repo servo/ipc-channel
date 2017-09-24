@@ -666,7 +666,7 @@ impl OsIpcReceiver {
         }
     }
 
-    fn prepare_for_transfer(&mut self) -> Result<bool,WinError> {
+    fn prepare_for_transfer(&self) -> Result<bool,WinError> {
         let mut reader = self.reader.borrow_mut();
         // cancel any outstanding IO request
         reader.cancel_io();
@@ -760,7 +760,7 @@ impl OsIpcReceiver {
     /// Do a pipe connect.
     ///
     /// Only used for one-shot servers.
-    fn accept(&mut self) -> Result<(),WinError> {
+    fn accept(&self) -> Result<(),WinError> {
         unsafe {
             let reader_borrow = self.reader.borrow();
             let handle = *reader_borrow.handle;
@@ -1015,7 +1015,7 @@ impl OsIpcSender {
                     let mut raw_remote_handle = try!(move_handle_to_process(&mut s.handle, &server_h));
                     oob.channel_handles.push(raw_remote_handle.take() as intptr_t);
                 },
-                OsIpcChannel::Receiver(mut r) => {
+                OsIpcChannel::Receiver(r) => {
                     if try!(r.prepare_for_transfer()) == false {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
@@ -1407,7 +1407,7 @@ impl OsIpcOneShotServer {
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>),WinError> {
-        let mut receiver = self.receiver;
+        let receiver = self.receiver;
         try!(receiver.accept());
         let (data, channels, shmems) = try!(receiver.recv());
         Ok((receiver, data, channels, shmems))
