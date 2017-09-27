@@ -343,6 +343,10 @@ struct MessageReader {
     /// The OVERLAPPED struct for async IO on this receiver.
     ///
     /// We'll only ever have one in flight.
+    ///
+    /// This must be on the heap, so its memory location --
+    /// which is registered in the kernel during an async read --
+    /// remains stable even when the enclosing structure is passed around.
     ov: Box<winapi::OVERLAPPED>,
 
     /// A read buffer for any pending reads.
