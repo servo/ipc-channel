@@ -365,6 +365,14 @@ struct MessageReader {
     set_id: Option<u64>,
 }
 
+impl Drop for MessageReader {
+    fn drop(&mut self) {
+        // Before dropping the `ov` structure and read buffer,
+        // make sure the kernel won't do any more async updates to them!
+        self.cancel_io();
+    }
+}
+
 impl MessageReader {
     fn new(handle: WinHandle) -> MessageReader {
         MessageReader {
