@@ -1063,7 +1063,7 @@ impl OsIpcSender {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
 
-                    let mut raw_remote_handle = try!(move_handle_to_process(&mut r.reader.borrow_mut().handle, &server_h));
+                    let mut raw_remote_handle = try!(move_handle_to_process(&mut r.reader.into_inner().handle, &server_h));
                     oob.channel_handles.push(raw_remote_handle.take() as intptr_t);
                 },
             }
@@ -1082,7 +1082,7 @@ impl OsIpcSender {
                 };
 
                 // Put the receiver in the OOB data
-                let mut raw_receiver_handle = try!(move_handle_to_process(&mut receiver.reader.borrow_mut().handle, &server_h));
+                let mut raw_receiver_handle = try!(move_handle_to_process(&mut receiver.reader.into_inner().handle, &server_h));
                 oob.big_data_receiver_handle = Some((raw_receiver_handle.take() as intptr_t, data.len() as u64));
                 oob.target_process_id = server_pid;
 
