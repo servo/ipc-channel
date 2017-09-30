@@ -666,6 +666,19 @@ pub struct OsIpcReceiver {
     reader: RefCell<MessageReader>,
 }
 
+// We need to explicitly declare this, because of the raw pointer
+// contained in the `OVERLAPPED` structure inside `MessageReader`.
+//
+// Note: the `Send` claim is only really fulfilled
+// as long as nothing can ever alias the aforementioned raw pointer.
+// While this seems to be true as far as I can tell,
+// it's a rather fragile condition, which should be managed much more tightly
+// (along with `OVERLAPPED` in general): at `MessageReader` level, at the very most.
+// The current implementation doesn't follow such a strict encapsulation however,
+// with accesses to `reader.ov` happening outside the `MessageReader` implementation
+// in various places throughout `OsIpcReceiver` --
+// so for now, `OsIpcReceiver` needs to be considered responsible as a whole
+// for upholding the non-aliasing condition.
 unsafe impl Send for OsIpcReceiver { }
 
 impl PartialEq for OsIpcReceiver {
