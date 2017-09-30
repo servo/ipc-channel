@@ -655,6 +655,12 @@ impl MessageReader {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum BlockingMode {
+    Blocking,
+    Nonblocking,
+}
+
 #[derive(Debug)]
 pub struct OsIpcReceiver {
     /// The receive handle and its associated state.
@@ -731,7 +737,7 @@ impl OsIpcReceiver {
         unsafe { OsIpcReceiver::from_handle(reader.handle.take()) }
     }
 
-    fn receive_message(&self, mut block: bool)
+    fn receive_message(&self, mut blocking_mode: BlockingMode)
                        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
         // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
         // the implementation in select() is used.  It does much the same thing, but across multiple
@@ -773,11 +779,17 @@ impl OsIpcReceiver {
                 // Then, get the overlapped result, blocking if we need to.
                 let mut nbytes: u32 = 0;
                 let mut err = winapi::ERROR_SUCCESS;
-                let ok = kernel32::GetOverlappedResult(*reader.handle, reader.ov.deref_mut(), &mut nbytes,
-                                                       if block { winapi::TRUE } else { winapi::FALSE });
+                let block = match blocking_mode {
+                    BlockingMode::Blocking => winapi::TRUE,
+                    BlockingMode::Nonblocking => winapi::FALSE,
+                };
+                let ok = kernel32::GetOverlappedResult(*reader.handle,
+                                                       reader.ov.deref_mut(),
+                                                       &mut nbytes,
+                                                       block);
                 if ok == winapi::FALSE {
                     err = GetLastError();
-                    if !block && err == winapi::ERROR_IO_INCOMPLETE {
+                    if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
                         // Nonblocking read, no message, read's in flight, we're
                         // done.  An error is expected in this case.
                         return Err(WinError::NoData);
@@ -792,7 +804,7 @@ impl OsIpcReceiver {
 
                 // If we're not blocking, pretend that we are blocking, since we got part of
                 // a message already.  Keep reading until we get a complete message.
-                block = true;
+                blocking_mode = BlockingMode::Blocking;
             }
         }
     }
@@ -800,13 +812,13 @@ impl OsIpcReceiver {
     pub fn recv(&self)
                 -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
         win32_trace!("recv");
-        self.receive_message(true)
+        self.receive_message(BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
                     -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
         win32_trace!("try_recv");
-        self.receive_message(false)
+        self.receive_message(BlockingMode::Nonblocking)
     }
 
     /// Do a pipe connect.
