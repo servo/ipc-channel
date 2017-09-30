@@ -718,10 +718,9 @@ impl OsIpcReceiver {
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
-        let reader = self.reader.borrow();
+        let mut reader = self.reader.borrow_mut();
         assert!(!reader.read_in_progress);
-        let mut handle = dup_handle(&reader.handle).unwrap();
-        unsafe { OsIpcReceiver::from_handle(handle.take()) }
+        unsafe { OsIpcReceiver::from_handle(reader.handle.take()) }
     }
 
     fn receive_message(&self, mut block: bool)
