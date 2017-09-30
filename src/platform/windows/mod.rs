@@ -718,7 +718,9 @@ impl OsIpcReceiver {
     }
 
     pub fn consume(&self) -> OsIpcReceiver {
-        let mut handle = dup_handle(&self.reader.borrow().handle).unwrap();
+        let reader = self.reader.borrow();
+        assert!(!reader.read_in_progress);
+        let mut handle = dup_handle(&reader.handle).unwrap();
         unsafe { OsIpcReceiver::from_handle(handle.take()) }
     }
 
