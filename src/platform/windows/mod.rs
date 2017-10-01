@@ -737,18 +737,17 @@ impl OsIpcReceiver {
         unsafe { OsIpcReceiver::from_handle(reader.handle.take()) }
     }
 
+    // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
+    // the implementation in select() is used.  It does much the same thing, but across multiple
+    // channels.
     fn receive_message(&self, mut blocking_mode: BlockingMode)
                        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
-        // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
-        // the implementation in select() is used.  It does much the same thing, but across multiple
-        // channels.
-
-        // This function loops, because in the case of a blocking read, we may need to
-        // read multiple sets of bytes from the pipe to receive a complete message.
         unsafe {
             let mut reader = self.reader.borrow_mut();
             assert!(reader.set_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
 
+            // This function loops, because in the case of a blocking read, we may need to
+            // read multiple sets of bytes from the pipe to receive a complete message.
             loop {
                 // First, try to fetch a message, in case we have one pending
                 // in the reader's receive buffer
