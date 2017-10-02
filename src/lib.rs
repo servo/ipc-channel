@@ -42,4 +42,4 @@ pub mod router;
 #[cfg(test)]
 mod test;
 
-pub use bincode::Error;
+pub use bincode::{Error, ErrorKind};
