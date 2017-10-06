@@ -877,20 +877,20 @@ impl OsIpcReceiver {
                     Ok(())
                 },
 
-                // was it an actual error?
-                err if err != winapi::ERROR_IO_PENDING => {
-                    win32_trace!("[$ {:?}] accept error -> {}", handle, err);
-                    Err(WinError::last("ConnectNamedPipe"))
-                },
-
                 // the connect is pending; wait for it to complete
-                _ /* winapi::ERROR_IO_PENDING */ => {
+                winapi::ERROR_IO_PENDING => {
                     let mut nbytes: u32 = 0;
                     let ok = kernel32::GetOverlappedResult(handle, ov.deref_mut(), &mut nbytes, winapi::TRUE);
                     if ok == winapi::FALSE {
                         return Err(WinError::last("GetOverlappedResult[ConnectNamedPipe]"));
                     }
                     Ok(())
+                },
+
+                // Anything else signifies some actual I/O error.
+                err => {
+                    win32_trace!("[$ {:?}] accept error -> {}", handle, err);
+                    Err(WinError::last("ConnectNamedPipe"))
                 },
             }
         }
