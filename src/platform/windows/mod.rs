@@ -804,28 +804,28 @@ impl OsIpcReceiver {
     // channels.
     fn receive_message(&self, mut blocking_mode: BlockingMode)
                        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
-        unsafe {
-            let mut reader = self.reader.borrow_mut();
-            assert!(reader.set_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
+        let mut reader = self.reader.borrow_mut();
+        assert!(reader.set_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
 
-            // This function loops, because in the case of a blocking read, we may need to
-            // read multiple sets of bytes from the pipe to receive a complete message.
-            loop {
-                // First, try to fetch a message, in case we have one pending
-                // in the reader's receive buffer
-                match try!(reader.get_message()) {
-                    Some((data, channels, shmems)) =>
-                        return Ok((data, channels, shmems)),
-                    None =>
-                        {},
-                }
+        // This function loops, because in the case of a blocking read, we may need to
+        // read multiple sets of bytes from the pipe to receive a complete message.
+        loop {
+            // First, try to fetch a message, in case we have one pending
+            // in the reader's receive buffer
+            match try!(reader.get_message()) {
+                Some((data, channels, shmems)) =>
+                    return Ok((data, channels, shmems)),
+                None =>
+                    {},
+            }
 
-                // If the pipe was already closed, we're done -- we've
-                // already drained all incoming bytes
-                if reader.closed {
-                    return Err(WinError::ChannelClosed);
-                }
+            // If the pipe was already closed, we're done -- we've
+            // already drained all incoming bytes
+            if reader.closed {
+                return Err(WinError::ChannelClosed);
+            }
 
+            unsafe {
                 // Then, issue a read if we don't have one already in flight.
                 // We must not issue a read if we have complete unconsumed
                 // messages, because getting a message modifies the read_buf.
@@ -872,11 +872,11 @@ impl OsIpcReceiver {
                 // Notify that the read completed, which will update the
                 // read pointers
                 try!(reader.notify_completion(err));
-
-                // If we're not blocking, pretend that we are blocking, since we got part of
-                // a message already.  Keep reading until we get a complete message.
-                blocking_mode = BlockingMode::Blocking;
             }
+
+            // If we're not blocking, pretend that we are blocking, since we got part of
+            // a message already.  Keep reading until we get a complete message.
+            blocking_mode = BlockingMode::Blocking;
         }
     }
 
