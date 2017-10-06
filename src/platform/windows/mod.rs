@@ -914,7 +914,7 @@ impl OsIpcReceiver {
                 },
 
                 // This is a weird one -- if we create a named pipe (like we do
-                // in new(), the client connects, sends data, then drops its handle,
+                // in new() ), the client connects, sends data, then drops its handle,
                 // a Connect here will get ERROR_NO_DATA -- but there may be data in
                 // the pipe that we'll be able to read.  So we need to go do some reads
                 // like normal and wait until ReadFile gives us ERROR_NO_DATA.
