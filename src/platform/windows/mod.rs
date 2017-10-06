@@ -976,14 +976,14 @@ impl Clone for OsIpcSender {
 /// This is important, since otherwise concurrent sending
 /// could result in parts of different messages getting intermixed,
 /// and we would not be able to extract the individual messages.
-fn write_msg(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
+fn write_msg(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
     if bytes.len() == 0 {
         return Ok(());
     }
 
     let mut size: u32 = 0;
     unsafe {
-        if kernel32::WriteFile(handle,
+        if kernel32::WriteFile(**handle,
                                bytes.as_ptr() as LPVOID,
                                bytes.len() as u32,
                                &mut size,
@@ -1005,7 +1005,7 @@ fn write_msg(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
 ///
 /// Can be used for writes to an exclusive pipe,
 /// where the send being split up into several calls poses no danger.
-fn write_buf(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
+fn write_buf(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
     let total = bytes.len();
     if total == 0 {
         return Ok(());
@@ -1016,7 +1016,7 @@ fn write_buf(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
         let mut sz: u32 = 0;
         unsafe {
             let bytes_to_write = &bytes[written..];
-            if kernel32::WriteFile(handle,
+            if kernel32::WriteFile(**handle,
                                    bytes_to_write.as_ptr() as LPVOID,
                                    bytes_to_write.len() as u32,
                                    &mut sz,
@@ -1027,7 +1027,7 @@ fn write_buf(handle: HANDLE, bytes: &[u8]) -> Result<(),WinError> {
             }
         }
         written += sz as usize;
-        win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", handle, sz, written, bytes.len(), GetLastError());
+        win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, bytes.len(), GetLastError());
     }
 
     Ok(())
@@ -1114,7 +1114,7 @@ impl OsIpcSender {
         win32_trace!("[c {:?}] writing {} bytes raw to (pid {}->{})", *self.handle, data.len(), *CURRENT_PROCESS_ID,
              try!(self.get_pipe_server_process_id()));
 
-        write_buf(*self.handle, data)
+        write_buf(&self.handle, data)
     }
 
     pub fn send(&self,
@@ -1203,10 +1203,10 @@ impl OsIpcSender {
             if big_data_sender.is_none() {
                 &mut full_message[MessageHeader::size()..MessageHeader::size()+data.len()].clone_from_slice(data);
                 &mut full_message[MessageHeader::size()+data.len()..].clone_from_slice(&oob_data);
-                try!(write_msg(*self.handle, &full_message));
+                try!(write_msg(&self.handle, &full_message));
             } else {
                 &mut full_message[MessageHeader::size()..].clone_from_slice(&oob_data);
-                try!(write_msg(*self.handle, &full_message));
+                try!(write_msg(&self.handle, &full_message));
                 try!(big_data_sender.unwrap().send_raw(data));
             }
         }
