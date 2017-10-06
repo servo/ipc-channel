@@ -343,15 +343,39 @@ struct MessageReader {
     ///
     /// We'll only ever have one in flight.
     ///
-    /// This must be on the heap, so its memory location --
+    /// This must be on the heap, in order for its memory location --
     /// which is registered in the kernel during an async read --
-    /// remains stable even when the enclosing structure is passed around.
+    /// to remain stable even when the enclosing structure is passed around.
+    ///
+    /// WARNING: As the kernel holds a mutable alias of this structure
+    /// while an async read is in progress,
+    /// it is crucial that this value is never accessed in user space
+    /// from the moment we issue an async read in `start_read()`,
+    /// until the moment we process the event
+    /// signalling completion of the async read in `notify_completion()`.
+    ///
+    /// Since Rust's type system is not aware of the kernel alias,
+    /// the compiler cannot guarantee exclusive access the way it normally would,
+    /// i.e. any access to this value is inherently unsafe!
+    /// The only way to avoid undefined behaviour
+    /// is to always make sure the `read_in_progress` indicator is not set,
+    /// before performing any access to this value.
+    ///
+    /// (Unfortunately, there is no way to express this condition in the type system,
+    /// without some fundamental change to how we handle these fields...)
     ov: Box<winapi::OVERLAPPED>,
 
     /// A read buffer for any pending reads.
+    ///
+    /// WARNING: This has the same safety problem as `ov` above.
     read_buf: Vec<u8>,
 
-    /// Whether we have already issued an async read.
+    /// Indicates whether the kernel currently has an async read in flight for this port.
+    ///
+    /// WARNING: Rather than just managing our internal state,
+    /// this flag plays a critical role in keeping track of kernel aliasing
+    /// of the `ov` and `read_buf` fields, as explained in the comment for `ov'.
+    /// Thus it is crucial that we always set this correctly!
     read_in_progress: bool,
 
     /// Whether we received a BROKEN_PIPE or other error
@@ -396,7 +420,22 @@ impl MessageReader {
     }
 
     /// Kick off an asynchronous read.
-    fn start_read(&mut self) -> Result<(),WinError> {
+    ///
+    /// Note: This is *highly* unsafe, since upon successful return,
+    /// the `ov` and `read_buf` fields will be left mutably aliased by the kernel
+    /// (until we receive an event signalling completion of the async read) --
+    /// and Rust's type system doesn't know about these aliases!
+    ///
+    /// This means that after invoking this method,
+    /// up to the point where we receive the completion notification,
+    /// nothing is allowed to access the `ov` and `read_buf` fields;
+    /// but the compiler cannot guarantee this for us.
+    /// It is our responsibility to make sure of it --
+    /// i.e. all code on the path from invoking this method,
+    /// up to receiving the completion event, is unsafe.
+    ///
+    /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
+    unsafe fn start_read(&mut self) -> Result<(),WinError> {
         if self.read_in_progress || self.closed {
             return Ok(());
         }
@@ -407,83 +446,92 @@ impl MessageReader {
             self.read_buf.reserve(PIPE_BUFFER_SIZE);
         }
 
-        unsafe {
-            // Temporarily extend the vector to span its entire capacity,
-            // so we can safely sub-slice it for the actual read.
-            let buf_len = self.read_buf.len();
-            let buf_cap = self.read_buf.capacity();
-            self.read_buf.set_len(buf_cap);
+        // Temporarily extend the vector to span its entire capacity,
+        // so we can safely sub-slice it for the actual read.
+        let buf_len = self.read_buf.len();
+        let buf_cap = self.read_buf.capacity();
+        self.read_buf.set_len(buf_cap);
 
-            // issue the read to the buffer, at the current length offset
-            *self.ov.deref_mut() = mem::zeroed();
-            let mut bytes_read: u32 = 0;
-            let ok = {
-                let remaining_buf = &mut self.read_buf[buf_len..];
-                kernel32::ReadFile(*self.handle,
-                                   remaining_buf.as_mut_ptr() as LPVOID,
-                                   remaining_buf.len() as u32,
-                                   &mut bytes_read,
-                                   self.ov.deref_mut())
-            };
+        // issue the read to the buffer, at the current length offset
+        *self.ov.deref_mut() = mem::zeroed();
+        let mut bytes_read: u32 = 0;
+        let ok = {
+            let remaining_buf = &mut self.read_buf[buf_len..];
+            kernel32::ReadFile(*self.handle,
+                               remaining_buf.as_mut_ptr() as LPVOID,
+                               remaining_buf.len() as u32,
+                               &mut bytes_read,
+                               self.ov.deref_mut())
+        };
 
-            // Reset the vector to only expose the already filled part.
-            //
-            // This means that the async read
-            // will actually fill memory beyond the exposed part of the vector.
-            // While this use of a vector is officially sanctioned for such cases,
-            // it still feel rather icky to me...
-            //
-            // On the other hand, this way we make sure
-            // the buffer never appears to have more valid data
-            // than what is actually present,
-            // which could pose a potential danger in its own right.
-            // Also, it avoids the need to keep a separate state variable --
-            // which would bear some risk of getting out of sync.
-            self.read_buf.set_len(buf_len);
+        // Reset the vector to only expose the already filled part.
+        //
+        // This means that the async read
+        // will actually fill memory beyond the exposed part of the vector.
+        // While this use of a vector is officially sanctioned for such cases,
+        // it still feel rather icky to me...
+        //
+        // On the other hand, this way we make sure
+        // the buffer never appears to have more valid data
+        // than what is actually present,
+        // which could pose a potential danger in its own right.
+        // Also, it avoids the need to keep a separate state variable --
+        // which would bear some risk of getting out of sync.
+        self.read_buf.set_len(buf_len);
 
-            // ReadFile can return TRUE; if it does, an IO completion
-            // packet is still posted to any port, and the OVERLAPPED
-            // structure has the IO operation flagged as complete.
-            //
-            // Normally, for an async operation, a call like
-            // `ReadFile` would return `FALSE`, and the error code
-            // would be `ERROR_IO_PENDING`.  But in some situations,
-            // `ReadFile` can complete synchronously (returns `TRUE`).
-            // Even if it does, a notification that the IO completed
-            // is still sent to the IO completion port that this
-            // handle is part of, meaning that we don't have to do any
-            // special handling for sync-completed operations.
-            if ok == winapi::FALSE {
-                let err = GetLastError();
-                if err == winapi::ERROR_BROKEN_PIPE {
-                    win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                    self.closed = true;
-                    return Ok(());
-                }
-
-                if err == winapi::ERROR_IO_PENDING {
-                    self.read_in_progress = true;
-                    return Ok(());
-                }
-
-                Err(WinError::from_system(err, "ReadFile"))
-            } else {
-                self.read_in_progress = true;
-                Ok(())
+        // ReadFile can return TRUE; if it does, an IO completion
+        // packet is still posted to any port, and the OVERLAPPED
+        // structure has the IO operation flagged as complete.
+        //
+        // Normally, for an async operation, a call like
+        // `ReadFile` would return `FALSE`, and the error code
+        // would be `ERROR_IO_PENDING`.  But in some situations,
+        // `ReadFile` can complete synchronously (returns `TRUE`).
+        // Even if it does, a notification that the IO completed
+        // is still sent to the IO completion port that this
+        // handle is part of, meaning that we don't have to do any
+        // special handling for sync-completed operations.
+        if ok == winapi::FALSE {
+            let err = GetLastError();
+            if err == winapi::ERROR_BROKEN_PIPE {
+                win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
+                self.closed = true;
+                return Ok(());
             }
+
+            if err == winapi::ERROR_IO_PENDING {
+                self.read_in_progress = true;
+                return Ok(());
+            }
+
+            Err(WinError::from_system(err, "ReadFile"))
+        } else {
+            self.read_in_progress = true;
+            Ok(())
         }
     }
 
     /// Called when we receive an IO Completion Packet for this handle.
     ///
-    /// Unsafe, since calling this with an invalid object or at the wrong time
-    /// could result in uninitialized data being passed off as valid.
-    /// While this may seem less critical than other memory errors,
-    /// it can also break type safety.
+    /// Unsafe, since calling this in error
+    /// while an async read is actually still in progress in the kernel
+    /// would have catastrophic effects,
+    /// as `ov` and `read_buf` are still mutably aliased by the kernel in that case!
+    ///
+    /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
+    ///
+    /// Also, this method relies on `ov` and `read_buf` actually having valid data,
+    /// i.e. nothing should modify these fields
+    /// between receiving the completion notification from the kernel
+    /// and invoking this method.
     unsafe fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
+        assert!(self.read_in_progress);
+
         win32_trace!("[$ {:?}] notify_completion", self.handle);
 
-        // mark a read as no longer in progress even before we check errors
+        // Regardless whether the kernel reported success or error,
+        // it doesn't have an async read operation in flight at this point anymore.
+        // (And it's safe again to access the `ov` and `read_buf` fields.)
         self.read_in_progress = false;
 
         if err == winapi::ERROR_BROKEN_PIPE {
@@ -517,6 +565,11 @@ impl MessageReader {
     // get_message_inner borrows the buffer.
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
+        // Never touch the buffer while it's still mutably aliased by the kernel!
+        if self.read_in_progress {
+            return Ok(None);
+        }
+
         let drain_bytes;
         let result;
         if let Some(message) = Message::from_bytes(&self.read_buf) {
@@ -588,6 +641,10 @@ impl MessageReader {
 
             // Make sure that the reader has a read in flight,
             // otherwise a later select() will hang.
+            //
+            // Note: Just like in `OsIpcReceiver.receive_message()` below,
+            // this makes us vulnerable to invalid `ov` and `read_buf` modification
+            // from code not marked as unsafe...
             try!(self.start_read());
 
             Ok(())
@@ -796,6 +853,16 @@ impl OsIpcReceiver {
                     if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
                         // Nonblocking read, no message, read's in flight, we're
                         // done.  An error is expected in this case.
+                        //
+                        // Note: This leaks unsafety outside the `unsafe` block,
+                        // since the method returns while an async read is still in progress;
+                        // meaning the kernel still holds a mutable alias
+                        // of the read buffer and `OVERLAPPED` structure
+                        // that the Rust type system doesn't know about --
+                        // nothing prevents code that isn't marked as `unsafe`
+                        // from performing invalid reads or writes to these fields!
+                        //
+                        // (See documentation of `ov`, `read_buf`, and `read_in_progress` fields.)
                         return Err(WinError::NoData);
                     }
                     // We pass err through to notify_completion so
@@ -1304,7 +1371,7 @@ impl OsIpcReceiverSet {
                     selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
                     remove_index = Some(reader_index);
                 } else {
-                    try!(reader.start_read());
+                    unsafe { try!(reader.start_read()); }
                 }
             }
 
