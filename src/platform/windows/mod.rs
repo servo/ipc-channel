@@ -1456,11 +1456,11 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
-    #[allow(exceeding_bitshifts)]
     fn new(length: usize) -> Result<OsIpcSharedMemory,WinError> {
         unsafe {
             assert!(length < u32::max_value() as usize);
-            let (lhigh, llow) = (0 as u32, (length & 0xffffffffusize) as u32);
+            let (lhigh, llow) = (length.checked_shr(32).unwrap_or(0) as u32,
+                                 (length & 0xffffffff) as u32);
             let handle =
                 kernel32::CreateFileMappingA(INVALID_HANDLE_VALUE,
                                              ptr::null_mut(),
