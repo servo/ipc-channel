@@ -1027,7 +1027,7 @@ fn write_buf(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
             }
         }
         written += sz as usize;
-        win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, bytes.len(), GetLastError());
+        win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, total, GetLastError());
     }
 
     Ok(())
