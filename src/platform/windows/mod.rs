@@ -942,8 +942,8 @@ fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),
     let mut written = 0;
     while written < total {
         let mut sz: u32 = 0;
+        let bytes_to_write = &bytes[written..];
         unsafe {
-            let bytes_to_write = &bytes[written..];
             if kernel32::WriteFile(**handle,
                                    bytes_to_write.as_ptr() as LPVOID,
                                    bytes_to_write.len() as u32,
