@@ -70,12 +70,14 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),WinError> {
     Ok((sender, receiver))
 }
 
-/// Holds data len and out-of-band data len.
-struct MessageHeader(u32, u32);
+struct MessageHeader {
+    data_len: u32,
+    oob_len: u32,
+}
 
 impl MessageHeader {
     fn total_message_bytes_needed(&self) -> usize {
-        mem::size_of::<MessageHeader>() + self.0 as usize + self.1 as usize
+        mem::size_of::<MessageHeader>() + self.data_len as usize + self.oob_len as usize
     }
 }
 
@@ -98,8 +100,8 @@ impl<'data> Message<'data> {
             }
 
             Some(Message {
-                data_len: header.0 as usize,
-                oob_len: header.1 as usize,
+                data_len: header.data_len as usize,
+                oob_len: header.oob_len as usize,
                 bytes: &bytes[0..header.total_message_bytes_needed()],
             })
         }
@@ -1172,7 +1174,10 @@ impl OsIpcSender {
         }
 
         let in_band_data_len = if big_data_sender.is_none() { data.len() } else { 0 };
-        let header = MessageHeader(in_band_data_len as u32, oob_data.len() as u32);
+        let header = MessageHeader {
+            data_len: in_band_data_len as u32,
+            oob_len: oob_data.len() as u32
+        };
         let full_in_band_len = header.total_message_bytes_needed();
         assert!(full_in_band_len <= PIPE_BUFFER_SIZE);
         let mut full_message = Vec::<u8>::with_capacity(full_in_band_len);
