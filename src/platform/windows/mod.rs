@@ -1112,7 +1112,7 @@ impl OsIpcSender {
         // We limit the max size we can send here; we can fix this
         // just by upping the header to be 2x u64 if we really want
         // to.
-        assert!(data.len() < u32::max_value() as usize);
+        assert!(data.len() <= u32::max_value() as usize);
 
         let (server_h, server_pid) = if !shared_memory_regions.is_empty() || !ports.is_empty() {
             try!(self.get_pipe_server_process_handle_and_pid())
