@@ -1040,7 +1040,7 @@ impl OsIpcSender {
         let oob_size = if oob.needs_to_be_sent() { bincode::serialized_size(oob) } else { 0 };
 
         // make sure we don't have too much oob data to begin with
-        assert!((oob_size as usize) < (PIPE_BUFFER_SIZE-MessageHeader::size()), "too much oob data");
+        assert!((oob_size as usize) <= (PIPE_BUFFER_SIZE-MessageHeader::size()), "too much oob data");
 
         let bytes_left_for_data = (PIPE_BUFFER_SIZE-MessageHeader::size()) - (oob_size as usize);
         data_len >= bytes_left_for_data
