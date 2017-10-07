@@ -970,42 +970,16 @@ impl Clone for OsIpcSender {
     }
 }
 
-/// Atomic write to a handle.
-///
-/// Fails if the data can't be written in a single system call.
-/// This is important, since otherwise concurrent sending
-/// could result in parts of different messages getting intermixed,
-/// and we would not be able to extract the individual messages.
-fn write_msg(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
-    if bytes.len() == 0 {
-        return Ok(());
-    }
-
-    let mut size: u32 = 0;
-    unsafe {
-        if kernel32::WriteFile(**handle,
-                               bytes.as_ptr() as LPVOID,
-                               bytes.len() as u32,
-                               &mut size,
-                               ptr::null_mut())
-            == winapi::FALSE
-        {
-            return Err(WinError::last("WriteFile"));
-        }
-    }
-
-    if size != bytes.len() as u32 {
-        panic!("Windows IPC write_msg expected to write full buffer, but only wrote partial (wrote {} out of {} bytes)", size, bytes.len());
-    }
-
-    Ok(())
+#[derive(Clone, Copy, Debug)]
+enum AtomicMode {
+    Atomic,
+    Nonatomic,
 }
 
-/// Non-atomic write to a handle.
+/// Write data to a handle.
 ///
-/// Can be used for writes to an exclusive pipe,
-/// where the send being split up into several calls poses no danger.
-fn write_buf(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
+/// In `Atomic` mode, this panics if the data can't be written in a single system call.
+fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),WinError> {
     let total = bytes.len();
     if total == 0 {
         return Ok(());
@@ -1027,7 +1001,16 @@ fn write_buf(handle: &WinHandle, bytes: &[u8]) -> Result<(),WinError> {
             }
         }
         written += sz as usize;
-        win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, total, GetLastError());
+        match atomic {
+            AtomicMode::Atomic => {
+                if written != total {
+                    panic!("Windows IPC write_buf expected to write full buffer, but only wrote partial (wrote {} out of {} bytes)", written, total);
+                }
+            },
+            AtomicMode::Nonatomic => {
+                win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, total, GetLastError());
+            },
+        }
     }
 
     Ok(())
@@ -1114,7 +1097,10 @@ impl OsIpcSender {
         win32_trace!("[c {:?}] writing {} bytes raw to (pid {}->{})", *self.handle, data.len(), *CURRENT_PROCESS_ID,
              try!(self.get_pipe_server_process_id()));
 
-        write_buf(&self.handle, data)
+        // Write doesn't need to be atomic,
+        // since the pipe is exclusive for this message,
+        // so we don't have to fear intermixing with parts of other messages.
+        write_buf(&self.handle, data, AtomicMode::Nonatomic)
     }
 
     pub fn send(&self,
@@ -1203,10 +1189,13 @@ impl OsIpcSender {
             if big_data_sender.is_none() {
                 &mut full_message[MessageHeader::size()..MessageHeader::size()+data.len()].clone_from_slice(data);
                 &mut full_message[MessageHeader::size()+data.len()..].clone_from_slice(&oob_data);
-                try!(write_msg(&self.handle, &full_message));
+                // Write needs to be atomic, since otherwise concurrent sending
+                // could result in parts of different messages getting intermixed,
+                // and the receiver would not be able to extract the individual messages.
+                try!(write_buf(&self.handle, &full_message, AtomicMode::Atomic));
             } else {
                 &mut full_message[MessageHeader::size()..].clone_from_slice(&oob_data);
-                try!(write_msg(&self.handle, &full_message));
+                try!(write_buf(&self.handle, &full_message, AtomicMode::Atomic));
                 try!(big_data_sender.unwrap().send_raw(data));
             }
         }
