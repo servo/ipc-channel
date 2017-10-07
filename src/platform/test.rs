@@ -608,7 +608,6 @@ fn receiver_set_concurrent() {
     }
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "android")))]
 #[test]
 fn server_accept_first() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
