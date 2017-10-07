@@ -75,12 +75,8 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),WinError> {
 struct MessageHeader(u32, u32);
 
 impl MessageHeader {
-    fn size() -> usize {
-        mem::size_of::<MessageHeader>()
-    }
-
     fn total_message_bytes_needed(&self) -> usize {
-        MessageHeader::size() + self.0 as usize + self.1 as usize
+        mem::size_of::<MessageHeader>() + self.0 as usize + self.1 as usize
     }
 }
 
@@ -92,7 +88,7 @@ struct Message<'data> {
 
 impl<'data> Message<'data> {
     fn from_bytes(bytes: &'data [u8]) -> Option<Message> {
-        if bytes.len() < MessageHeader::size() {
+        if bytes.len() < mem::size_of::<MessageHeader>() {
             return None;
         }
 
@@ -111,11 +107,11 @@ impl<'data> Message<'data> {
     }
 
     fn data(&self) -> &[u8] {
-        &self.bytes[MessageHeader::size()..(MessageHeader::size() + self.data_len)]
+        &self.bytes[mem::size_of::<MessageHeader>()..(mem::size_of::<MessageHeader>() + self.data_len)]
     }
 
     fn oob_bytes(&self) -> &[u8] {
-        &self.bytes[(MessageHeader::size() + self.data_len)..]
+        &self.bytes[(mem::size_of::<MessageHeader>() + self.data_len)..]
     }
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
@@ -137,7 +133,7 @@ impl<'data> Message<'data> {
     }
 
     fn size(&self) -> usize {
-        MessageHeader::size() + self.data_len + self.oob_len
+        mem::size_of::<MessageHeader>() + self.data_len + self.oob_len
     }
 }
 
@@ -1040,9 +1036,9 @@ impl OsIpcSender {
         let oob_size = if oob.needs_to_be_sent() { bincode::serialized_size(oob) } else { 0 };
 
         // make sure we don't have too much oob data to begin with
-        assert!((oob_size as usize) <= (PIPE_BUFFER_SIZE-MessageHeader::size()), "too much oob data");
+        assert!((oob_size as usize) <= (PIPE_BUFFER_SIZE - mem::size_of::<MessageHeader>()), "too much oob data");
 
-        let bytes_left_for_data = (PIPE_BUFFER_SIZE-MessageHeader::size()) - (oob_size as usize);
+        let bytes_left_for_data = (PIPE_BUFFER_SIZE - mem::size_of::<MessageHeader>()) - (oob_size as usize);
         data_len >= bytes_left_for_data
     }
 
