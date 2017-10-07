@@ -1175,29 +1175,33 @@ impl OsIpcSender {
             oob_data = bincode::serialize(&oob).unwrap();
         }
 
-        unsafe {
-            let in_band_data_len = if big_data_sender.is_none() { data.len() } else { 0 };
-            let full_in_band_len = MessageHeader::size() + in_band_data_len + oob_data.len();
-            assert!(full_in_band_len <= PIPE_BUFFER_SIZE);
+        let in_band_data_len = if big_data_sender.is_none() { data.len() } else { 0 };
+        let header = MessageHeader(in_band_data_len as u32, oob_data.len() as u32);
+        let full_in_band_len = header.total_message_bytes_needed();
+        assert!(full_in_band_len <= PIPE_BUFFER_SIZE);
+        let mut full_message = Vec::<u8>::with_capacity(full_in_band_len);
 
-            let mut full_message = Vec::<u8>::with_capacity(full_in_band_len);
-            full_message.set_len(full_in_band_len);
+        {
+            let header_bytes = unsafe { slice::from_raw_parts(&header as *const _ as *const u8,
+                                                              mem::size_of_val(&header)) };
+            full_message.extend_from_slice(header_bytes);
+        }
 
-            let header = full_message.as_mut_ptr() as *mut MessageHeader;
-            *header = MessageHeader(in_band_data_len as u32, oob_data.len() as u32);
+        if big_data_sender.is_none() {
+            full_message.extend_from_slice(&*data);
+            full_message.extend_from_slice(&*oob_data);
+            assert!(full_message.len() == full_in_band_len);
 
-            if big_data_sender.is_none() {
-                &mut full_message[MessageHeader::size()..MessageHeader::size()+data.len()].clone_from_slice(data);
-                &mut full_message[MessageHeader::size()+data.len()..].clone_from_slice(&oob_data);
-                // Write needs to be atomic, since otherwise concurrent sending
-                // could result in parts of different messages getting intermixed,
-                // and the receiver would not be able to extract the individual messages.
-                try!(write_buf(&self.handle, &full_message, AtomicMode::Atomic));
-            } else {
-                &mut full_message[MessageHeader::size()..].clone_from_slice(&oob_data);
-                try!(write_buf(&self.handle, &full_message, AtomicMode::Atomic));
-                try!(big_data_sender.unwrap().send_raw(data));
-            }
+            // Write needs to be atomic, since otherwise concurrent sending
+            // could result in parts of different messages getting intermixed,
+            // and the receiver would not be able to extract the individual messages.
+            try!(write_buf(&self.handle, &*full_message, AtomicMode::Atomic));
+        } else {
+            full_message.extend_from_slice(&*oob_data);
+            assert!(full_message.len() == full_in_band_len);
+
+            try!(write_buf(&self.handle, &*full_message, AtomicMode::Atomic));
+            try!(big_data_sender.unwrap().send_raw(data));
         }
 
         Ok(())
