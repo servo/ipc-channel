@@ -1513,6 +1513,17 @@ pub struct OsOpaqueIpcChannel {
     handle: HANDLE,
 }
 
+impl Drop for OsOpaqueIpcChannel {
+    fn drop(&mut self) {
+        // Make sure we don't leak!
+        //
+        // The `OsOpaqueIpcChannel` objects should always be used,
+        // i.e. converted with `to_sender()` or `to_receiver()` --
+        // so the value should already be unset before the object gets dropped.
+        debug_assert!(self.handle == INVALID_HANDLE_VALUE);
+    }
+}
+
 impl OsOpaqueIpcChannel {
     fn new(handle: HANDLE) -> OsOpaqueIpcChannel {
         OsOpaqueIpcChannel {
