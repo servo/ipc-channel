@@ -675,6 +675,52 @@ impl MessageReader {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+enum AtomicMode {
+    Atomic,
+    Nonatomic,
+}
+
+/// Write data to a handle.
+///
+/// In `Atomic` mode, this panics if the data can't be written in a single system call.
+fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),WinError> {
+    let total = bytes.len();
+    if total == 0 {
+        return Ok(());
+    }
+
+    let mut written = 0;
+    while written < total {
+        let mut sz: u32 = 0;
+        let bytes_to_write = &bytes[written..];
+        unsafe {
+            if kernel32::WriteFile(**handle,
+                                   bytes_to_write.as_ptr() as LPVOID,
+                                   bytes_to_write.len() as u32,
+                                   &mut sz,
+                                   ptr::null_mut())
+                == winapi::FALSE
+            {
+                return Err(WinError::last("WriteFile"));
+            }
+        }
+        written += sz as usize;
+        match atomic {
+            AtomicMode::Atomic => {
+                if written != total {
+                    panic!("Windows IPC write_buf expected to write full buffer, but only wrote partial (wrote {} out of {} bytes)", written, total);
+                }
+            },
+            AtomicMode::Nonatomic => {
+                win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, total, GetLastError());
+            },
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum BlockingMode {
     Blocking,
@@ -924,52 +970,6 @@ impl Clone for OsIpcSender {
             OsIpcSender::from_handle(handle.take())
         }
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-enum AtomicMode {
-    Atomic,
-    Nonatomic,
-}
-
-/// Write data to a handle.
-///
-/// In `Atomic` mode, this panics if the data can't be written in a single system call.
-fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),WinError> {
-    let total = bytes.len();
-    if total == 0 {
-        return Ok(());
-    }
-
-    let mut written = 0;
-    while written < total {
-        let mut sz: u32 = 0;
-        let bytes_to_write = &bytes[written..];
-        unsafe {
-            if kernel32::WriteFile(**handle,
-                                   bytes_to_write.as_ptr() as LPVOID,
-                                   bytes_to_write.len() as u32,
-                                   &mut sz,
-                                   ptr::null_mut())
-                == winapi::FALSE
-            {
-                return Err(WinError::last("WriteFile"));
-            }
-        }
-        written += sz as usize;
-        match atomic {
-            AtomicMode::Atomic => {
-                if written != total {
-                    panic!("Windows IPC write_buf expected to write full buffer, but only wrote partial (wrote {} out of {} bytes)", written, total);
-                }
-            },
-            AtomicMode::Nonatomic => {
-                win32_trace!("[c {:?}] ... wrote {} bytes, total {}/{} err {}", **handle, sz, written, total, GetLastError());
-            },
-        }
-    }
-
-    Ok(())
 }
 
 impl OsIpcSender {
