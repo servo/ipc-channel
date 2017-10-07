@@ -22,6 +22,7 @@ use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::slice;
+use std::thread;
 use uuid::Uuid;
 use winapi::{HANDLE, INVALID_HANDLE_VALUE, LPVOID};
 use winapi;
@@ -1366,7 +1367,8 @@ unsafe impl Sync for OsIpcSharedMemory {}
 impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
         unsafe {
-            kernel32::UnmapViewOfFile(self.ptr as LPVOID);
+            let result = kernel32::UnmapViewOfFile(self.ptr as LPVOID);
+            assert!(thread::panicking() || result != 0);
         }
     }
 }
