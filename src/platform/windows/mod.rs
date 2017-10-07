@@ -277,7 +277,10 @@ unsafe impl Sync for WinHandle { }
 impl Drop for WinHandle {
     fn drop(&mut self) {
         unsafe {
-            kernel32::CloseHandle(self.h);
+            if self.is_valid() {
+                let result = kernel32::CloseHandle(self.h);
+                assert!(thread::panicking() || result != 0);
+            }
         }
     }
 }
