@@ -459,10 +459,6 @@ impl MessageReader {
         };
 
         match result {
-            // ReadFile can return TRUE; if it does, an IO completion
-            // packet is still posted to any port, and the OVERLAPPED
-            // structure has the IO operation flagged as complete.
-            //
             // Normally, for an async operation, a call like
             // `ReadFile` would return `FALSE`, and the error code
             // would be `ERROR_IO_PENDING`.  But in some situations,
