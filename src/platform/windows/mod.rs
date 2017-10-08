@@ -525,7 +525,7 @@ impl MessageReader {
     /// i.e. nothing should modify these fields
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
-    unsafe fn notify_completion(&mut self, err: u32) -> Result<(),WinError> {
+    unsafe fn notify_completion(&mut self, err: u32) {
         assert!(self.read_in_progress);
 
         win32_trace!("[$ {:?}] notify_completion", self.handle);
@@ -539,7 +539,7 @@ impl MessageReader {
         if err == winapi::ERROR_BROKEN_PIPE {
             assert!(!self.closed, "we shouldn't get an async BROKEN_PIPE after we already got one");
             self.closed = true;
-            return Ok(());
+            return;
         }
 
         let nbytes = self.ov.InternalHigh as u32;
@@ -557,8 +557,6 @@ impl MessageReader {
             nbytes, offset, self.read_buf.len(), new_size, self.read_buf.capacity());
         assert!(new_size <= self.read_buf.capacity());
         self.read_buf.set_len(new_size);
-
-        Ok(())
     }
 
     // This is split between get_message and get_message_inner, so that
@@ -918,7 +916,7 @@ impl OsIpcReceiver {
 
                 // Notify that the read completed, which will update the
                 // read pointers
-                try!(reader.notify_completion(err));
+                reader.notify_completion(err);
             }
 
             // If we're not blocking, pretend that we are blocking, since we got part of
@@ -1345,7 +1343,7 @@ impl OsIpcReceiverSet {
                 win32_trace!("[# {:?}] result for receiver {:?}", *self.iocp, *reader.handle);
 
                 // tell it about the completed IO op
-                unsafe { try!(reader.notify_completion(io_err)); }
+                unsafe { reader.notify_completion(io_err); }
 
                 // then drain as many messages as we can
                 loop {
