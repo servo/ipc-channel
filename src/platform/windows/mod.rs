@@ -494,19 +494,20 @@ impl MessageReader {
         // handle is part of, meaning that we don't have to do any
         // special handling for sync-completed operations.
         if ok == winapi::FALSE {
-            let err = GetLastError();
-            if err == winapi::ERROR_BROKEN_PIPE {
-                win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                self.closed = true;
-                return Ok(());
+            match GetLastError() {
+                winapi::ERROR_BROKEN_PIPE => {
+                    win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
+                    self.closed = true;
+                    return Ok(());
+                },
+                winapi::ERROR_IO_PENDING => {
+                    self.read_in_progress = true;
+                    return Ok(());
+                },
+                err => {
+                    Err(WinError::from_system(err, "ReadFile"))
+                },
             }
-
-            if err == winapi::ERROR_IO_PENDING {
-                self.read_in_progress = true;
-                return Ok(());
-            }
-
-            Err(WinError::from_system(err, "ReadFile"))
         } else {
             self.read_in_progress = true;
             Ok(())
