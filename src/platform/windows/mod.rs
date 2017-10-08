@@ -535,6 +535,7 @@ impl MessageReader {
         // (And it's safe again to access the `ov` and `read_buf` fields.)
         self.read_in_progress = false;
 
+        // Remote end closed the channel.
         if err == winapi::ERROR_BROKEN_PIPE {
             assert!(!self.closed, "we shouldn't get an async BROKEN_PIPE after we already got one");
             self.closed = true;
@@ -546,7 +547,6 @@ impl MessageReader {
 
         assert!(offset == 0);
 
-        // if the remote end closed...
         if err != winapi::ERROR_SUCCESS {
             // This should never happen
             panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
