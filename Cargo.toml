@@ -13,7 +13,7 @@ unstable = []
 async = ["futures"]
 
 [dependencies]
-bincode = "0.8"
+bincode = "0.9"
 lazy_static = "0.2"
 libc = "0.2.12"
 rand = "0.3"
