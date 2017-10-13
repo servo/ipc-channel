@@ -452,35 +452,39 @@ impl MessageReader {
         // which would bear some risk of getting out of sync.
         self.read_buf.set_len(buf_len);
 
-        // ReadFile can return TRUE; if it does, an IO completion
-        // packet is still posted to any port, and the OVERLAPPED
-        // structure has the IO operation flagged as complete.
-        //
-        // Normally, for an async operation, a call like
-        // `ReadFile` would return `FALSE`, and the error code
-        // would be `ERROR_IO_PENDING`.  But in some situations,
-        // `ReadFile` can complete synchronously (returns `TRUE`).
-        // Even if it does, a notification that the IO completed
-        // is still sent to the IO completion port that this
-        // handle is part of, meaning that we don't have to do any
-        // special handling for sync-completed operations.
-        if ok == winapi::FALSE {
-            match GetLastError() {
-                winapi::ERROR_IO_PENDING => {
-                },
-                winapi::ERROR_BROKEN_PIPE => {
-                    win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                    self.closed = true;
-                    return Ok(());
-                },
-                err => {
-                    return Err(WinError::from_system(err, "ReadFile"));
-                },
-            }
-        }
+        let result = if ok == winapi::FALSE {
+            Err(GetLastError())
+        } else {
+            Ok(())
+        };
 
-        self.read_in_progress = true;
-        Ok(())
+        match result {
+            // ReadFile can return TRUE; if it does, an IO completion
+            // packet is still posted to any port, and the OVERLAPPED
+            // structure has the IO operation flagged as complete.
+            //
+            // Normally, for an async operation, a call like
+            // `ReadFile` would return `FALSE`, and the error code
+            // would be `ERROR_IO_PENDING`.  But in some situations,
+            // `ReadFile` can complete synchronously (returns `TRUE`).
+            // Even if it does, a notification that the IO completed
+            // is still sent to the IO completion port that this
+            // handle is part of, meaning that we don't have to do any
+            // special handling for sync-completed operations.
+            Ok(()) |
+            Err(winapi::ERROR_IO_PENDING) => {
+                self.read_in_progress = true;
+                Ok(())
+            },
+            Err(winapi::ERROR_BROKEN_PIPE) => {
+                win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
+                self.closed = true;
+                Ok(())
+            },
+            Err(err) => {
+                Err(WinError::from_system(err, "ReadFile"))
+            },
+        }
     }
 
     /// Called when we receive an IO Completion Packet for this handle.
