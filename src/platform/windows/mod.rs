@@ -476,12 +476,12 @@ impl MessageReader {
                     return Ok(());
                 },
                 err => {
-                    Err(WinError::from_system(err, "ReadFile"))
+                    return Err(WinError::from_system(err, "ReadFile"));
                 },
             }
         } else {
             self.read_in_progress = true;
-            Ok(())
+            return Ok(());
         }
     }
 
