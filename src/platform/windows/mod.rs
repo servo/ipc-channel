@@ -501,17 +501,15 @@ impl MessageReader {
                     return Ok(());
                 },
                 winapi::ERROR_IO_PENDING => {
-                    self.read_in_progress = true;
-                    return Ok(());
                 },
                 err => {
                     return Err(WinError::from_system(err, "ReadFile"));
                 },
             }
-        } else {
-            self.read_in_progress = true;
-            return Ok(());
         }
+
+        self.read_in_progress = true;
+        Ok(())
     }
 
     /// Called when we receive an IO Completion Packet for this handle.
