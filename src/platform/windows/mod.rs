@@ -495,12 +495,12 @@ impl MessageReader {
         // special handling for sync-completed operations.
         if ok == winapi::FALSE {
             match GetLastError() {
+                winapi::ERROR_IO_PENDING => {
+                },
                 winapi::ERROR_BROKEN_PIPE => {
                     win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
                     self.closed = true;
                     return Ok(());
-                },
-                winapi::ERROR_IO_PENDING => {
                 },
                 err => {
                     return Err(WinError::from_system(err, "ReadFile"));
