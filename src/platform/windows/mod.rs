@@ -653,7 +653,7 @@ impl MessageReader {
     /// and the transfer doesn't have our typical message framing.
     ///
     /// It's only valid to call this as the one and only call after creating a MessageReader.
-    fn read_raw_sized(&mut self, size: usize) -> Result<Vec<u8>,WinError> {
+    fn read_raw_sized(mut self, size: usize) -> Result<Vec<u8>,WinError> {
         assert!(self.read_buf.len() == 0);
 
         // We use with_capacity() to allocate an uninitialized buffer,
@@ -964,7 +964,7 @@ impl OsIpcReceiver {
     ///
     /// This is used for receiving data from the out-of-band big data buffer.
     fn recv_raw(self, size: usize) -> Result<Vec<u8>, WinError> {
-        self.reader.borrow_mut().read_raw_sized(size)
+        self.reader.into_inner().read_raw_sized(size)
     }
 }
 
