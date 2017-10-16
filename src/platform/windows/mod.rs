@@ -559,6 +559,57 @@ impl MessageReader {
         self.read_buf.set_len(new_size);
     }
 
+    /// Attempt to conclude an already issued async read operation.
+    ///
+    /// If successful, the result will be ready for picking up by `get_message()`.
+    ///
+    /// (`get_message()` might still yield nothing though,
+    /// in case only part of the message was received in this read,
+    /// and further read operations are necessary to get the rest.)
+    ///
+    /// In non-blocking mode, this may return with `WinError:NoData`,
+    /// while the async operation remains in flight.
+    ///
+    /// Note: Upon successful return,
+    /// the internal `ov` and `read_buf` fields
+    /// won't be aliased by the kernel anymore.
+    /// When getting `NoData` however,
+    /// access to these fields remains invalid,
+    /// i.e. we are still in unsafe mode in that case!
+    fn fetch_async_result(&mut self, blocking_mode: BlockingMode) -> Result<(), WinError> {
+        unsafe {
+            assert!(self.read_in_progress);
+
+            // Get the overlapped result, blocking if we need to.
+            let mut nbytes: u32 = 0;
+            let mut err = winapi::ERROR_SUCCESS;
+            let block = match blocking_mode {
+                BlockingMode::Blocking => winapi::TRUE,
+                BlockingMode::Nonblocking => winapi::FALSE,
+            };
+            let ok = kernel32::GetOverlappedResult(*self.handle,
+                                                   self.ov.deref_mut(),
+                                                   &mut nbytes,
+                                                   block);
+            if ok == winapi::FALSE {
+                err = GetLastError();
+                if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
+                    // Async read hasn't completed yet.
+                    // Inform the caller, while keeping the read in flight.
+                    return Err(WinError::NoData);
+                }
+                // We pass err through to notify_completion so
+                // that it can handle other errors.
+            }
+
+            // Notify that the read completed, which will update the
+            // read pointers
+            self.notify_completion(err);
+        }
+
+        Ok(())
+    }
+
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
@@ -784,11 +835,6 @@ pub struct OsIpcReceiver {
 // While this seems to be true as far as I can tell,
 // it's a rather fragile condition, which should be managed much more tightly
 // (along with `OVERLAPPED` in general): at `MessageReader` level, at the very most.
-// The current implementation doesn't follow such a strict encapsulation however,
-// with `OsIpcReceiver` directly accessing `reader.ov` (in `receive_message()`),
-// outside the `MessageReader` implementation --
-// so for now, `OsIpcReceiver` needs to be considered responsible as a whole
-// for upholding the non-aliasing condition.
 unsafe impl Send for OsIpcReceiver { }
 
 impl PartialEq for OsIpcReceiver {
@@ -879,41 +925,22 @@ impl OsIpcReceiver {
                     return Err(WinError::ChannelClosed);
                 }
 
-                // Then, get the overlapped result, blocking if we need to.
-                let mut nbytes: u32 = 0;
-                let mut err = winapi::ERROR_SUCCESS;
-                let block = match blocking_mode {
-                    BlockingMode::Blocking => winapi::TRUE,
-                    BlockingMode::Nonblocking => winapi::FALSE,
-                };
-                let ok = kernel32::GetOverlappedResult(*reader.handle,
-                                                       reader.ov.deref_mut(),
-                                                       &mut nbytes,
-                                                       block);
-                if ok == winapi::FALSE {
-                    err = GetLastError();
-                    if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
-                        // Nonblocking read, no message, read's in flight, we're
-                        // done.  An error is expected in this case.
-                        //
-                        // Note: This leaks unsafety outside the `unsafe` block,
-                        // since the method returns while an async read is still in progress;
-                        // meaning the kernel still holds a mutable alias
-                        // of the read buffer and `OVERLAPPED` structure
-                        // that the Rust type system doesn't know about --
-                        // nothing prevents code that isn't marked as `unsafe`
-                        // from performing invalid reads or writes to these fields!
-                        //
-                        // (See documentation of `ov`, `read_buf`, and `read_in_progress` fields.)
-                        return Err(WinError::NoData);
-                    }
-                    // We pass err through to notify_completion so
-                    // that it can handle other errors.
-                }
-
-                // Notify that the read completed, which will update the
-                // read pointers
-                reader.notify_completion(err);
+                // May return `WinError::NoData` in non-blocking mode.
+                //
+                // The async read remains in flight in that case;
+                // and another attempt at getting a result
+                // can be done the next time we are called.
+                //
+                // Note: This leaks unsafety outside the `unsafe` block,
+                // since the method returns while an async read is still in progress;
+                // meaning the kernel still holds a mutable alias
+                // of the read buffer and `OVERLAPPED` structure
+                // that the Rust type system doesn't know about --
+                // nothing prevents code that isn't marked as `unsafe`
+                // from performing invalid reads or writes to these fields!
+                //
+                // (See documentation of `ov`, `read_buf`, and `read_in_progress` fields.)
+                try!(reader.fetch_async_result(blocking_mode));
             }
 
             // If we're not blocking, pretend that we are blocking, since we got part of
