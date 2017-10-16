@@ -656,56 +656,25 @@ impl MessageReader {
     fn read_raw_sized(mut self, size: usize) -> Result<Vec<u8>,WinError> {
         assert!(self.read_buf.len() == 0);
 
-        // We use with_capacity() to allocate an uninitialized buffer,
-        // since we're going to read into it and don't need to
-        // zero it.
-        let mut buf = Vec::with_capacity(size);
-        while buf.len() < size {
+        self.read_buf.reserve(size);
+        while self.read_buf.len() < size {
             // Because our handle is asynchronous, we have to do a two-part read --
             // first issue the operation, then wait for its completion.
             unsafe {
-                let ov = self.ov.deref_mut();
-                *ov = mem::zeroed();
-
-                // Temporarily extend the vector to span its entire capacity,
-                // so we can safely sub-slice it for the actual read.
-                let buf_len = buf.len();
-                let buf_cap = buf.capacity();
-                buf.set_len(buf_cap);
-
-                let mut bytes_read: u32 = 0;
-                let ok = {
-                    let remaining_buf = &mut buf[buf_len..];
-                    kernel32::ReadFile(*self.handle,
-                                       remaining_buf.as_mut_ptr() as LPVOID,
-                                       remaining_buf.len() as u32,
-                                       &mut bytes_read,
-                                       ov)
-                };
-
-                // Restore the original size before error handling,
-                // so we never leave the function with the buffer exposing uninitialized data.
-                buf.set_len(buf_len);
-
-                if ok == winapi::FALSE && GetLastError() != winapi::ERROR_IO_PENDING {
-                    return Err(WinError::last("ReadFile"));
+                try!(self.start_read());
+                // Sender should not close until it sent as much data as we expect...
+                if self.closed {
+                    return Err(WinError::from_system(winapi::ERROR_BROKEN_PIPE, "ReadFile"));
                 }
-
-                if ov.Internal as i32 == winapi::STATUS_PENDING {
-                    let ok = kernel32::GetOverlappedResult(*self.handle, ov, &mut bytes_read, winapi::TRUE);
-                    if ok == winapi::FALSE {
-                        return Err(WinError::last("GetOverlappedResult"));
-                    }
-                } else {
-                    bytes_read = ov.InternalHigh as u32;
+                // In blocking mode, this should never fail...
+                self.fetch_async_result(BlockingMode::Blocking).unwrap();
+                if self.closed {
+                    return Err(WinError::from_system(winapi::ERROR_BROKEN_PIPE, "ReadFile"));
                 }
-
-                let new_len = buf_len + bytes_read as usize;
-                buf.set_len(new_len);
             }
         }
 
-        Ok(buf)
+        Ok(mem::replace(&mut self.read_buf, vec![]))
     }
 }
 
