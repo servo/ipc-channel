@@ -559,9 +559,6 @@ impl MessageReader {
         self.read_buf.set_len(new_size);
     }
 
-    // This is split between get_message and get_message_inner, so that
-    // this function can handle removing bytes from the buffer, since
-    // get_message_inner borrows the buffer.
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
