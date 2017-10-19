@@ -625,12 +625,12 @@ impl MessageReader {
         Ok(result)
     }
 
-    fn add_to_iocp(&mut self, iocp: HANDLE, set_id: u64) -> Result<(),WinError> {
+    fn add_to_iocp(&mut self, iocp: &WinHandle, set_id: u64) -> Result<(),WinError> {
         unsafe {
             assert!(self.set_id.is_none());
 
             let ret = kernel32::CreateIoCompletionPort(*self.handle,
-                                                       iocp,
+                                                       **iocp,
                                                        *self.handle as winapi::ULONG_PTR,
                                                        0);
             if ret.is_null() {
@@ -1191,7 +1191,7 @@ impl OsIpcReceiverSet {
         let mut reader = receiver.reader.into_inner();
 
         let set_id = self.incrementor.increment();
-        try!(reader.add_to_iocp(*self.iocp, set_id));
+        try!(reader.add_to_iocp(&self.iocp, set_id));
 
         win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", *self.iocp, *reader.handle, set_id);
 
