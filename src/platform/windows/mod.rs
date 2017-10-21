@@ -885,8 +885,8 @@ impl OsIpcReceiver {
         unsafe {
             let reader_borrow = self.reader.borrow();
             let handle = *reader_borrow.handle;
-            let mut ov = Box::new(mem::zeroed::<winapi::OVERLAPPED>());
-            let ok = kernel32::ConnectNamedPipe(handle, ov.deref_mut());
+            let mut ov = mem::zeroed::<winapi::OVERLAPPED>();
+            let ok = kernel32::ConnectNamedPipe(handle, &mut ov);
 
             // we should always get FALSE with async IO
             assert!(ok == winapi::FALSE);
@@ -912,7 +912,7 @@ impl OsIpcReceiver {
                 // the connect is pending; wait for it to complete
                 winapi::ERROR_IO_PENDING => {
                     let mut nbytes: u32 = 0;
-                    let ok = kernel32::GetOverlappedResult(handle, ov.deref_mut(), &mut nbytes, winapi::TRUE);
+                    let ok = kernel32::GetOverlappedResult(handle, &mut ov, &mut nbytes, winapi::TRUE);
                     if ok == winapi::FALSE {
                         return Err(WinError::last("GetOverlappedResult[ConnectNamedPipe]"));
                     }
