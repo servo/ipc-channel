@@ -938,6 +938,8 @@ impl OsIpcReceiver {
         unsafe {
             let reader_borrow = self.reader.borrow();
             let handle = *reader_borrow.handle;
+            // Boxing this to get a stable address is not strictly necesssary here,
+            // since we are not moving the local variable around -- but better safe than sorry...
             let mut ov = Box::new(mem::zeroed::<winapi::OVERLAPPED>());
             let ok = kernel32::ConnectNamedPipe(handle, ov.deref_mut());
 
