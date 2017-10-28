@@ -937,11 +937,11 @@ impl OsIpcReceiver {
     fn accept(&self) -> Result<(),WinError> {
         unsafe {
             let reader_borrow = self.reader.borrow();
-            let handle = *reader_borrow.handle;
+            let handle = &reader_borrow.handle;
             // Boxing this to get a stable address is not strictly necesssary here,
             // since we are not moving the local variable around -- but better safe than sorry...
             let mut ov = Box::new(mem::zeroed::<winapi::OVERLAPPED>());
-            let ok = kernel32::ConnectNamedPipe(handle, ov.deref_mut());
+            let ok = kernel32::ConnectNamedPipe(**handle, ov.deref_mut());
 
             // we should always get FALSE with async IO
             assert!(ok == winapi::FALSE);
@@ -950,7 +950,7 @@ impl OsIpcReceiver {
             match err {
                 // did we successfully connect? (it's reported as an error [ok==false])
                 winapi::ERROR_PIPE_CONNECTED => {
-                    win32_trace!("[$ {:?}] accept (PIPE_CONNECTED)", handle);
+                    win32_trace!("[$ {:?}] accept (PIPE_CONNECTED)", **handle);
                     Ok(())
                 },
 
@@ -960,14 +960,14 @@ impl OsIpcReceiver {
                 // the pipe that we'll be able to read.  So we need to go do some reads
                 // like normal and wait until ReadFile gives us ERROR_NO_DATA.
                 winapi::ERROR_NO_DATA => {
-                    win32_trace!("[$ {:?}] accept (ERROR_NO_DATA)", handle);
+                    win32_trace!("[$ {:?}] accept (ERROR_NO_DATA)", **handle);
                     Ok(())
                 },
 
                 // the connect is pending; wait for it to complete
                 winapi::ERROR_IO_PENDING => {
                     let mut nbytes: u32 = 0;
-                    let ok = kernel32::GetOverlappedResult(handle, ov.deref_mut(), &mut nbytes, winapi::TRUE);
+                    let ok = kernel32::GetOverlappedResult(**handle, ov.deref_mut(), &mut nbytes, winapi::TRUE);
                     if ok == winapi::FALSE {
                         return Err(WinError::last("GetOverlappedResult[ConnectNamedPipe]"));
                     }
@@ -976,7 +976,7 @@ impl OsIpcReceiver {
 
                 // Anything else signifies some actual I/O error.
                 err => {
-                    win32_trace!("[$ {:?}] accept error -> {}", handle, err);
+                    win32_trace!("[$ {:?}] accept error -> {}", **handle, err);
                     Err(WinError::last("ConnectNamedPipe"))
                 },
             }
