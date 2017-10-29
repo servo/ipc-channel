@@ -1366,8 +1366,8 @@ impl OsIpcReceiverSet {
                 }
             }
 
-            if remove_index.is_some() {
-                self.readers.swap_remove(remove_index.unwrap());
+            if let Some(index) = remove_index {
+                self.readers.swap_remove(index);
             }
 
             // if we didn't dequeue at least one complete message -- we need to loop through GetQueuedCS again;
