@@ -1355,7 +1355,7 @@ impl OsIpcReceiverSet {
                     }
                 }
 
-                // We may have already been closed, or the read resulted in us being closed.
+                // Instead of new data, we might have received a broken pipe notification.
                 // If so, add that to the result and remove the reader from our list.
                 if reader.closed {
                     win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", *self.iocp, *reader.handle, reader.set_id.unwrap());
