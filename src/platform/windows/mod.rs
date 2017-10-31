@@ -870,11 +870,8 @@ impl OsIpcReceiver {
         loop {
             // First, try to fetch a message, in case we have one pending
             // in the reader's receive buffer
-            match try!(reader.get_message()) {
-                Some((data, channels, shmems)) =>
-                    return Ok((data, channels, shmems)),
-                None =>
-                    {},
+            if let Some((data, channels, shmems)) = try!(reader.get_message()) {
+                return Ok((data, channels, shmems));
             }
 
             // If the pipe was already closed, we're done -- we've
