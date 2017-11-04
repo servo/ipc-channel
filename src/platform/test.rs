@@ -744,6 +744,23 @@ fn try_recv() {
     assert!(rx.try_recv().is_err());
 }
 
+/// Checks that a channel closed notification is returned by `try_recv()`.
+///
+/// Also checks that the "no data" notification returned by `try_recv()`
+/// when no data is pending but before the channel is closed,
+/// is distinguishable from the actual "channel closed" notification.
+#[test]
+fn no_senders_notification_try_recv() {
+    let (sender, receiver) = platform::channel().unwrap();
+    let result = receiver.try_recv();
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().channel_is_closed());
+    drop(sender);
+    let result = receiver.try_recv();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().channel_is_closed());
+}
+
 #[test]
 fn try_recv_large() {
     let (tx, rx) = platform::channel().unwrap();
