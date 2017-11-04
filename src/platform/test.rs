@@ -699,6 +699,20 @@ fn no_senders_notification() {
     assert!(result.unwrap_err().channel_is_closed());
 }
 
+/// Checks that a broken pipe notification is returned by `send()`
+/// after the receive end was closed.
+#[test]
+fn no_receiver_notification() {
+    let (sender, receiver) = platform::channel().unwrap();
+    drop(receiver);
+    let data: &[u8] = b"1234567";
+    let result = sender.send(data, vec![], vec![]);
+    assert!(result.is_err());
+    // We don't have an actual method for distinguishing a "broken pipe" error --
+    // but at least it's not supposed to signal the same condition as closing the sender.
+    assert!(!result.unwrap_err().channel_is_closed());
+}
+
 #[test]
 fn shared_memory() {
     let (tx, rx) = platform::channel().unwrap();
@@ -728,6 +742,23 @@ fn try_recv() {
     assert_eq!((&received_data[..], received_channels, received_shared_memory),
                (data, Vec::new(), Vec::new()));
     assert!(rx.try_recv().is_err());
+}
+
+/// Checks that a channel closed notification is returned by `try_recv()`.
+///
+/// Also checks that the "no data" notification returned by `try_recv()`
+/// when no data is pending but before the channel is closed,
+/// is distinguishable from the actual "channel closed" notification.
+#[test]
+fn no_senders_notification_try_recv() {
+    let (sender, receiver) = platform::channel().unwrap();
+    let result = receiver.try_recv();
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().channel_is_closed());
+    drop(sender);
+    let result = receiver.try_recv();
+    assert!(result.is_err());
+    assert!(result.unwrap_err().channel_is_closed());
 }
 
 #[test]

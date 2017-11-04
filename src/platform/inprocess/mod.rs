@@ -100,7 +100,8 @@ impl OsIpcReceiver {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
                                                  s)),
-            Err(_) => Err(MpscError::ChannelClosedError),
+            Err(mpsc::TryRecvError::Disconnected) => Err(MpscError::ChannelClosedError),
+            Err(_) => Err(MpscError::UnknownError),
         }
     }
 }
@@ -141,7 +142,7 @@ impl OsIpcSender {
                 -> Result<(),MpscError>
     {
         match self.sender.borrow().send(MpscChannelMessage(data.to_vec(), ports, shared_memory_regions)) {
-            Err(_) => Err(MpscError::ChannelClosedError),
+            Err(_) => Err(MpscError::BrokenPipeError),
             Ok(_) => Ok(()),
         }
     }
@@ -376,6 +377,7 @@ impl OsIpcSharedMemory {
 #[derive(Debug, PartialEq)]
 pub enum MpscError {
     ChannelClosedError,
+    BrokenPipeError,
     UnknownError,
 }
 
@@ -396,7 +398,10 @@ impl From<MpscError> for Error {
     fn from(mpsc_error: MpscError) -> Error {
         match mpsc_error {
             MpscError::ChannelClosedError => {
-                Error::new(ErrorKind::BrokenPipe, "MPSC channel closed")
+                Error::new(ErrorKind::ConnectionReset, "MPSC channel sender closed")
+            }
+            MpscError::BrokenPipeError => {
+                Error::new(ErrorKind::BrokenPipe, "MPSC channel receiver closed")
             }
             MpscError::UnknownError => Error::new(ErrorKind::Other, "Other MPSC channel error"),
         }
