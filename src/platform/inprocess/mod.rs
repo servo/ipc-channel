@@ -100,7 +100,8 @@ impl OsIpcReceiver {
             Ok(MpscChannelMessage(d,c,s)) => Ok((d,
                                                  c.into_iter().map(OsOpaqueIpcChannel::new).collect(),
                                                  s)),
-            Err(_) => Err(MpscError::ChannelClosedError),
+            Err(mpsc::TryRecvError::Disconnected) => Err(MpscError::ChannelClosedError),
+            Err(_) => Err(MpscError::UnknownError),
         }
     }
 }
