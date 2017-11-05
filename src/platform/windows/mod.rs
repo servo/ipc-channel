@@ -1630,7 +1630,10 @@ impl From<WinError> for Error {
     fn from(error: WinError) -> Error {
         match error {
             WinError::ChannelClosed => {
-                Error::new(ErrorKind::BrokenPipe, "Win channel closed")
+                // This is the error code we originally got from the Windows API
+                // to signal the "channel closed" (no sender) condition --
+                // so hand it back to the Windows API to create an appropriate `Error` value.
+                Error::from_raw_os_error(winapi::ERROR_BROKEN_PIPE as i32)
             },
             WinError::NoData => {
                 Error::new(ErrorKind::WouldBlock, "Win channel has no data available")
