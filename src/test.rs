@@ -11,10 +11,12 @@ use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcReceiver;
 use router::ROUTER;
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::iter;
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use std::ptr;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
@@ -39,12 +41,12 @@ pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 pub trait Wait {
     fn wait(self);
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 impl Wait for libc::pid_t {
     fn wait(self) {
         unsafe {
