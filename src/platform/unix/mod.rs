@@ -492,7 +492,7 @@ impl OsIpcReceiverSet {
 
         for evt in self.events.iter() {
             let evt_token = evt.token();
-            match (evt.kind().is_readable(), self.pollfds.get(&evt_token)) {
+            match (evt.readiness().is_readable(), self.pollfds.get(&evt_token)) {
                 (true, Some(&poll_entry)) => {
                     match recv(poll_entry.fd, BlockingMode::Blocking) {
                         Ok((data, channels, shared_memory_regions)) => {
@@ -514,8 +514,8 @@ impl OsIpcReceiverSet {
                     }
                 },
                 (true, None) => {
-                    panic!("Readable event for unknown token: {:?}, kind: {:?}",
-                           evt_token, evt.kind());
+                    panic!("Readable event for unknown token: {:?}, readiness: {:?}",
+                           evt_token, evt.readiness());
                 },
                 (false, _) => {
                     panic!("Received an event that was not readable for token: {:?}", evt_token)
