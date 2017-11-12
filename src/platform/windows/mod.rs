@@ -449,7 +449,10 @@ impl MessageReader {
     ///
     /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
     unsafe fn start_read(&mut self) -> Result<(),WinError> {
-        if self.read_in_progress || self.closed {
+        // There is no valid reason to call this again after getting a channel closed notification.
+        assert!(!self.closed);
+
+        if self.read_in_progress {
             return Ok(());
         }
 
@@ -623,6 +626,9 @@ impl MessageReader {
 
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
+        // We should never expect having pending data after receiving a channel closed notification.
+        assert!(!self.closed);
+
         // Never touch the buffer while it's still mutably aliased by the kernel!
         if self.read_in_progress {
             return Ok(None);
@@ -874,12 +880,6 @@ impl OsIpcReceiver {
                 return Ok((data, channels, shmems));
             }
 
-            // If the pipe was already closed, we're done -- we've
-            // already drained all incoming bytes
-            if reader.closed {
-                return Err(WinError::ChannelClosed);
-            }
-
             unsafe {
                 // Then, issue a read if we don't have one already in flight.
                 // We must not issue a read if we have complete unconsumed
@@ -908,6 +908,10 @@ impl OsIpcReceiver {
                 //
                 // (See documentation of `ov`, `read_buf`, and `read_in_progress` fields.)
                 try!(reader.fetch_async_result(blocking_mode));
+
+                if reader.closed {
+                    return Err(WinError::ChannelClosed);
+                }
             }
 
             // If we're not blocking, pretend that we are blocking, since we got part of
@@ -1328,13 +1332,6 @@ impl OsIpcReceiverSet {
                 // tell it about the completed IO op
                 unsafe { reader.notify_completion(io_err); }
 
-                // then drain as many messages as we can
-                while let Some((data, channels, shmems)) = try!(reader.get_message()) {
-                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
-                    selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
-                }
-                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", *self.iocp, *reader.handle, reader.set_id.unwrap());
-
                 // Instead of new data, we might have received a broken pipe notification.
                 // If so, add that to the result and remove the reader from our list.
                 if reader.closed {
@@ -1342,6 +1339,18 @@ impl OsIpcReceiverSet {
                     selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
                     remove_index = Some(reader_index);
                 } else {
+                    // Otherwise, drain as many messages as we can.
+                    while let Some((data, channels, shmems)) = try!(reader.get_message()) {
+                        win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
+                        selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
+                    }
+                    win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", *self.iocp, *reader.handle, reader.set_id.unwrap());
+
+                    // Now that we are done frobbing the buffer,
+                    // we can safely initiate the next async read operation.
+                    //
+                    // Note: if this operation sets the `closed` status for this reader,
+                    // it will be handled at the beginning of the next `select()` call.
                     unsafe { try!(reader.start_read()); }
                 }
             }
