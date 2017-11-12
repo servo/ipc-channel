@@ -1329,18 +1329,11 @@ impl OsIpcReceiverSet {
                 unsafe { reader.notify_completion(io_err); }
 
                 // then drain as many messages as we can
-                loop {
-                    match try!(reader.get_message()) {
-                        Some((data, channels, shmems)) => {
-                            win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
-                            selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
-                        },
-                        None => {
-                            win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", *self.iocp, *reader.handle, reader.set_id.unwrap());
-                            break;
-                        },
-                    }
+                while let Some((data, channels, shmems)) = try!(reader.get_message()) {
+                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
+                    selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
                 }
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", *self.iocp, *reader.handle, reader.set_id.unwrap());
 
                 // Instead of new data, we might have received a broken pipe notification.
                 // If so, add that to the result and remove the reader from our list.
