@@ -1332,14 +1332,8 @@ impl OsIpcReceiverSet {
                 // tell it about the completed IO op
                 unsafe { reader.notify_completion(io_err); }
 
-                // Instead of new data, we might have received a broken pipe notification.
-                // If so, add that to the result and remove the reader from our list.
-                if reader.closed {
-                    win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", *self.iocp, *reader.handle, reader.set_id.unwrap());
-                    selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
-                    remove_index = Some(reader_index);
-                } else {
-                    // Otherwise, drain as many messages as we can.
+                if !reader.closed {
+                    // Drain as many messages as we can.
                     while let Some((data, channels, shmems)) = try!(reader.get_message()) {
                         win32_trace!("[# {:?}] receiver {:?} ({}) got a message", *self.iocp, *reader.handle, reader.set_id.unwrap());
                         selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
@@ -1348,10 +1342,18 @@ impl OsIpcReceiverSet {
 
                     // Now that we are done frobbing the buffer,
                     // we can safely initiate the next async read operation.
-                    //
-                    // Note: if this operation sets the `closed` status for this reader,
-                    // it will be handled at the beginning of the next `select()` call.
                     unsafe { try!(reader.start_read()); }
+                }
+
+                // If we got a "sender closed" notification --
+                // either instead of new data,
+                // or while trying to re-initiate an async read after receiving data --
+                // add an event to this effect to the result list,
+                // and remove the reader in question from our set.
+                if reader.closed {
+                    win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", *self.iocp, *reader.handle, reader.set_id.unwrap());
+                    selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
+                    remove_index = Some(reader_index);
                 }
             }
 
