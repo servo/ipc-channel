@@ -16,12 +16,10 @@ use std::io::{Error, ErrorKind};
 use std::slice;
 use std::fmt::{self, Debug, Formatter};
 use std::cmp::{PartialEq};
-use std::ops::Deref;
+use std::ops::{Deref, RangeFrom};
 use std::mem;
 use std::usize;
 use uuid::Uuid;
-
-use super::incrementor::Incrementor;
 
 #[derive(Clone)]
 struct ServerRecord {
@@ -149,7 +147,7 @@ impl OsIpcSender {
 }
 
 pub struct OsIpcReceiverSet {
-    incrementor: Incrementor,
+    incrementor: RangeFrom<u64>,
     receiver_ids: Vec<u64>,
     receivers: Vec<OsIpcReceiver>,
 }
@@ -157,14 +155,14 @@ pub struct OsIpcReceiverSet {
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,MpscError> {
         Ok(OsIpcReceiverSet {
-            incrementor: Incrementor::new(),
+            incrementor: 0..,
             receiver_ids: vec![],
             receivers: vec![],
         })
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MpscError> {
-        let last_index = self.incrementor.increment();
+        let last_index = self.incrementor.next().unwrap();
         self.receiver_ids.push(last_index);
         self.receivers.push(receiver.consume());
         Ok(last_index)

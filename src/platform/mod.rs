@@ -7,26 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(any(feature = "force-inprocess", not(target_os = "macos")))]
-mod incrementor {
-    pub struct Incrementor {
-        last_value: u64,
-    }
-
-    impl Incrementor {
-        pub fn new() -> Incrementor {
-            Incrementor {
-                last_value: 0
-            }
-        }
-
-        pub fn increment(&mut self) -> u64 {
-            self.last_value += 1;
-            self.last_value
-        }
-    }
-}
-
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
 mod unix;
