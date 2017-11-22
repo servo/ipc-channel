@@ -22,7 +22,7 @@ use std::hash::BuildHasherDefault;
 use std::io::{Error, ErrorKind};
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::Deref;
+use std::ops::{Deref, RangeFrom};
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
@@ -31,8 +31,6 @@ use std::time::UNIX_EPOCH;
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
-
-use super::incrementor::Incrementor;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -429,7 +427,7 @@ impl OsIpcChannel {
 }
 
 pub struct OsIpcReceiverSet {
-    incrementor: Incrementor,
+    incrementor: RangeFrom<u64>,
     poll: Poll,
     pollfds: HashMap<Token, PollEntry, BuildHasherDefault<FnvHasher>>,
     events: Events
@@ -450,7 +448,7 @@ impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,UnixError> {
         let fnv = BuildHasherDefault::<FnvHasher>::default();
         Ok(OsIpcReceiverSet {
-            incrementor: Incrementor::new(),
+            incrementor: 0..,
             poll: try!(Poll::new()),
             pollfds: HashMap::with_hasher(fnv),
             events: Events::with_capacity(10)
@@ -458,7 +456,7 @@ impl OsIpcReceiverSet {
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,UnixError> {
-        let last_index = self.incrementor.increment();
+        let last_index = self.incrementor.next().unwrap();
         let fd = receiver.consume_fd();
         let io = EventedFd(&fd);
         let fd_token = Token(fd as usize);
