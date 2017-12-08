@@ -7,14 +7,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"),
-			feature(mpsc_select))]
 #![cfg_attr(all(feature = "unstable", test), feature(specialization))]
 
+extern crate bincode;
+#[macro_use]
+extern crate crossbeam_channel;
 #[macro_use]
 extern crate lazy_static;
-
-extern crate bincode;
 extern crate libc;
 extern crate rand;
 extern crate serde;

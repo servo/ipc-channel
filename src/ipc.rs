@@ -100,10 +100,10 @@ impl<T> Stream for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize
         match self.try_recv() {
             Ok(msg) => Ok(Some(msg).into()),
             Err(err) => match *err {
-                bincode::ErrorKind::IoError(ref e) if e.kind() == ErrorKind::ConnectionReset => {
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset => {
                     Ok(Async::Ready(None))
                 }
-                bincode::ErrorKind::IoError(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     Ok(Async::NotReady)
                 }
                 _ => Err(err),
