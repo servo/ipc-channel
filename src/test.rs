@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crossbeam_channel::{self, Sender};
 use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcReceiver;
@@ -19,7 +20,6 @@ use std::iter;
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use std::ptr;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Sender};
 use std::thread;
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
@@ -164,7 +164,7 @@ fn router_simple() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
-    let (callback_fired_sender, callback_fired_receiver) = mpsc::channel::<Person>();
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
     ROUTER.add_route(rx.to_opaque(), Box::new(move |person| {
         callback_fired_sender.send(person.to().unwrap()).unwrap()
     }));
@@ -173,13 +173,13 @@ fn router_simple() {
 }
 
 #[test]
-fn router_routing_to_new_mpsc_receiver() {
+fn router_routing_to_new_crossbeam_receiver() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
-    let mpsc_receiver = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx);
-    let received_person = mpsc_receiver.recv().unwrap();
+    let crossbeam_receiver = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx);
+    let received_person = crossbeam_receiver.recv().unwrap();
     assert_eq!(received_person, person);
 }
 
@@ -191,10 +191,10 @@ fn router_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     tx1.send(person.clone()).unwrap();
 
-    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx0);
-    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx1);
-    let received_person_0 = mpsc_rx_0.recv().unwrap();
-    let received_person_1 = mpsc_rx_1.recv().unwrap();
+    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let received_person_0 = crossbeam_rx_0.recv().unwrap();
+    let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
     assert_eq!(received_person_1, person);
 }
@@ -210,10 +210,10 @@ fn router_multithreaded_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     thread::spawn(move || tx1.send(person_for_thread).unwrap());
 
-    let mpsc_rx_0 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx0);
-    let mpsc_rx_1 = ROUTER.route_ipc_receiver_to_new_mpsc_receiver(rx1);
-    let received_person_0 = mpsc_rx_0.recv().unwrap();
-    let received_person_1 = mpsc_rx_1.recv().unwrap();
+    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let received_person_0 = crossbeam_rx_0.recv().unwrap();
+    let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
     assert_eq!(received_person_1, person);
 }
@@ -231,7 +231,7 @@ fn router_drops_callbacks_on_sender_shutdown() {
     }
 
     let (tx0, rx0) = ipc::channel::<()>().unwrap();
-    let (drop_tx, drop_rx) = mpsc::channel();
+    let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper {
         sender: drop_tx,
     };
@@ -254,7 +254,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     }
 
     let (tx0, rx0) = ipc::channel::<()>().unwrap();
-    let (drop_tx, drop_rx) = mpsc::channel();
+    let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper {
         sender: drop_tx,
     };
@@ -276,7 +276,8 @@ fn router_big_data() {
         tx.send(people_for_subthread).unwrap();
     });
 
-    let (callback_fired_sender, callback_fired_receiver) = mpsc::channel::<Vec<Person>>();
+    let (callback_fired_sender, callback_fired_receiver) =
+        crossbeam_channel::unbounded::<Vec<Person>>();
     ROUTER.add_route(rx.to_opaque(), Box::new(move |people| {
         callback_fired_sender.send(people.to().unwrap()).unwrap()
     }));

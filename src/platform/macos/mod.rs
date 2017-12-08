@@ -307,7 +307,8 @@ impl OsIpcReceiver {
 #[derive(PartialEq, Debug)]
 pub struct OsIpcSender {
     port: mach_port_t,
-    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
+    // Make sure this is `!Sync`, to match `crossbeam_channel::Sender`; and to discourage sharing
+    // references.
     //
     // (Rather, senders should just be cloned, as they are shared internally anyway --
     // another layer of sharing only adds unnecessary overhead...)
