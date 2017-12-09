@@ -11,7 +11,7 @@ use bincode;
 use fnv::FnvHasher;
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
-use libc::{iovec, mode_t, msghdr, off_t, recvmsg, sendmsg};
+use libc::{iovec, mode_t, msghdr, recvmsg, sendmsg};
 use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_family_t};
 use std::cell::Cell;
 use std::cmp;
@@ -32,6 +32,7 @@ use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
 use tempfile::{Builder, TempDir};
+use shmemfdrs::create_shmem;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -953,31 +954,6 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
-#[cfg(not(all(target_os="linux", feature="memfd")))]
-fn create_shmem(name: CString, length: usize) -> c_int {
-    unsafe {
-        // NB: the FreeBSD man page for shm_unlink states that it requires
-        // write permissions, but testing shows that read-write is required.
-        let fd = libc::shm_open(name.as_ptr(),
-                                libc::O_CREAT | libc::O_RDWR | libc::O_EXCL,
-                                0o600);
-        assert!(fd >= 0);
-        assert!(libc::shm_unlink(name.as_ptr()) == 0);
-        assert!(libc::ftruncate(fd, length as off_t) == 0);
-        fd
-    }
-}
-
-#[cfg(all(feature="memfd", target_os="linux"))]
-fn create_shmem(name: CString, length: usize) -> c_int {
-    unsafe {
-        let fd = memfd_create(name.as_ptr(), 0);
-        assert!(fd >= 0);
-        assert!(libc::ftruncate(fd, length as off_t) == 0);
-        fd
-    }
-}
-
 struct UnixCmsg {
     cmsg_buffer: *mut cmsghdr,
     msghdr: msghdr,
@@ -1052,11 +1028,6 @@ fn is_socket(fd: c_int) -> bool {
 }
 
 // FFI stuff follows:
-
-#[cfg(all(feature="memfd", target_os="linux"))]
-unsafe fn memfd_create(name: *const c_char, flags: usize) -> c_int {
-    syscall!(MEMFD_CREATE, name, flags) as c_int
-}
 
 #[allow(non_snake_case)]
 fn CMSG_LEN(length: size_t) -> size_t {
