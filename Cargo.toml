@@ -18,7 +18,7 @@ crossbeam-channel = "0.1.1"
 lazy_static = "1"
 libc = "0.2.12"
 rand = "0.3"
-serde = { version="1.0", features=["rc"] }
+serde = { version="=1.0.23", features=["rc"] }
 uuid = {version = "0.5", features = ["v4"]}
 fnv = "1.0.3"
 
