@@ -38,17 +38,21 @@ const SCM_RIGHTS: c_int = 0x01;
 
 // The value Linux returns for SO_SNDBUF
 // is not the size we are actually allowed to use...
-// Empirically, we have to deduct 32 bytes from that.
-const RESERVED_SIZE: usize = 32;
+// Empirically, we have to deduct 72 bytes from that.
+const RESERVED_SIZE: usize = 72;
 
 #[cfg(target_os = "linux")]
 type IovLen = usize;
 #[cfg(target_os = "linux")]
 type MsgControlLen = size_t;
 
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "freebsd",
+          target_os = "netbsd",
+          target_os = "openbsd"))]
 type IovLen = i32;
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "freebsd",
+          target_os = "netbsd",
+          target_os = "openbsd"))]
 type MsgControlLen = socklen_t;
 
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
@@ -198,8 +202,8 @@ impl OsIpcSender {
     /// Calculate maximum payload data size of first fragment.
     ///
     /// This one is smaller than regular fragments, because it carries the message (size) header.
-    fn first_fragment_size(sendbuf_size: usize) -> usize {
-        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>())
+    fn first_fragment_size(sendbuf_size: usize, fd_size: usize) -> usize {
+        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>() - fd_size)
             & (!8usize + 1) // Ensure optimal alignment.
     }
 
@@ -212,8 +216,8 @@ impl OsIpcSender {
     /// under normal circumstances.
     /// (It might still block if heavy memory pressure causes ENOBUFS,
     /// forcing us to reduce the packet size.)
-    pub fn get_max_fragment_size() -> usize {
-        Self::first_fragment_size(*SYSTEM_SENDBUF_SIZE)
+    pub fn get_max_fragment_size(fd_size: usize) -> usize {
+        Self::first_fragment_size(*SYSTEM_SENDBUF_SIZE, fd_size)
     }
 
     pub fn send(&self,
@@ -229,6 +233,9 @@ impl OsIpcSender {
         for shared_memory_region in shared_memory_regions.iter() {
             fds.push(shared_memory_region.store.fd());
         }
+
+        let fd_size = CMSG_SPACE(mem::size_of_val(fds.as_slice()));
+        let total_size = data.len() + CMSG_LEN(fd_size);
 
         // `len` is the total length of the message.
         // Its value will be sent as a message header before the payload data.
@@ -331,7 +338,7 @@ impl OsIpcSender {
         }
 
         // If the message is small enough, try sending it in a single fragment.
-        if data.len() <= Self::get_max_fragment_size() {
+        if data.len() <= Self::get_max_fragment_size(fd_size) {
             match send_first_fragment(self.fd.0, &fds[..], data, data.len()) {
                 Ok(_) => return Ok(()),
                 Err(error) => {
@@ -370,7 +377,7 @@ impl OsIpcSender {
                 // The auxiliary data (FDs) is also sent along with this one.
 
                 // This fragment always uses the full allowable buffer size.
-                end_byte_position = Self::first_fragment_size(sendbuf_size);
+                end_byte_position = Self::first_fragment_size(sendbuf_size, fd_size);
                 send_first_fragment(self.fd.0, &fds[..], &data[..end_byte_position], data.len())
             } else {
                 // Followup fragment. No header; but offset by amount of data already sent.
@@ -862,8 +869,8 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     let mut main_data_buffer;
     unsafe {
         // Allocate a buffer without initialising the memory.
-        main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size());
-        main_data_buffer.set_len(OsIpcSender::get_max_fragment_size());
+        main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size(0));
+        main_data_buffer.set_len(OsIpcSender::get_max_fragment_size(0));
 
         let mut iovec = [
             iovec {

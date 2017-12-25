@@ -21,7 +21,7 @@ serde = { version="1.0", features=["rc"] }
 uuid = {version = "0.5", features = ["v4"]}
 fnv = "1.0.3"
 
-[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
 mio = "0.6.11"
 
 syscall = { version = "0.2.1", optional = true }
