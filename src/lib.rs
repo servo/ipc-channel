@@ -29,7 +29,7 @@ extern crate fnv;
 #[cfg(all(feature = "memfd", not(feature = "force-inprocess"),
           target_os="linux"))]
 #[macro_use]
-extern crate syscall;
+extern crate sc;
 
 #[cfg(feature = "async")]
 extern crate futures;
