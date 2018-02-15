@@ -178,8 +178,7 @@ impl<T> IpcSender<T> where T: Serialize {
                 let os_ipc_shared_memory_regions;
                 let os_ipc_channels;
                 {
-                    let mut serializer = bincode::Serializer::new(&mut bytes);
-                    data.serialize(&mut serializer)?;
+                    bincode::serialize_into(&mut bytes, &data)?;
                     os_ipc_channels =
                         mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(),
                                      old_os_ipc_channels);

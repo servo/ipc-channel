@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.9.1"
+version = "0.10.0"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
@@ -13,7 +13,7 @@ unstable = []
 async = ["futures"]
 
 [dependencies]
-bincode = "0.9"
+bincode = "1"
 lazy_static = "1"
 libc = "0.2.12"
 rand = "0.3"
