@@ -18,7 +18,7 @@ lazy_static = "1"
 libc = "0.2.12"
 rand = "0.3"
 serde = { version="1.0", features=["rc"] }
-uuid = {version = "0.5", features = ["v4"]}
+uuid = {version = "0.6", features = ["v4"]}
 fnv = "1.0.3"
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
