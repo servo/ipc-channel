@@ -94,11 +94,16 @@ fn medium_data() {
     let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
-    tx.send(data, vec![], vec![]).unwrap();
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+        let data: &[u8] = &data[..];
+        tx.send(data, vec![], vec![]).unwrap();
+    });
     let (received_data, received_channels, received_shared_memory_regions) =
         rx.recv().unwrap();
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (&data[..], vec![], vec![]));
+    thread.join().unwrap();
 }
 
 #[test]
@@ -107,15 +112,22 @@ fn medium_data_with_sender_transfer() {
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+        let data: &[u8] = &data[..];
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+
+        let (received_data, received_channels, received_shared_memory_regions) =
+            sub_rx.recv().unwrap();
+        assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+                   (data, vec![], vec![]));
+    });
+
     let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    thread.join().unwrap();
 }
 
 #[test]
@@ -144,6 +156,14 @@ fn big_data_with_sender_transfer() {
         let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+
+        let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+        let data: &[u8] = &data[..];
+        let (received_data, received_channels, received_shared_memory_regions) =
+            sub_rx.recv().unwrap();
+        assert_eq!(received_data.len(), data.len());
+        assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+                   (&data[..], vec![], vec![]));
     });
     let (received_data, mut received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
@@ -158,11 +178,6 @@ fn big_data_with_sender_transfer() {
     let data: &[u8] = &data[..];
     let sub_tx = received_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
-    assert_eq!(received_data.len(), data.len());
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (&data[..], vec![], vec![]));
     thread.join().unwrap();
 }
 
@@ -171,87 +186,98 @@ fn with_n_fds(n: usize, size: usize) {
                                                     .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
                                                     .unzip();
     let (super_tx, super_rx) = platform::channel().unwrap();
-
-    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-    super_tx.send(&data[..], sender_fds, vec![]).unwrap();
+    let thread = thread::spawn(move || {
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        let data: &[u8] = &data[..];
+        super_tx.send(&data[..], sender_fds, vec![]).unwrap();
+    });
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
 
+    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     assert_eq!(received_data.len(), data.len());
     assert_eq!(&received_data[..], &data[..]);
     assert_eq!(received_channels.len(), receivers.len());
     assert_eq!(received_shared_memory_regions.len(), 0);
+    thread.join().unwrap();
 
+    let mut n2 = 0;
     let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
-        let sub_tx = sender_fd.to_sender();
-        sub_tx.send(&data[..], vec![], vec![]).unwrap();
+        let thread = thread::spawn(move || {
+            let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+            let sub_tx = sender_fd.to_sender();
+            sub_tx.send(&data[..], vec![], vec![]).unwrap();
+        });
         let (received_data, received_channels, received_shared_memory_regions) =
             sub_rx.recv().unwrap();
         assert_eq!(received_data.len(), data.len());
         assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                    (&data[..], vec![], vec![]));
+        thread.join().unwrap();
+        n2 = n2 + 1;
     }
 }
 
 // These tests only apply to platforms that need fragmentation.
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd")))]
+                                                target_os = "freebsd",
+                                                target_os="openbsd")))]
 mod fragment_tests {
     use platform;
     use super::with_n_fds;
 
-    lazy_static! {
-        static ref FRAGMENT_SIZE: usize = {
-            platform::OsIpcSender::get_max_fragment_size()
-        };
+    fn fragment_size(n: usize) -> usize {
+        platform::OsIpcSender::get_max_fragment_size(n)
     }
 
     #[test]
     fn full_packet() {
-        with_n_fds(0, *FRAGMENT_SIZE);
+        with_n_fds(0, fragment_size(0));
     }
 
     #[test]
     fn full_packet_with_1_fds() {
-        with_n_fds(1, *FRAGMENT_SIZE);
+        with_n_fds(1, fragment_size(24));
     }
     #[test]
     fn full_packet_with_2_fds() {
-        with_n_fds(2, *FRAGMENT_SIZE);
+        with_n_fds(2, fragment_size(24));
     }
     #[test]
     fn full_packet_with_3_fds() {
-        with_n_fds(3, *FRAGMENT_SIZE);
+        with_n_fds(3, fragment_size(32));
     }
     #[test]
     fn full_packet_with_4_fds() {
-        with_n_fds(4, *FRAGMENT_SIZE);
+        with_n_fds(4, fragment_size(32));
     }
     #[test]
     fn full_packet_with_5_fds() {
-        with_n_fds(5, *FRAGMENT_SIZE);
+        with_n_fds(5, fragment_size(40));
     }
     #[test]
     fn full_packet_with_6_fds() {
-        with_n_fds(6, *FRAGMENT_SIZE);
+        with_n_fds(6, fragment_size(40));
     }
 
     // MAX_FDS_IN_CMSG is currently 64.
     #[test]
+    #[cfg(not(target_os = "openbsd"))]
     fn full_packet_with_64_fds() {
-        with_n_fds(64, *FRAGMENT_SIZE);
+        with_n_fds(64, fragment_size(272));
     }
 
     #[test]
     fn overfull_packet() {
-        with_n_fds(0, *FRAGMENT_SIZE + 1);
+        with_n_fds(0, fragment_size(0) + 1);
     }
 
     // In fragmented transfers, one FD is used up for the dedicated channel.
     #[test]
+    #[cfg(not(target_os = "openbsd"))]
     fn overfull_packet_with_63_fds() {
-        with_n_fds(63, *FRAGMENT_SIZE + 1);
+        with_n_fds(63, fragment_size(272) + 1);
     }
 }
 
@@ -287,7 +313,6 @@ macro_rules! create_big_data_with_n_fds {
             });
             let (received_data, received_channels, received_shared_memory_regions) =
                 super_rx.recv().unwrap();
-            thread.join().unwrap();
 
             let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
@@ -295,17 +320,23 @@ macro_rules! create_big_data_with_n_fds {
             assert_eq!(&received_data[..], &data[..]);
             assert_eq!(received_channels.len(), receivers.len());
             assert_eq!(received_shared_memory_regions.len(), 0);
+            thread.join().unwrap();
 
             let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
             for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
-                let sub_tx = sender_fd.to_sender();
-                sub_tx.send(data, vec![], vec![]).unwrap();
+                let thread = thread::spawn(move || {
+                    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+                    let data: &[u8] = &data[..];
+                    let sub_tx = sender_fd.to_sender();
+                    sub_tx.send(data, vec![], vec![]).unwrap();
+                });
                 let (received_data, received_channels, received_shared_memory_regions) =
                     sub_rx.recv().unwrap();
                 assert_eq!(received_data.len(), data.len());
                 assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                            (&data[..], vec![], vec![]));
+                thread.join().unwrap();
             }
         }
     )
@@ -487,8 +518,14 @@ fn receiver_set_medium_data() {
     let data0: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8).collect();
     let data1: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8 | 0x80).collect();
 
-    tx0.send(&*data0, vec![], vec![]).unwrap();
-    tx1.send(&*data1, vec![], vec![]).unwrap();
+    let thread = thread::spawn(move || {
+        let data0: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8).collect();
+        let data1: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8 | 0x80).collect();
+
+        tx0.send(&*data0, vec![], vec![]).unwrap();
+        tx1.send(&*data1, vec![], vec![]).unwrap();
+    });
+
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
@@ -506,6 +543,8 @@ fn receiver_set_medium_data() {
             }
         }
     }
+
+    thread.join().unwrap();
 }
 
 #[test]
