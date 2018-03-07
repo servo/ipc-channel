@@ -46,9 +46,9 @@ type IovLen = usize;
 #[cfg(target_os = "linux")]
 type MsgControlLen = size_t;
 
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "openbsd", target_os = "freebsd"))]
 type IovLen = i32;
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "openbsd", target_os = "freebsd"))]
 type MsgControlLen = socklen_t;
 
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
