@@ -8,9 +8,11 @@
 // except according to those terms.
 
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
                                                 target_os = "freebsd")))]
 mod unix;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
                                                 target_os = "freebsd")))]
 mod os {
     pub use super::unix::*;
