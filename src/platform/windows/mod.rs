@@ -329,6 +329,10 @@ impl WinHandle {
     fn take_raw(&mut self) -> HANDLE {
         mem::replace(&mut self.h, INVALID_HANDLE_VALUE)
     }
+
+    fn take(&mut self) -> WinHandle {
+        WinHandle::new(self.take_raw())
+    }
 }
 
 /// Main object keeping track of a receive handle and its associated state.
@@ -851,7 +855,7 @@ impl OsIpcReceiver {
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
         assert!(!reader.read_in_progress);
-        OsIpcReceiver::from_handle(WinHandle::new(reader.handle.take_raw()))
+        OsIpcReceiver::from_handle(reader.handle.take())
     }
 
     // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
@@ -1113,7 +1117,7 @@ impl OsIpcSender {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
 
-                    let handle = WinHandle::new(r.reader.into_inner().handle.take_raw());
+                    let handle = r.reader.into_inner().handle.take();
                     let mut raw_remote_handle = try!(move_handle_to_process(handle, &server_h));
                     oob.channel_handles.push(raw_remote_handle.take_raw() as intptr_t);
                 },
@@ -1133,7 +1137,7 @@ impl OsIpcSender {
                 };
 
                 // Put the receiver in the OOB data
-                let handle = WinHandle::new(receiver.reader.into_inner().handle.take_raw());
+                let handle = receiver.reader.into_inner().handle.take();
                 let mut raw_receiver_handle = try!(move_handle_to_process(handle, &server_h));
                 oob.big_data_receiver_handle = Some((raw_receiver_handle.take_raw() as intptr_t, data.len() as u64));
                 oob.target_process_id = server_pid;
@@ -1545,11 +1549,11 @@ impl OsOpaqueIpcChannel {
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {
-        OsIpcReceiver::from_handle(WinHandle::new(self.handle.take_raw()))
+        OsIpcReceiver::from_handle(self.handle.take())
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
-        OsIpcSender::from_handle(WinHandle::new(self.handle.take_raw()))
+        OsIpcSender::from_handle(self.handle.take())
     }
 }
 
