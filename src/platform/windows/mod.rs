@@ -29,7 +29,7 @@ use winapi;
 
 lazy_static! {
     static ref CURRENT_PROCESS_ID: winapi::ULONG = unsafe { kernel32::GetCurrentProcessId() };
-    static ref CURRENT_PROCESS_HANDLE: intptr_t = unsafe { kernel32::GetCurrentProcess() as intptr_t };
+    static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { kernel32::GetCurrentProcess() });
 
     static ref DEBUG_TRACE_ENABLED: bool = { env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some() };
 }
@@ -223,46 +223,44 @@ fn make_pipe_name(pipe_id: &Uuid) -> CString {
 ///
 /// Unlike win32 DuplicateHandle, this will preserve INVALID_HANDLE_VALUE (which is
 /// also the pseudohandle for the current process).
-unsafe fn dup_handle_to_process_with_flags(handle: HANDLE, other_process: HANDLE, flags: winapi::DWORD)
-                                    -> Result<HANDLE,WinError>
+fn dup_handle_to_process_with_flags(handle: &WinHandle, other_process: &WinHandle, flags: winapi::DWORD)
+                                           -> Result<WinHandle, WinError>
 {
-    if handle == INVALID_HANDLE_VALUE {
-        return Ok(INVALID_HANDLE_VALUE);
+    if !handle.is_valid() {
+        return Ok(WinHandle::invalid());
     }
 
-    let mut new_handle: HANDLE = INVALID_HANDLE_VALUE;
-    let ok = kernel32::DuplicateHandle(*CURRENT_PROCESS_HANDLE as HANDLE, handle,
-                                       other_process, &mut new_handle,
-                                       0, winapi::FALSE, flags);
-    if ok == winapi::FALSE {
-        Err(WinError::last("DuplicateHandle"))
-    } else {
-        Ok(new_handle)
+    unsafe {
+        let mut new_handle: HANDLE = INVALID_HANDLE_VALUE;
+        let ok = kernel32::DuplicateHandle(**CURRENT_PROCESS_HANDLE, **handle,
+                                           **other_process, &mut new_handle,
+                                           0, winapi::FALSE, flags);
+        if ok == winapi::FALSE {
+            Err(WinError::last("DuplicateHandle"))
+        } else {
+            Ok(WinHandle::new(new_handle))
+        }
     }
 }
 
 /// Duplicate a handle in the current process.
 fn dup_handle(handle: &WinHandle) -> Result<WinHandle,WinError> {
-    dup_handle_to_process(handle, &WinHandle::new(*CURRENT_PROCESS_HANDLE as HANDLE))
+    dup_handle_to_process(handle, &WinHandle::new(**CURRENT_PROCESS_HANDLE))
 }
 
 /// Duplicate a handle to the target process.
 fn dup_handle_to_process(handle: &WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
-    unsafe {
-        let h = try!(dup_handle_to_process_with_flags(
-            **handle, **other_process, winapi::DUPLICATE_SAME_ACCESS));
-        Ok(WinHandle::new(h))
-    }
+    dup_handle_to_process_with_flags(handle, other_process, winapi::DUPLICATE_SAME_ACCESS)
 }
 
 /// Duplicate a handle to the target process, closing the source handle.
-fn move_handle_to_process(mut handle: WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
-    unsafe {
-        let h = try!(dup_handle_to_process_with_flags(
-            handle.take_raw(), **other_process,
-            winapi::DUPLICATE_CLOSE_SOURCE | winapi::DUPLICATE_SAME_ACCESS));
-        Ok(WinHandle::new(h))
-    }
+fn move_handle_to_process(handle: WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
+    let result = dup_handle_to_process_with_flags(&handle, other_process,
+                                                  winapi::DUPLICATE_CLOSE_SOURCE | winapi::DUPLICATE_SAME_ACCESS);
+    // Since the handle was moved to another process, the original is no longer valid;
+    // so we probably shouldn't try to close it explicitly?
+    mem::forget(handle);
+    result
 }
 
 #[derive(Debug)]
@@ -632,20 +630,20 @@ impl MessageReader {
                      self.handle, message.data_len, oob.channel_handles.len(), oob.shmem_handles.len(),
                      oob.big_data_receiver_handle);
 
-                unsafe {
-                    for handle in oob.channel_handles {
-                        channels.push(OsOpaqueIpcChannel::new(handle as HANDLE));
-                    }
+                for handle in oob.channel_handles {
+                    channels.push(OsOpaqueIpcChannel::new(WinHandle::new(handle as HANDLE)));
+                }
 
-                    for (handle, size) in oob.shmem_handles {
-                        shmems.push(OsIpcSharedMemory::from_handle(handle as HANDLE, size as usize).unwrap());
-                    }
+                for (handle, size) in oob.shmem_handles {
+                    shmems.push(OsIpcSharedMemory::from_handle(WinHandle::new(handle as HANDLE),
+                                                               size as usize,
+                                                               ).unwrap());
+                }
 
-                    if oob.big_data_receiver_handle.is_some() {
-                        let (handle, big_data_size) = oob.big_data_receiver_handle.unwrap();
-                        let receiver = OsIpcReceiver::from_handle(handle as HANDLE);
-                        big_data = Some(try!(receiver.recv_raw(big_data_size as usize)));
-                    }
+                if oob.big_data_receiver_handle.is_some() {
+                    let (handle, big_data_size) = oob.big_data_receiver_handle.unwrap();
+                    let receiver = OsIpcReceiver::from_handle(WinHandle::new(handle as HANDLE));
+                    big_data = Some(try!(receiver.recv_raw(big_data_size as usize)));
                 }
             }
 
@@ -813,9 +811,9 @@ impl PartialEq for OsIpcReceiver {
 }
 
 impl OsIpcReceiver {
-    unsafe fn from_handle(handle: HANDLE) -> OsIpcReceiver {
+    fn from_handle(handle: WinHandle) -> OsIpcReceiver {
         OsIpcReceiver {
-            reader: RefCell::new(MessageReader::new(WinHandle::new(handle))),
+            reader: RefCell::new(MessageReader::new(handle)),
         }
     }
 
@@ -853,7 +851,7 @@ impl OsIpcReceiver {
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
         assert!(!reader.read_in_progress);
-        unsafe { OsIpcReceiver::from_handle(reader.handle.take_raw()) }
+        OsIpcReceiver::from_handle(WinHandle::new(reader.handle.take_raw()))
     }
 
     // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
@@ -988,10 +986,7 @@ pub struct OsIpcSender {
 
 impl Clone for OsIpcSender {
     fn clone(&self) -> OsIpcSender {
-        unsafe {
-            let mut handle = dup_handle(&self.handle).unwrap();
-            OsIpcSender::from_handle(handle.take_raw())
-        }
+        OsIpcSender::from_handle(dup_handle(&self.handle).unwrap())
     }
 }
 
@@ -1005,9 +1000,9 @@ impl OsIpcSender {
         MAX_FRAGMENT_SIZE
     }
 
-    unsafe fn from_handle(handle: HANDLE) -> OsIpcSender {
+    fn from_handle(handle: WinHandle) -> OsIpcSender {
         OsIpcSender {
-            handle: WinHandle::new(handle),
+            handle: handle,
             nosync_marker: PhantomData,
         }
     }
@@ -1029,7 +1024,7 @@ impl OsIpcSender {
 
             win32_trace!("[c {:?}] connect_to_server success", handle);
 
-            Ok(OsIpcSender::from_handle(handle))
+            Ok(OsIpcSender::from_handle(WinHandle::new(handle)))
         }
     }
 
@@ -1047,7 +1042,7 @@ impl OsIpcSender {
         unsafe {
             let server_pid = try!(self.get_pipe_server_process_id());
             if server_pid == *CURRENT_PROCESS_ID {
-                return Ok((WinHandle::new(*CURRENT_PROCESS_HANDLE as HANDLE), server_pid));
+                return Ok((WinHandle::new(**CURRENT_PROCESS_HANDLE), server_pid));
             }
 
             let raw_handle = kernel32::OpenProcess(winapi::PROCESS_DUP_HANDLE,
@@ -1400,10 +1395,7 @@ impl Drop for OsIpcSharedMemory {
 
 impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
-        unsafe {
-            let mut handle = dup_handle(&self.handle).unwrap();
-            OsIpcSharedMemory::from_handle(handle.take_raw(), self.length).unwrap()
-        }
+        OsIpcSharedMemory::from_handle(dup_handle(&self.handle).unwrap(), self.length).unwrap()
     }
 }
 
@@ -1448,7 +1440,7 @@ impl OsIpcSharedMemory {
                 return Err(WinError::last("CreateFileMapping"));
             }
 
-            OsIpcSharedMemory::from_handle(handle, length)
+            OsIpcSharedMemory::from_handle(WinHandle::new(handle), length)
         }
     }
 
@@ -1458,22 +1450,21 @@ impl OsIpcSharedMemory {
     //
     // This function takes ownership of the handle, and will close it
     // when finished.
-    unsafe fn from_handle(handle_raw: HANDLE, length: usize) -> Result<OsIpcSharedMemory,WinError> {
-        // turn this into a WinHandle, because that will
-        // take care of closing it
-        let handle = WinHandle::new(handle_raw);
-        let address = kernel32::MapViewOfFile(handle_raw,
-                                              winapi::FILE_MAP_ALL_ACCESS,
-                                              0, 0, 0);
-        if address.is_null() {
-            return Err(WinError::last("MapViewOfFile"));
-        }
+    fn from_handle(handle: WinHandle, length: usize) -> Result<OsIpcSharedMemory,WinError> {
+        unsafe {
+            let address = kernel32::MapViewOfFile(*handle,
+                                                  winapi::FILE_MAP_ALL_ACCESS,
+                                                  0, 0, 0);
+            if address.is_null() {
+                return Err(WinError::last("MapViewOfFile"));
+            }
 
-        Ok(OsIpcSharedMemory {
-            handle: handle,
-            ptr: address as *mut u8,
-            length: length
-        })
+            Ok(OsIpcSharedMemory {
+                handle: handle,
+                ptr: address as *mut u8,
+                length: length
+            })
+        }
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
@@ -1532,7 +1523,7 @@ pub enum OsIpcChannel {
 
 #[derive(PartialEq, Debug)]
 pub struct OsOpaqueIpcChannel {
-    handle: HANDLE,
+    handle: WinHandle,
 }
 
 impl Drop for OsOpaqueIpcChannel {
@@ -1542,23 +1533,23 @@ impl Drop for OsOpaqueIpcChannel {
         // The `OsOpaqueIpcChannel` objects should always be used,
         // i.e. converted with `to_sender()` or `to_receiver()` --
         // so the value should already be unset before the object gets dropped.
-        debug_assert!(self.handle == INVALID_HANDLE_VALUE);
+        debug_assert!(!self.handle.is_valid());
     }
 }
 
 impl OsOpaqueIpcChannel {
-    fn new(handle: HANDLE) -> OsOpaqueIpcChannel {
+    fn new(handle: WinHandle) -> OsOpaqueIpcChannel {
         OsOpaqueIpcChannel {
             handle: handle,
         }
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {
-        unsafe { OsIpcReceiver::from_handle(mem::replace(&mut self.handle, INVALID_HANDLE_VALUE)) }
+        OsIpcReceiver::from_handle(WinHandle::new(self.handle.take_raw()))
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
-        unsafe { OsIpcSender::from_handle(mem::replace(&mut self.handle, INVALID_HANDLE_VALUE)) }
+        OsIpcSender::from_handle(WinHandle::new(self.handle.take_raw()))
     }
 }
 
