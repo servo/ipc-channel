@@ -633,11 +633,11 @@ impl MessageReader {
                      oob.big_data_receiver_handle);
 
                 unsafe {
-                    for handle in oob.channel_handles.iter() {
-                        channels.push(OsOpaqueIpcChannel::new(*handle as HANDLE));
+                    for handle in oob.channel_handles {
+                        channels.push(OsOpaqueIpcChannel::new(handle as HANDLE));
                     }
 
-                    for sh in oob.shmem_handles.iter() {
+                    for sh in oob.shmem_handles {
                         shmems.push(OsIpcSharedMemory::from_handle(sh.0 as HANDLE, sh.1 as usize).unwrap());
                     }
 
