@@ -380,12 +380,6 @@ struct MessageReader {
     /// Thus it is crucial that we always set this correctly!
     read_in_progress: bool,
 
-    /// We got added to a receiver set
-    /// after the the sender end of the channel got closed --
-    /// so we need to report a "closed" event in the next `select()` call,
-    /// rather than actually waiting for data from this channel.
-    closed: bool,
-
     /// Token identifying the reader/receiver within an `OsIpcReceiverSet`.
     ///
     /// This is returned to callers of `OsIpcReceiverSet.add()` and `OsIpcReceiverSet.select()`.
@@ -420,7 +414,6 @@ impl MessageReader {
             ov: Box::new(unsafe { mem::zeroed::<winapi::OVERLAPPED>() }),
             read_buf: Vec::new(),
             read_in_progress: false,
-            closed: false,
             set_id: None,
         }
     }
@@ -451,9 +444,6 @@ impl MessageReader {
     ///
     /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
     unsafe fn start_read(&mut self) -> Result<(),WinError> {
-        // There is no valid reason to call this again after getting a channel closed notification.
-        assert!(!self.closed);
-
         if self.read_in_progress {
             return Ok(());
         }
@@ -541,7 +531,6 @@ impl MessageReader {
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
     unsafe fn notify_completion(&mut self, err: u32) -> Result<(), WinError> {
-        assert!(!self.closed);
         assert!(self.read_in_progress);
 
         win32_trace!("[$ {:?}] notify_completion", self.handle);
@@ -626,9 +615,6 @@ impl MessageReader {
 
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
-        // We should never expect having pending data after receiving a channel closed notification.
-        assert!(!self.closed);
-
         // Never touch the buffer while it's still mutably aliased by the kernel!
         if self.read_in_progress {
             return Ok(None);
@@ -709,15 +695,7 @@ impl MessageReader {
             // Note: Just like in `OsIpcReceiver.receive_message()` below,
             // this makes us vulnerable to invalid `ov` and `read_buf` modification
             // from code not marked as unsafe...
-            match self.start_read() {
-                Err(WinError::ChannelClosed) => {
-                    // If the sender has already been closed, we need to stash this information,
-                    // so we can report the corresponding event in the next `select()` call.
-                    self.closed = true;
-                    Ok(())
-                }
-                result => result,
-            }
+            self.start_read()
         }
     }
 
@@ -1226,6 +1204,13 @@ pub struct OsIpcReceiverSet {
 
     /// The set of receivers, stored as MessageReaders.
     readers: Vec<MessageReader>,
+
+    /// Readers that got closed before adding them to the set.
+    ///
+    /// These need to report a "closed" event on the next `select()` call.
+    ///
+    /// Only the `set_id` is necessary for that.
+    closed_readers: Vec<u64>,
 }
 
 impl OsIpcReceiverSet {
@@ -1243,6 +1228,7 @@ impl OsIpcReceiverSet {
                 incrementor: 0..,
                 iocp: WinHandle::new(iocp),
                 readers: vec![],
+                closed_readers: vec![],
             })
         }
     }
@@ -1252,35 +1238,36 @@ impl OsIpcReceiverSet {
         let mut reader = receiver.reader.into_inner();
 
         let set_id = self.incrementor.next().unwrap();
-        try!(reader.add_to_iocp(&self.iocp, set_id));
 
-        win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", *self.iocp, *reader.handle, set_id);
-
-        self.readers.push(reader);
+        match reader.add_to_iocp(&self.iocp, set_id) {
+            Ok(()) => {
+                win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", *self.iocp, *reader.handle, set_id);
+                self.readers.push(reader);
+            }
+            Err(WinError::ChannelClosed) => {
+                // If the sender has already been closed, we need to stash this information,
+                // so we can report the corresponding event in the next `select()` call.
+                win32_trace!("[# {:?}] ReceiverSet add {:?} (closed), id {}", *self.iocp, *reader.handle, set_id);
+                self.closed_readers.push(set_id);
+            }
+            Err(err) => return Err(err),
+        };
 
         Ok(set_id)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,WinError> {
-        assert!(!self.readers.is_empty(), "selecting with no objects?");
-        win32_trace!("[# {:?}] select() with {} receivers", *self.iocp, self.readers.len());
+        assert!(self.readers.len() + self.closed_readers.len() > 0, "selecting with no objects?");
+        win32_trace!("[# {:?}] select() with {} active and {} closed receivers", *self.iocp, self.readers.len(), self.closed_readers.len());
 
         // the ultimate results
         let mut selection_results = vec![];
 
-        // Make a quick first-run check for any closed receivers.
-        // This will only happen if we have a receiver that
-        // gets added to the Set after it was closed (the
-        // router_drops_callbacks_on_cloned_sender_shutdown test
-        // causes this.)
-        self.readers.retain(|ref r| {
-            if r.closed {
-                selection_results.push(OsIpcSelectionResult::ChannelClosed(r.set_id.unwrap()));
-                false
-            } else {
-                true
-            }
-        });
+        // Process any pending "closed" events
+        // from channels that got closed before being added to the set,
+        // and thus received "closed" notifications while being added.
+        self.closed_readers.drain(..)
+            .for_each(|set_id| selection_results.push(OsIpcSelectionResult::ChannelClosed(set_id)));
 
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
