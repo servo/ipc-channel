@@ -259,7 +259,7 @@ fn dup_handle_to_process(handle: &WinHandle, other_process: &WinHandle) -> Resul
 fn move_handle_to_process(mut handle: WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
     unsafe {
         let h = try!(dup_handle_to_process_with_flags(
-            handle.take(), **other_process,
+            handle.take_raw(), **other_process,
             winapi::DUPLICATE_CLOSE_SOURCE | winapi::DUPLICATE_SAME_ACCESS));
         Ok(WinHandle::new(h))
     }
@@ -328,7 +328,7 @@ impl WinHandle {
         self.h != INVALID_HANDLE_VALUE
     }
 
-    fn take(&mut self) -> HANDLE {
+    fn take_raw(&mut self) -> HANDLE {
         mem::replace(&mut self.h, INVALID_HANDLE_VALUE)
     }
 }
@@ -853,7 +853,7 @@ impl OsIpcReceiver {
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
         assert!(!reader.read_in_progress);
-        unsafe { OsIpcReceiver::from_handle(reader.handle.take()) }
+        unsafe { OsIpcReceiver::from_handle(reader.handle.take_raw()) }
     }
 
     // This is only used for recv/try_recv.  When this is added to an IpcReceiverSet, then
@@ -990,7 +990,7 @@ impl Clone for OsIpcSender {
     fn clone(&self) -> OsIpcSender {
         unsafe {
             let mut handle = dup_handle(&self.handle).unwrap();
-            OsIpcSender::from_handle(handle.take())
+            OsIpcSender::from_handle(handle.take_raw())
         }
     }
 }
@@ -1104,23 +1104,23 @@ impl OsIpcSender {
         for ref shmem in shared_memory_regions {
             // shmem.handle, shmem.length
             let mut remote_handle = try!(dup_handle_to_process(&shmem.handle, &server_h));
-            oob.shmem_handles.push((remote_handle.take() as intptr_t, shmem.length as u64));
+            oob.shmem_handles.push((remote_handle.take_raw() as intptr_t, shmem.length as u64));
         }
 
         for port in ports {
             match port {
                 OsIpcChannel::Sender(s) => {
                     let mut raw_remote_handle = try!(move_handle_to_process(s.handle, &server_h));
-                    oob.channel_handles.push(raw_remote_handle.take() as intptr_t);
+                    oob.channel_handles.push(raw_remote_handle.take_raw() as intptr_t);
                 },
                 OsIpcChannel::Receiver(r) => {
                     if try!(r.prepare_for_transfer()) == false {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
 
-                    let handle = WinHandle::new(r.reader.into_inner().handle.take());
+                    let handle = WinHandle::new(r.reader.into_inner().handle.take_raw());
                     let mut raw_remote_handle = try!(move_handle_to_process(handle, &server_h));
-                    oob.channel_handles.push(raw_remote_handle.take() as intptr_t);
+                    oob.channel_handles.push(raw_remote_handle.take_raw() as intptr_t);
                 },
             }
         }
@@ -1138,9 +1138,9 @@ impl OsIpcSender {
                 };
 
                 // Put the receiver in the OOB data
-                let handle = WinHandle::new(receiver.reader.into_inner().handle.take());
+                let handle = WinHandle::new(receiver.reader.into_inner().handle.take_raw());
                 let mut raw_receiver_handle = try!(move_handle_to_process(handle, &server_h));
-                oob.big_data_receiver_handle = Some((raw_receiver_handle.take() as intptr_t, data.len() as u64));
+                oob.big_data_receiver_handle = Some((raw_receiver_handle.take_raw() as intptr_t, data.len() as u64));
                 oob.target_process_id = server_pid;
 
                 Some(sender)
@@ -1402,7 +1402,7 @@ impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
         unsafe {
             let mut handle = dup_handle(&self.handle).unwrap();
-            OsIpcSharedMemory::from_handle(handle.take(), self.length).unwrap()
+            OsIpcSharedMemory::from_handle(handle.take_raw(), self.length).unwrap()
         }
     }
 }
