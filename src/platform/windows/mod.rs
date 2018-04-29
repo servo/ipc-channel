@@ -637,8 +637,8 @@ impl MessageReader {
                         channels.push(OsOpaqueIpcChannel::new(handle as HANDLE));
                     }
 
-                    for sh in oob.shmem_handles {
-                        shmems.push(OsIpcSharedMemory::from_handle(sh.0 as HANDLE, sh.1 as usize).unwrap());
+                    for (handle, size) in oob.shmem_handles {
+                        shmems.push(OsIpcSharedMemory::from_handle(handle as HANDLE, size as usize).unwrap());
                     }
 
                     if oob.big_data_receiver_handle.is_some() {
