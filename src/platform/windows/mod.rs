@@ -1282,14 +1282,9 @@ impl OsIpcReceiverSet {
             }
         });
 
-        // if we had prematurely closed elements, just process them first
-        if !selection_results.is_empty() {
-            return Ok(selection_results);
-        }
-
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
-        loop {
+        while selection_results.is_empty() {
             let mut nbytes: u32 = 0;
             let mut io_err = winapi::ERROR_SUCCESS;
 
@@ -1376,12 +1371,6 @@ impl OsIpcReceiverSet {
 
             if let Some(index) = remove_index {
                 self.readers.swap_remove(index);
-            }
-
-            // if we didn't dequeue at least one complete message -- we need to loop through GetQueuedCS again;
-            // otherwise we're done.
-            if !selection_results.is_empty() {
-                break;
             }
         }
 
