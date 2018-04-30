@@ -382,7 +382,7 @@ struct MessageReader {
     /// This is returned to callers of `OsIpcReceiverSet.add()` and `OsIpcReceiverSet.select()`.
     ///
     /// `None` if this `MessageReader` is not part of any set.
-    set_id: Option<u64>,
+    entry_id: Option<u64>,
 }
 
 // We need to explicitly declare this, because of the raw pointer
@@ -411,7 +411,7 @@ impl MessageReader {
             ov: Box::new(unsafe { mem::zeroed::<winapi::OVERLAPPED>() }),
             read_buf: Vec::new(),
             read_in_progress: false,
-            set_id: None,
+            entry_id: None,
         }
     }
 
@@ -680,9 +680,9 @@ impl MessageReader {
         Ok(result)
     }
 
-    fn add_to_iocp(&mut self, iocp: &WinHandle, set_id: u64) -> Result<(),WinError> {
+    fn add_to_iocp(&mut self, iocp: &WinHandle, entry_id: u64) -> Result<(),WinError> {
         unsafe {
-            assert!(self.set_id.is_none());
+            assert!(self.entry_id.is_none());
 
             let completion_key = self.handle.as_raw() as winapi::ULONG_PTR;
             let ret = kernel32::CreateIoCompletionPort(self.handle.as_raw(),
@@ -693,7 +693,7 @@ impl MessageReader {
                 return Err(WinError::last("CreateIoCompletionPort"));
             }
 
-            self.set_id = Some(set_id);
+            self.entry_id = Some(entry_id);
 
             // Make sure that the reader has a read in flight,
             // otherwise a later select() will hang.
@@ -868,7 +868,7 @@ impl OsIpcReceiver {
     fn receive_message(&self, mut blocking_mode: BlockingMode)
                        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),WinError> {
         let mut reader = self.reader.borrow_mut();
-        assert!(reader.set_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
+        assert!(reader.entry_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
 
         // This function loops, because in the case of a blocking read, we may need to
         // read multiple sets of bytes from the pipe to receive a complete message.
@@ -1212,7 +1212,7 @@ pub struct OsIpcReceiverSet {
     ///
     /// These need to report a "closed" event on the next `select()` call.
     ///
-    /// Only the `set_id` is necessary for that.
+    /// Only the `entry_id` is necessary for that.
     closed_readers: Vec<u64>,
 }
 
@@ -1240,23 +1240,23 @@ impl OsIpcReceiverSet {
         // consume the receiver, and take the reader out
         let mut reader = receiver.reader.into_inner();
 
-        let set_id = self.incrementor.next().unwrap();
+        let entry_id = self.incrementor.next().unwrap();
 
-        match reader.add_to_iocp(&self.iocp, set_id) {
+        match reader.add_to_iocp(&self.iocp, entry_id) {
             Ok(()) => {
-                win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", self.iocp.as_raw(), reader.handle.as_raw(), set_id);
+                win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", self.iocp.as_raw(), reader.handle.as_raw(), entry_id);
                 self.readers.push(reader);
             }
             Err(WinError::ChannelClosed) => {
                 // If the sender has already been closed, we need to stash this information,
                 // so we can report the corresponding event in the next `select()` call.
-                win32_trace!("[# {:?}] ReceiverSet add {:?} (closed), id {}", self.iocp.as_raw(), reader.handle.as_raw(), set_id);
-                self.closed_readers.push(set_id);
+                win32_trace!("[# {:?}] ReceiverSet add {:?} (closed), id {}", self.iocp.as_raw(), reader.handle.as_raw(), entry_id);
+                self.closed_readers.push(entry_id);
             }
             Err(err) => return Err(err),
         };
 
-        Ok(set_id)
+        Ok(entry_id)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,WinError> {
@@ -1270,7 +1270,7 @@ impl OsIpcReceiverSet {
         // from channels that got closed before being added to the set,
         // and thus received "closed" notifications while being added.
         self.closed_readers.drain(..)
-            .for_each(|set_id| selection_results.push(OsIpcSelectionResult::ChannelClosed(set_id)));
+            .for_each(|entry_id| selection_results.push(OsIpcSelectionResult::ChannelClosed(entry_id)));
 
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
@@ -1328,10 +1328,10 @@ impl OsIpcReceiverSet {
             if !closed {
                 // Drain as many messages as we can.
                 while let Some((data, channels, shmems)) = try!(reader.get_message()) {
-                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
-                    selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
+                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
+                    selection_results.push(OsIpcSelectionResult::DataReceived(reader.entry_id.unwrap(), data, channels, shmems));
                 }
-                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
 
                 // Now that we are done frobbing the buffer,
                 // we can safely initiate the next async read operation.
@@ -1355,8 +1355,8 @@ impl OsIpcReceiverSet {
             // or while trying to re-initiate an async read after receiving data --
             // add an event to this effect to the result list.
             if closed {
-                win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
-                selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
+                selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.entry_id.unwrap()));
             }
         }
 
