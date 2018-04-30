@@ -1270,12 +1270,12 @@ impl OsIpcReceiverSet {
             let mut io_err = winapi::ERROR_SUCCESS;
 
             let reader_index = unsafe {
-                let mut completion_key: HANDLE = INVALID_HANDLE_VALUE;
+                let mut completion_key = INVALID_HANDLE_VALUE as winapi::ULONG_PTR;
                 let mut ov_ptr: *mut winapi::OVERLAPPED = ptr::null_mut();
                 // XXX use GetQueuedCompletionStatusEx to dequeue multiple CP at once!
                 let ok = kernel32::GetQueuedCompletionStatus(self.iocp.as_raw(),
                                                              &mut nbytes,
-                                                             &mut completion_key as *mut _ as *mut winapi::ULONG_PTR,
+                                                             &mut completion_key,
                                                              &mut ov_ptr,
                                                              winapi::INFINITE);
                 win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
@@ -1292,11 +1292,11 @@ impl OsIpcReceiverSet {
                 }
 
                 assert!(!ov_ptr.is_null());
-                assert!(completion_key != INVALID_HANDLE_VALUE);
+                assert!(completion_key != INVALID_HANDLE_VALUE as winapi::ULONG_PTR);
 
                 // Find the matching receiver
                 let (index, _) = self.readers.iter().enumerate()
-                                 .find(|&(_, ref reader)| reader.handle.as_raw() == completion_key)
+                                 .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
                                  .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
                 index
             };
