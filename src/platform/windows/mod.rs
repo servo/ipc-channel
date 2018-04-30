@@ -684,9 +684,10 @@ impl MessageReader {
         unsafe {
             assert!(self.set_id.is_none());
 
+            let completion_key = self.handle.as_raw() as winapi::ULONG_PTR;
             let ret = kernel32::CreateIoCompletionPort(self.handle.as_raw(),
                                                        iocp.as_raw(),
-                                                       self.handle.as_raw() as winapi::ULONG_PTR,
+                                                       completion_key,
                                                        0);
             if ret.is_null() {
                 return Err(WinError::last("CreateIoCompletionPort"));
