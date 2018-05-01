@@ -415,6 +415,14 @@ impl MessageReader {
         }
     }
 
+    fn take(&mut self) -> MessageReader {
+        // This is currently somewhat inefficient,
+        // because of the initialisation of things that won't be used.
+        // Moving the data items of `MessageReader` into an enum will fix this,
+        // as that way we will be able to just define a data-less `Invalid` case.
+        mem::replace(self, MessageReader::new(WinHandle::invalid()))
+    }
+
     fn cancel_io(&mut self) {
         unsafe {
             if self.read_in_progress {
@@ -1301,57 +1309,55 @@ impl OsIpcReceiverSet {
                 index
             };
 
-            let mut remove_index = None;
+            // Remove the entry from the set for now -- we will re-add it later,
+            // if we can successfully initiate another async read operation.
+            let mut reader = self.readers.swap_remove(reader_index);
 
-            // We need a scope here for the mutable borrow of self.readers;
-            // we need to (maybe) remove an element from it below.
-            {
-                let reader = &mut self.readers[reader_index];
+            win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
 
-                win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
+            // tell it about the completed IO op
+            let mut closed = unsafe {
+                match reader.notify_completion(io_err) {
+                    Ok(()) => false,
+                    Err(WinError::ChannelClosed) => true,
+                    Err(err) => return Err(err),
+                }
+            };
 
-                // tell it about the completed IO op
-                let mut closed = unsafe {
-                    match reader.notify_completion(io_err) {
-                        Ok(()) => false,
+            if !closed {
+                // Drain as many messages as we can.
+                while let Some((data, channels, shmems)) = try!(reader.get_message()) {
+                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
+                    selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
+                }
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
+
+                // Now that we are done frobbing the buffer,
+                // we can safely initiate the next async read operation.
+                closed = unsafe {
+                    match reader.start_read() {
+                        Ok(()) => {
+                            // We just successfully reinstated it as an active reader --
+                            // so add it back to the list.
+                            //
+                            // Note: `take()` is a workaround for the compiler not seeing
+                            // that we won't actually be using it anymore after this...
+                            self.readers.push(reader.take());
+                            false
+                        }
                         Err(WinError::ChannelClosed) => true,
                         Err(err) => return Err(err),
                     }
                 };
-
-                if !closed {
-                    // Drain as many messages as we can.
-                    while let Some((data, channels, shmems)) = try!(reader.get_message()) {
-                        win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
-                        selection_results.push(OsIpcSelectionResult::DataReceived(reader.set_id.unwrap(), data, channels, shmems));
-                    }
-                    win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
-
-                    // Now that we are done frobbing the buffer,
-                    // we can safely initiate the next async read operation.
-                    closed = unsafe {
-                        match reader.start_read() {
-                            Ok(()) => false,
-                            Err(WinError::ChannelClosed) => true,
-                            Err(err) => return Err(err),
-                        }
-                    };
-                }
-
-                // If we got a "sender closed" notification --
-                // either instead of new data,
-                // or while trying to re-initiate an async read after receiving data --
-                // add an event to this effect to the result list,
-                // and remove the reader in question from our set.
-                if closed {
-                    win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
-                    selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
-                    remove_index = Some(reader_index);
-                }
             }
 
-            if let Some(index) = remove_index {
-                self.readers.swap_remove(index);
+            // If we got a "sender closed" notification --
+            // either instead of new data,
+            // or while trying to re-initiate an async read after receiving data --
+            // add an event to this effect to the result list.
+            if closed {
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.handle.as_raw(), reader.set_id.unwrap());
+                selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.set_id.unwrap()));
             }
         }
 
