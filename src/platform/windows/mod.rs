@@ -1266,10 +1266,10 @@ impl OsIpcReceiverSet {
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
         while selection_results.is_empty() {
-            let mut nbytes: u32 = 0;
             let mut io_err = winapi::ERROR_SUCCESS;
 
             let reader_index = unsafe {
+                let mut nbytes: u32 = 0;
                 let mut completion_key = INVALID_HANDLE_VALUE as winapi::ULONG_PTR;
                 let mut ov_ptr: *mut winapi::OVERLAPPED = ptr::null_mut();
                 // XXX use GetQueuedCompletionStatusEx to dequeue multiple CP at once!
