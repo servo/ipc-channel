@@ -1274,9 +1274,7 @@ impl OsIpcReceiverSet {
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
         while selection_results.is_empty() {
-            let mut io_err = winapi::ERROR_SUCCESS;
-
-            let reader_index = unsafe {
+            let (mut reader, result) = unsafe {
                 let mut nbytes: u32 = 0;
                 let mut completion_key = INVALID_HANDLE_VALUE as winapi::ULONG_PTR;
                 let mut ov_ptr: *mut winapi::OVERLAPPED = ptr::null_mut();
@@ -1287,6 +1285,8 @@ impl OsIpcReceiverSet {
                                                              &mut ov_ptr,
                                                              winapi::INFINITE);
                 win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
+
+                let mut io_err = winapi::ERROR_SUCCESS;
                 if ok == winapi::FALSE {
                     // If the OVERLAPPED result is NULL, then the
                     // function call itself failed or timed out.
@@ -1303,25 +1303,25 @@ impl OsIpcReceiverSet {
                 assert!(completion_key != INVALID_HANDLE_VALUE as winapi::ULONG_PTR);
 
                 // Find the matching receiver
-                let (index, _) = self.readers.iter().enumerate()
-                                 .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
-                                 .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
-                index
+                let (reader_index, _) = self.readers.iter().enumerate()
+                                        .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
+                                        .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
+
+                // Remove the entry from the set for now -- we will re-add it later,
+                // if we can successfully initiate another async read operation.
+                let mut reader = self.readers.swap_remove(reader_index);
+
+                win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
+
+                // tell it about the completed IO op
+                let result = reader.notify_completion(io_err);
+                (reader, result)
             };
 
-            // Remove the entry from the set for now -- we will re-add it later,
-            // if we can successfully initiate another async read operation.
-            let mut reader = self.readers.swap_remove(reader_index);
-
-            win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
-
-            // tell it about the completed IO op
-            let mut closed = unsafe {
-                match reader.notify_completion(io_err) {
-                    Ok(()) => false,
-                    Err(WinError::ChannelClosed) => true,
-                    Err(err) => return Err(err),
-                }
+            let mut closed = match result {
+                Ok(()) => false,
+                Err(WinError::ChannelClosed) => true,
+                Err(err) => return Err(err),
             };
 
             if !closed {
@@ -1334,20 +1334,18 @@ impl OsIpcReceiverSet {
 
                 // Now that we are done frobbing the buffer,
                 // we can safely initiate the next async read operation.
-                closed = unsafe {
-                    match reader.start_read() {
-                        Ok(()) => {
-                            // We just successfully reinstated it as an active reader --
-                            // so add it back to the list.
-                            //
-                            // Note: `take()` is a workaround for the compiler not seeing
-                            // that we won't actually be using it anymore after this...
-                            self.readers.push(reader.take());
-                            false
-                        }
-                        Err(WinError::ChannelClosed) => true,
-                        Err(err) => return Err(err),
+                closed = match unsafe { reader.start_read() } {
+                    Ok(()) => {
+                        // We just successfully reinstated it as an active reader --
+                        // so add it back to the list.
+                        //
+                        // Note: `take()` is a workaround for the compiler not seeing
+                        // that we won't actually be using it anymore after this...
+                        self.readers.push(reader.take());
+                        false
                     }
+                    Err(WinError::ChannelClosed) => true,
+                    Err(err) => return Err(err),
                 };
             }
 
