@@ -535,7 +535,7 @@ impl MessageReader {
     /// i.e. nothing should modify these fields
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
-    unsafe fn notify_completion(&mut self, err: u32) -> Result<(), WinError> {
+    unsafe fn notify_completion(&mut self, io_result: Result<(), u32>) -> Result<(), WinError> {
         assert!(self.read_in_progress);
 
         win32_trace!("[$ {:?}] notify_completion", self.handle);
@@ -546,7 +546,7 @@ impl MessageReader {
         self.read_in_progress = false;
 
         // Remote end closed the channel.
-        if err == winapi::ERROR_BROKEN_PIPE {
+        if io_result == Err(winapi::ERROR_BROKEN_PIPE) {
             return Err(WinError::ChannelClosed);
         }
 
@@ -555,8 +555,10 @@ impl MessageReader {
 
         assert!(offset == 0);
 
-        if err != winapi::ERROR_SUCCESS {
-            // This should never happen
+        if let Err(err) = io_result {
+            // Other errors shouldn't come up here...
+            // If they do, we don't really understand the situation --
+            // so we can't handle this gracefully.
             panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
         }
 
@@ -600,7 +602,7 @@ impl MessageReader {
                                                    self.ov.deref_mut(),
                                                    &mut nbytes,
                                                    block);
-            let io_err = if ok == winapi::FALSE {
+            let io_result = if ok == winapi::FALSE {
                 let err = GetLastError();
                 if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
                     // Async read hasn't completed yet.
@@ -609,14 +611,14 @@ impl MessageReader {
                 }
                 // We pass err through to notify_completion so
                 // that it can handle other errors.
-                err
+                Err(err)
             } else {
-                winapi::ERROR_SUCCESS
+                Ok(())
             };
 
             // Notify that the read completed, which will update the
             // read pointers
-            self.notify_completion(io_err)
+            self.notify_completion(io_result)
         }
     }
 
@@ -1288,18 +1290,18 @@ impl OsIpcReceiverSet {
                                                              &mut ov_ptr,
                                                              winapi::INFINITE);
                 win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
-                let io_err = if ok == winapi::FALSE {
+                let io_result = if ok == winapi::FALSE {
                     // If the OVERLAPPED result is NULL, then the
                     // function call itself failed or timed out.
                     // Otherwise, the async IO operation failed, and
-                    // we want to hand io_err to notify_completion below.
+                    // we want to hand the error to notify_completion below.
                     if ov_ptr.is_null() {
                         return Err(WinError::last("GetQueuedCompletionStatus"));
                     }
 
-                    GetLastError()
+                    Err(GetLastError())
                 } else {
-                    winapi::ERROR_SUCCESS
+                    Ok(())
                 };
 
                 assert!(!ov_ptr.is_null());
@@ -1317,7 +1319,7 @@ impl OsIpcReceiverSet {
                 win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
 
                 // tell it about the completed IO op
-                let result = reader.notify_completion(io_err);
+                let result = reader.notify_completion(io_result);
                 (reader, result)
             };
 
