@@ -592,7 +592,6 @@ impl MessageReader {
 
             // Get the overlapped result, blocking if we need to.
             let mut nbytes: u32 = 0;
-            let mut err = winapi::ERROR_SUCCESS;
             let block = match blocking_mode {
                 BlockingMode::Blocking => winapi::TRUE,
                 BlockingMode::Nonblocking => winapi::FALSE,
@@ -601,8 +600,8 @@ impl MessageReader {
                                                    self.ov.deref_mut(),
                                                    &mut nbytes,
                                                    block);
-            if ok == winapi::FALSE {
-                err = GetLastError();
+            let io_err = if ok == winapi::FALSE {
+                let err = GetLastError();
                 if blocking_mode == BlockingMode::Nonblocking && err == winapi::ERROR_IO_INCOMPLETE {
                     // Async read hasn't completed yet.
                     // Inform the caller, while keeping the read in flight.
@@ -610,11 +609,14 @@ impl MessageReader {
                 }
                 // We pass err through to notify_completion so
                 // that it can handle other errors.
-            }
+                err
+            } else {
+                winapi::ERROR_SUCCESS
+            };
 
             // Notify that the read completed, which will update the
             // read pointers
-            self.notify_completion(err)
+            self.notify_completion(io_err)
         }
     }
 
@@ -1286,9 +1288,7 @@ impl OsIpcReceiverSet {
                                                              &mut ov_ptr,
                                                              winapi::INFINITE);
                 win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
-
-                let mut io_err = winapi::ERROR_SUCCESS;
-                if ok == winapi::FALSE {
+                let io_err = if ok == winapi::FALSE {
                     // If the OVERLAPPED result is NULL, then the
                     // function call itself failed or timed out.
                     // Otherwise, the async IO operation failed, and
@@ -1297,8 +1297,10 @@ impl OsIpcReceiverSet {
                         return Err(WinError::last("GetQueuedCompletionStatus"));
                     }
 
-                    io_err = GetLastError();
-                }
+                    GetLastError()
+                } else {
+                    winapi::ERROR_SUCCESS
+                };
 
                 assert!(!ov_ptr.is_null());
                 assert!(completion_key != INVALID_HANDLE_VALUE as winapi::ULONG_PTR);
