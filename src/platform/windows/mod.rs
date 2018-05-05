@@ -545,22 +545,24 @@ impl MessageReader {
         // (And it's safe again to access the `ov` and `read_buf` fields.)
         self.read_in_progress = false;
 
-        // Remote end closed the channel.
-        if io_result == Err(winapi::ERROR_BROKEN_PIPE) {
-            return Err(WinError::ChannelClosed);
+        match io_result {
+            Ok(()) => {}
+            Err(winapi::ERROR_BROKEN_PIPE) => {
+                // Remote end closed the channel.
+                return Err(WinError::ChannelClosed);
+            }
+            Err(err) => {
+                // Other errors shouldn't come up here...
+                // If they do, we don't really understand the situation --
+                // so we can't handle this gracefully.
+                panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
+            }
         }
 
         let nbytes = self.ov.InternalHigh as u32;
         let offset = self.ov.Offset;
 
         assert!(offset == 0);
-
-        if let Err(err) = io_result {
-            // Other errors shouldn't come up here...
-            // If they do, we don't really understand the situation --
-            // so we can't handle this gracefully.
-            panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
-        }
 
         let new_size = self.read_buf.len() + nbytes as usize;
         win32_trace!("nbytes: {}, offset {}, buf len {}->{}, capacity {}",
