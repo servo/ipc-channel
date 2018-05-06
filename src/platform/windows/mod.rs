@@ -346,6 +346,11 @@ struct MessageReader {
     /// which is registered in the kernel during an async read --
     /// to remain stable even when the enclosing structure is passed around.
     ///
+    /// Note: Since this field only has a value
+    /// when an async read operation is in progress
+    /// (i.e. has been issued to the system, and not completed yet),
+    /// this also serves as an indicator of the latter.
+    ///
     /// WARNING: As the kernel holds a mutable alias of this structure
     /// while an async read is in progress,
     /// it is crucial that this value is never accessed in user space
@@ -357,8 +362,9 @@ struct MessageReader {
     /// the compiler cannot guarantee exclusive access the way it normally would,
     /// i.e. any access to this value is inherently unsafe!
     /// The only way to avoid undefined behaviour
-    /// is to always make sure the `read_in_progress` indicator is not set,
-    /// before performing any access to this value.
+    /// is to never access this field from user space,
+    /// except initialising it before issuing the async read to the kernel,
+    /// and taking out the result value after the kernel signals completion.
     ///
     /// (Unfortunately, there is no way to express this condition in the type system,
     /// without some fundamental change to how we handle these fields...)
@@ -366,16 +372,11 @@ struct MessageReader {
 
     /// A read buffer for any pending reads.
     ///
-    /// WARNING: This has the same safety problem as `ov` above.
+    /// WARNING: This has the same aliasing problem as `ov` above,
+    /// meaning it never should be accessed from user space
+    /// while an async read operation is in progress with the kernel,
+    /// i.e. while the `ov` field has a value.
     read_buf: Vec<u8>,
-
-    /// Indicates whether the kernel currently has an async read in flight for this port.
-    ///
-    /// WARNING: Rather than just managing our internal state,
-    /// this flag plays a critical role in keeping track of kernel aliasing
-    /// of the `ov` and `read_buf` fields, as explained in the comment for `ov'.
-    /// Thus it is crucial that we always set this correctly!
-    read_in_progress: bool,
 
     /// Token identifying the reader/receiver within an `OsIpcReceiverSet`.
     ///
@@ -410,7 +411,6 @@ impl MessageReader {
             handle: handle,
             ov: None,
             read_buf: Vec::new(),
-            read_in_progress: false,
             entry_id: None,
         }
     }
@@ -425,9 +425,8 @@ impl MessageReader {
 
     fn cancel_io(&mut self) {
         unsafe {
-            if self.read_in_progress {
+            if self.ov.is_some() {
                 kernel32::CancelIoEx(self.handle.as_raw(), self.ov.take().unwrap().deref_mut());
-                self.read_in_progress = false;
             }
         }
     }
@@ -447,9 +446,10 @@ impl MessageReader {
     /// i.e. all code on the path from invoking this method,
     /// up to receiving the completion event, is unsafe.
     ///
-    /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
+    /// (See documentation of the `ov` and `read_buf` fields.)
     unsafe fn start_read(&mut self) -> Result<(),WinError> {
-        if self.read_in_progress {
+        // Nothing needs to be done if an async read operation is already in progress.
+        if self.ov.is_some() {
             return Ok(());
         }
 
@@ -466,7 +466,6 @@ impl MessageReader {
         self.read_buf.set_len(buf_cap);
 
         // issue the read to the buffer, at the current length offset
-        self.read_in_progress = true;
         self.ov = Some(Box::new(mem::zeroed()));
         let mut bytes_read: u32 = 0;
         let ok = {
@@ -514,12 +513,10 @@ impl MessageReader {
             },
             Err(winapi::ERROR_BROKEN_PIPE) => {
                 win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                self.read_in_progress = false;
                 self.ov = None;
                 Err(WinError::ChannelClosed)
             },
             Err(err) => {
-                self.read_in_progress = false;
                 self.ov = None;
                 Err(WinError::from_system(err, "ReadFile"))
             },
@@ -533,21 +530,18 @@ impl MessageReader {
     /// would have catastrophic effects,
     /// as `ov` and `read_buf` are still mutably aliased by the kernel in that case!
     ///
-    /// (See documentation of the `ov`, `read_buf` and `read_in_progress` fields.)
+    /// (See documentation of the `ov` and `read_buf` fields.)
     ///
     /// Also, this method relies on `ov` and `read_buf` actually having valid data,
     /// i.e. nothing should modify these fields
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
     unsafe fn notify_completion(&mut self, io_result: Result<(), u32>) -> Result<(), WinError> {
-        assert!(self.read_in_progress);
-
         win32_trace!("[$ {:?}] notify_completion", self.handle);
 
         // Regardless whether the kernel reported success or error,
         // it doesn't have an async read operation in flight at this point anymore.
         // (And it's safe again to access the `ov` and `read_buf` fields.)
-        self.read_in_progress = false;
         let ov = self.ov.take().unwrap();
 
         match io_result {
@@ -597,8 +591,6 @@ impl MessageReader {
     /// i.e. we are still in unsafe mode in that case!
     fn fetch_async_result(&mut self, blocking_mode: BlockingMode) -> Result<(), WinError> {
         unsafe {
-            assert!(self.read_in_progress);
-
             // Get the overlapped result, blocking if we need to.
             let mut nbytes: u32 = 0;
             let block = match blocking_mode {
@@ -632,7 +624,7 @@ impl MessageReader {
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
-        if self.read_in_progress {
+        if self.ov.is_some() {
             return Ok(None);
         }
 
@@ -869,7 +861,7 @@ impl OsIpcReceiver {
 
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
-        assert!(!reader.read_in_progress);
+        assert!(reader.ov.is_none());
         OsIpcReceiver::from_handle(reader.handle.take())
     }
 
@@ -910,7 +902,7 @@ impl OsIpcReceiver {
                 // nothing prevents code that isn't marked as `unsafe`
                 // from performing invalid reads or writes to these fields!
                 //
-                // (See documentation of `ov`, `read_buf`, and `read_in_progress` fields.)
+                // (See documentation of `ov` and `read_buf` fields.)
                 try!(reader.fetch_async_result(blocking_mode));
             }
 
