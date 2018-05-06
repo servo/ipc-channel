@@ -362,7 +362,7 @@ struct MessageReader {
     ///
     /// (Unfortunately, there is no way to express this condition in the type system,
     /// without some fundamental change to how we handle these fields...)
-    ov: Box<winapi::OVERLAPPED>,
+    ov: Option<Box<winapi::OVERLAPPED>>,
 
     /// A read buffer for any pending reads.
     ///
@@ -408,7 +408,7 @@ impl MessageReader {
     fn new(handle: WinHandle) -> MessageReader {
         MessageReader {
             handle: handle,
-            ov: Box::new(unsafe { mem::zeroed::<winapi::OVERLAPPED>() }),
+            ov: None,
             read_buf: Vec::new(),
             read_in_progress: false,
             entry_id: None,
@@ -426,7 +426,7 @@ impl MessageReader {
     fn cancel_io(&mut self) {
         unsafe {
             if self.read_in_progress {
-                kernel32::CancelIoEx(self.handle.as_raw(), self.ov.deref_mut());
+                kernel32::CancelIoEx(self.handle.as_raw(), self.ov.take().unwrap().deref_mut());
                 self.read_in_progress = false;
             }
         }
@@ -467,7 +467,7 @@ impl MessageReader {
 
         // issue the read to the buffer, at the current length offset
         self.read_in_progress = true;
-        *self.ov.deref_mut() = mem::zeroed();
+        self.ov = Some(Box::new(mem::zeroed()));
         let mut bytes_read: u32 = 0;
         let ok = {
             let remaining_buf = &mut self.read_buf[buf_len..];
@@ -475,7 +475,7 @@ impl MessageReader {
                                remaining_buf.as_mut_ptr() as LPVOID,
                                remaining_buf.len() as u32,
                                &mut bytes_read,
-                               self.ov.deref_mut())
+                               self.ov.as_mut().unwrap().deref_mut())
         };
 
         // Reset the vector to only expose the already filled part.
@@ -515,10 +515,12 @@ impl MessageReader {
             Err(winapi::ERROR_BROKEN_PIPE) => {
                 win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
                 self.read_in_progress = false;
+                self.ov = None;
                 Err(WinError::ChannelClosed)
             },
             Err(err) => {
                 self.read_in_progress = false;
+                self.ov = None;
                 Err(WinError::from_system(err, "ReadFile"))
             },
         }
@@ -546,6 +548,7 @@ impl MessageReader {
         // it doesn't have an async read operation in flight at this point anymore.
         // (And it's safe again to access the `ov` and `read_buf` fields.)
         self.read_in_progress = false;
+        let ov = self.ov.take().unwrap();
 
         match io_result {
             Ok(()) => {}
@@ -561,8 +564,8 @@ impl MessageReader {
             }
         }
 
-        let nbytes = self.ov.InternalHigh as u32;
-        let offset = self.ov.Offset;
+        let nbytes = ov.InternalHigh as u32;
+        let offset = ov.Offset;
 
         assert!(offset == 0);
 
@@ -603,7 +606,7 @@ impl MessageReader {
                 BlockingMode::Nonblocking => winapi::FALSE,
             };
             let ok = kernel32::GetOverlappedResult(self.handle.as_raw(),
-                                                   self.ov.deref_mut(),
+                                                   self.ov.as_mut().unwrap().deref_mut(),
                                                    &mut nbytes,
                                                    block);
             let io_result = if ok == winapi::FALSE {
