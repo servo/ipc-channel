@@ -466,6 +466,7 @@ impl MessageReader {
         self.read_buf.set_len(buf_cap);
 
         // issue the read to the buffer, at the current length offset
+        self.read_in_progress = true;
         *self.ov.deref_mut() = mem::zeroed();
         let mut bytes_read: u32 = 0;
         let ok = {
@@ -509,14 +510,15 @@ impl MessageReader {
             // special handling for sync-completed operations.
             Ok(()) |
             Err(winapi::ERROR_IO_PENDING) => {
-                self.read_in_progress = true;
                 Ok(())
             },
             Err(winapi::ERROR_BROKEN_PIPE) => {
                 win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
+                self.read_in_progress = false;
                 Err(WinError::ChannelClosed)
             },
             Err(err) => {
+                self.read_in_progress = false;
                 Err(WinError::from_system(err, "ReadFile"))
             },
         }
