@@ -20,6 +20,7 @@ extern crate rand;
 extern crate serde;
 #[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"))]
 extern crate uuid;
+extern crate tempfile;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "openbsd",
                                                 target_os = "freebsd")))]

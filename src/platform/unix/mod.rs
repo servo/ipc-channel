@@ -16,7 +16,7 @@ use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
 use std::io::{Error, ErrorKind};
@@ -31,6 +31,7 @@ use std::time::UNIX_EPOCH;
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
+use tempfile::{Builder, TempDir};
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -577,6 +578,11 @@ impl OsOpaqueIpcChannel {
 
 pub struct OsIpcOneShotServer {
     fd: c_int,
+
+    // Object representing the temporary directory the socket was created in.
+    // The directory is automatically deleted (along with the socket inside it)
+    // when this field is dropped.
+    _temp_dir: TempDir,
 }
 
 impl Drop for OsIpcOneShotServer {
@@ -592,23 +598,13 @@ impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String),UnixError> {
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET, 0);
-            let mut path: Vec<u8>;
-            loop {
-                let path_string = CString::new(&b"/tmp/rust-ipc-socket.XXXXXX"[..]).unwrap();
-                path = path_string.as_bytes_with_nul().iter().cloned().collect();
-                if *mktemp(path.as_mut_ptr() as *mut c_char) == 0 {
-                    return Err(UnixError::last())
-                }
+            let temp_dir = Builder::new().tempdir().unwrap();
+            let socket_path = temp_dir.path().join("socket");
+            let path_string = socket_path.to_str().unwrap();
 
-                let (sockaddr, len) = new_sockaddr_un(path.as_ptr() as *const c_char);
-                if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) == 0 {
-                    break
-                }
-
-                let errno = UnixError::last();
-                if errno.0 != libc::EINVAL {
-                    return Err(errno)
-                }
+            let (sockaddr, len) = new_sockaddr_un(CString::new(path_string).unwrap().as_ptr());
+            if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) != 0 {
+                return Err(UnixError::last());
             }
 
             if libc::listen(fd, 10) != 0 {
@@ -617,8 +613,8 @@ impl OsIpcOneShotServer {
 
             Ok((OsIpcOneShotServer {
                 fd: fd,
-            }, String::from_utf8(CStr::from_ptr(path.as_ptr() as
-                                                *const c_char).to_bytes().to_owned()).unwrap()))
+                _temp_dir: temp_dir,
+            }, path_string.to_string()))
         }
     }
 
@@ -1074,10 +1070,6 @@ fn CMSG_SPACE(length: size_t) -> size_t {
 #[allow(non_snake_case)]
 fn S_ISSOCK(mode: mode_t) -> bool {
     (mode & S_IFMT) == S_IFSOCK
-}
-
-extern {
-    fn mktemp(template: *mut c_char) -> *mut c_char;
 }
 
 #[repr(C)]
