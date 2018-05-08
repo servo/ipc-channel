@@ -1,6 +1,10 @@
 language: rust
 sudo: false
 
+env:
+  global:
+    - RUST_BACKTRACE=1
+
 matrix:
   include:
     - os: linux
