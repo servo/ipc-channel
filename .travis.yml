@@ -1,6 +1,9 @@
 language: rust
 sudo: false
 
+rust:
+  - nightly
+
 env:
   global:
     - RUST_BACKTRACE=1
@@ -8,19 +11,14 @@ env:
 matrix:
   include:
     - os: linux
-      rust: nightly
       env: FEATURES="unstable"
     - os: linux
-      rust: nightly
       env: FEATURES="unstable force-inprocess"
     - os: linux
-      rust: nightly
       env: FEATURES="unstable memfd"
     - os: osx
-      rust: nightly
       env: FEATURES="unstable"
     - os: osx
-      rust: nightly
       env: FEATURES="unstable force-inprocess"
 
 notifications:
