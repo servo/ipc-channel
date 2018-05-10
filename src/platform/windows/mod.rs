@@ -392,6 +392,17 @@ struct MessageReader {
     set_id: Option<u64>,
 }
 
+// We need to explicitly declare this, because of the raw pointer
+// contained in the `OVERLAPPED` structure.
+//
+// Note: the `Send` claim is only really fulfilled
+// as long as nothing can ever alias the aforementioned raw pointer.
+// As explained in the documentation of the `ov` field,
+// this is a tricky condition (because of kernel aliasing),
+// which we however need to uphold regardless of the `Send` property --
+// so claiming `Send` should not introduce any additional issues.
+unsafe impl Send for OsIpcReceiver { }
+
 impl Drop for MessageReader {
     fn drop(&mut self) {
         // Before dropping the `ov` structure and read buffer,
@@ -826,16 +837,6 @@ pub struct OsIpcReceiver {
     /// despite only getting a shared reference to `self`.
     reader: RefCell<MessageReader>,
 }
-
-// We need to explicitly declare this, because of the raw pointer
-// contained in the `OVERLAPPED` structure inside `MessageReader`.
-//
-// Note: the `Send` claim is only really fulfilled
-// as long as nothing can ever alias the aforementioned raw pointer.
-// While this seems to be true as far as I can tell,
-// it's a rather fragile condition, which should be managed much more tightly
-// (along with `OVERLAPPED` in general): at `MessageReader` level, at the very most.
-unsafe impl Send for OsIpcReceiver { }
 
 impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
