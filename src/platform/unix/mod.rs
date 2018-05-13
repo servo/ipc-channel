@@ -596,7 +596,7 @@ impl OsIpcOneShotServer {
             loop {
                 let path_string = CString::new(&b"/tmp/rust-ipc-socket.XXXXXX"[..]).unwrap();
                 path = path_string.as_bytes_with_nul().iter().cloned().collect();
-                if *mktemp(path.as_mut_ptr() as *mut c_char) == 0 {
+                if *mkstemp(path.as_mut_ptr() as *mut c_char) == 0 {
                     return Err(UnixError::last())
                 }
 
@@ -1077,7 +1077,7 @@ fn S_ISSOCK(mode: mode_t) -> bool {
 }
 
 extern {
-    fn mktemp(template: *mut c_char) -> *mut c_char;
+    fn mkstemp(template: *mut c_char) -> *mut c_char;
 }
 
 #[repr(C)]
