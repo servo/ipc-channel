@@ -333,6 +333,25 @@ impl WinHandle {
     }
 }
 
+/// Helper struct for all data being aliased by the kernel during async reads.
+#[derive(Debug)]
+struct AsyncData {
+    /// Meta-data for this async read operation, filled by the kernel.
+    ///
+    /// This must be on the heap, in order for its memory location --
+    /// which is registered in the kernel during an async read --
+    /// to remain stable even when the enclosing structure is passed around.
+    ov: Box<winapi::OVERLAPPED>,
+
+    /// Buffer for the kernel to store the results of the async read operation.
+    ///
+    /// The vector provided here needs to have some allocated yet unused space,
+    /// i.e. `capacity()` needs to be larger than `len()`.
+    /// If part of the vector is already filled, that is left in place;
+    /// the new data will only be written to the unused space.
+    buf: Vec<u8>,
+}
+
 /// Main object keeping track of a receive handle and its associated state.
 ///
 /// Implements blocking/nonblocking reads of messages from the handle.
@@ -341,52 +360,39 @@ struct MessageReader {
     /// The pipe read handle.
     handle: WinHandle,
 
-    /// The OVERLAPPED struct for async IO on this receiver.
+    /// Buffer for outstanding data, that has been received but not yet processed.
     ///
-    /// We'll only ever have one in flight.
-    ///
-    /// This must be on the heap, in order for its memory location --
-    /// which is registered in the kernel during an async read --
-    /// to remain stable even when the enclosing structure is passed around.
+    /// Note: this is only set while no async read operation
+    /// is currently in progress with the kernel.
+    /// When an async read is in progress,
+    /// the receive buffer is aliased by the kernel;
+    /// so we need to temporarily move it into an `AliasedCell`,
+    /// thus making it inaccessible from safe code --
+    /// see `async` below.
+    /// We only move it back once the kernel signals completion of the async read.
+    read_buf: Vec<u8>,
+
+    /// Data used by the kernel during an async read operation.
     ///
     /// Note: Since this field only has a value
     /// when an async read operation is in progress
     /// (i.e. has been issued to the system, and not completed yet),
     /// this also serves as an indicator of the latter.
     ///
-    /// WARNING: As the kernel holds a mutable alias of this structure
+    /// WARNING: As the kernel holds mutable aliases of this data
     /// while an async read is in progress,
-    /// it is crucial that this value is never accessed in user space
+    /// it is crucial that it is never accessed in user space
     /// from the moment we issue an async read in `start_read()`,
     /// until the moment we process the event
     /// signalling completion of the async read in `notify_completion()`.
     ///
-    /// Since Rust's type system is not aware of the kernel alias,
+    /// Since Rust's type system is not aware of the kernel aliases,
     /// the compiler cannot guarantee exclusive access the way it normally would,
     /// i.e. any access to this value is inherently unsafe!
     /// We thus wrap it in an `AliasedCell`,
-    /// making sure the value is only accessible from code marked `unsafe`;
+    /// making sure the data is only accessible from code marked `unsafe`;
     /// and only move it out when the kernel signals that the async read is done.
-    ov: Option<AliasedCell<Box<winapi::OVERLAPPED>>>,
-
-    /// Buffer for outstanding data, that has been received but not yet processed.
-    ///
-    /// Note: this is only set while no async read operation
-    /// is currently in progress with the kernel.
-    /// When an async read is in progress,
-    /// the receive buffer is aliased by the kernel just like `ov` above;
-    /// so we need to temporarily move it into an `AliasedCell` too,
-    /// thus making it inaccessible from safe code --
-    /// see `aliased_buf` below.
-    /// We only move it back once the kernel signals completion of the async read.
-    read_buf: Vec<u8>,
-
-    /// Buffer for the kernel to store the results of async read operations.
-    ///
-    /// WARNING: This has the same aliasing problem as `ov` above --
-    /// i.e. it should never be accessed from user space
-    /// while an async read operation is in progress.
-    aliased_buf: Option<AliasedCell<Vec<u8>>>,
+    async: Option<AliasedCell<AsyncData>>,
 
     /// Token identifying the reader/receiver within an `OsIpcReceiverSet`.
     ///
@@ -401,7 +407,7 @@ struct MessageReader {
 //
 // Note: the `Send` claim is only really fulfilled
 // as long as nothing can ever alias the aforementioned raw pointer.
-// As explained in the documentation of the `ov` field,
+// As explained in the documentation of the `async` field,
 // this is a tricky condition (because of kernel aliasing),
 // which we however need to uphold regardless of the `Send` property --
 // so claiming `Send` should not introduce any additional issues.
@@ -419,9 +425,8 @@ impl MessageReader {
     fn new(handle: WinHandle) -> MessageReader {
         MessageReader {
             handle: handle,
-            ov: None,
             read_buf: Vec::new(),
-            aliased_buf: None,
+            async: None,
             entry_id: None,
         }
     }
@@ -436,11 +441,11 @@ impl MessageReader {
 
     fn cancel_io(&mut self) {
         unsafe {
-            if self.ov.is_some() {
+            if self.async.is_some() {
                 kernel32::CancelIoEx(self.handle.as_raw(),
-                                     self.ov.as_mut().unwrap().alias_mut().deref_mut());
-                self.ov.take().unwrap().into_inner();
-                self.read_buf = self.aliased_buf.take().unwrap().into_inner();
+                                     self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
+                let async_data = self.async.take().unwrap().into_inner();
+                self.read_buf = async_data.buf;
             }
         }
     }
@@ -449,13 +454,13 @@ impl MessageReader {
     ///
     /// When an async read is started successfully,
     /// the receive buffer is moved out of `read_buf`
-    /// into the `AliasedCell<>` in `aliased_buf`,
+    /// into the `AliasedCell<>` in `async`,
     /// thus making it inaccessible from safe code;
     /// it will only be moved back in `notify_completion()`.
-    /// (See documentation of the `ov` and `read_buf` fields.)
+    /// (See documentation of the `read_buf` and `async` fields.)
     fn start_read(&mut self) -> Result<(),WinError> {
         // Nothing needs to be done if an async read operation is already in progress.
-        if self.ov.is_some() {
+        if self.async.is_some() {
             return Ok(());
         }
 
@@ -473,16 +478,19 @@ impl MessageReader {
             self.read_buf.set_len(buf_cap);
 
             // issue the read to the buffer, at the current length offset
-            self.ov = Some(AliasedCell::new(Box::new(mem::zeroed())));
-            self.aliased_buf = Some(AliasedCell::new(mem::replace(&mut self.read_buf, vec![])));
+            self.async = Some(AliasedCell::new(AsyncData {
+                ov: Box::new(mem::zeroed()),
+                buf: mem::replace(&mut self.read_buf, vec![]),
+            }));
             let mut bytes_read: u32 = 0;
             let ok = {
-                let remaining_buf = &mut self.aliased_buf.as_mut().unwrap().alias_mut()[buf_len..];
+                let async_data = self.async.as_mut().unwrap().alias_mut();
+                let remaining_buf = &mut async_data.buf[buf_len..];
                 kernel32::ReadFile(self.handle.as_raw(),
                                    remaining_buf.as_mut_ptr() as LPVOID,
                                    remaining_buf.len() as u32,
                                    &mut bytes_read,
-                                   self.ov.as_mut().unwrap().alias_mut().deref_mut())
+                                   async_data.ov.deref_mut())
             };
 
             // Reset the vector to only expose the already filled part.
@@ -498,7 +506,7 @@ impl MessageReader {
             // which could pose a potential danger in its own right.
             // Also, it avoids the need to keep a separate state variable --
             // which would bear some risk of getting out of sync.
-            self.aliased_buf.as_mut().unwrap().alias_mut().set_len(buf_len);
+            self.async.as_mut().unwrap().alias_mut().buf.set_len(buf_len);
 
             let result = if ok == winapi::FALSE {
                 Err(GetLastError())
@@ -521,13 +529,11 @@ impl MessageReader {
                 },
                 Err(winapi::ERROR_BROKEN_PIPE) => {
                     win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                    self.ov.take().unwrap().into_inner();
-                    self.read_buf = self.aliased_buf.take().unwrap().into_inner();
+                    self.read_buf = self.async.take().unwrap().into_inner().buf;
                     Err(WinError::ChannelClosed)
                 },
                 Err(err) => {
-                    self.ov.take().unwrap().into_inner();
-                    self.read_buf = self.aliased_buf.take().unwrap().into_inner();
+                    self.read_buf = self.async.take().unwrap().into_inner().buf;
                     Err(WinError::from_system(err, "ReadFile"))
                 },
             }
@@ -536,19 +542,18 @@ impl MessageReader {
 
     /// Called when we receive an IO Completion Packet for this handle.
     ///
-    /// During its course, this method moves `aliased_buf` back into `read_buf`,
+    /// During its course, this method moves `async.buf` back into `read_buf`,
     /// thus making it accessible from normal code again;
     /// so `get_message()` can extract the received messages from the buffer.
     ///
     /// Invoking this is unsafe, since calling it in error
     /// while an async read is actually still in progress in the kernel
     /// would have catastrophic effects,
-    /// as `ov` and `aliased_buf` are still mutably aliased by the kernel in that case!
+    /// as the `async` data is still mutably aliased by the kernel in that case!
+    /// (See documentation of the `async` field.)
     ///
-    /// (See documentation of the `ov` and `read_buf` fields.)
-    ///
-    /// Also, this method relies on `ov` and `aliased_buf` actually having valid data,
-    /// i.e. nothing should modify these fields
+    /// Also, this method relies on `async` actually having valid data,
+    /// i.e. nothing should modify its constituent fields
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
     unsafe fn notify_completion(&mut self, io_result: Result<(), u32>) -> Result<(), WinError> {
@@ -556,9 +561,10 @@ impl MessageReader {
 
         // Regardless whether the kernel reported success or error,
         // it doesn't have an async read operation in flight at this point anymore.
-        // (And it's safe again to access the `ov` and `aliased_buf` fields.)
-        let ov = self.ov.take().unwrap().into_inner();
-        self.read_buf = self.aliased_buf.take().unwrap().into_inner();
+        // (And it's safe again to access the `async` data.)
+        let async_data = self.async.take().unwrap().into_inner();
+        let ov = async_data.ov;
+        self.read_buf = async_data.buf;
 
         match io_result {
             Ok(()) => {}
@@ -613,7 +619,7 @@ impl MessageReader {
                 BlockingMode::Nonblocking => winapi::FALSE,
             };
             let ok = kernel32::GetOverlappedResult(self.handle.as_raw(),
-                                                   self.ov.as_mut().unwrap().alias_mut().deref_mut(),
+                                                   self.async.as_mut().unwrap().alias_mut().ov.deref_mut(),
                                                    &mut nbytes,
                                                    block);
             let io_result = if ok == winapi::FALSE {
@@ -639,7 +645,7 @@ impl MessageReader {
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
-        if self.ov.is_some() {
+        if self.async.is_some() {
             return Ok(None);
         }
 
@@ -871,7 +877,7 @@ impl OsIpcReceiver {
 
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
-        assert!(reader.ov.is_none());
+        assert!(reader.async.is_none());
         OsIpcReceiver::from_handle(reader.handle.take())
     }
 
