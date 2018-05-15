@@ -442,8 +442,23 @@ impl MessageReader {
     fn cancel_io(&mut self) {
         unsafe {
             if self.async.is_some() {
-                kernel32::CancelIoEx(self.handle.as_raw(),
-                                     self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
+                let status = kernel32::CancelIoEx(self.handle.as_raw(),
+                                                  self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
+
+                // A cancel operation is not expected to fail.
+                // If it does, callers are not prepared for that -- so we have to bail.
+                //
+                // Note that we should never ignore a failed cancel,
+                // since that would affect further operations;
+                // and the caller definitely must not free the aliased data in that case!
+                //
+                // Sometimes `CancelIoEx()` fails with `ERROR_NOT_FOUND` though,
+                // meaning there is actually no async operation outstanding at this point,
+                // i.e. we can safely free the async data without further action.
+                // (Specifically, this is triggered by the `receiver_set_big_data()` test.)
+                // Not sure why that happens -- but I *think* it should be benign...
+                assert!(status != winapi::FALSE || GetLastError() == winapi::ERROR_NOT_FOUND);
+
                 let async_data = self.async.take().unwrap().into_inner();
                 self.read_buf = async_data.buf;
             }
