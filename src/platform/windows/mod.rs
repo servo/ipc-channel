@@ -571,7 +571,7 @@ impl MessageReader {
     /// i.e. nothing should modify its constituent fields
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
-    unsafe fn notify_completion(&mut self, io_result: Result<(), u32>) -> Result<(), WinError> {
+    unsafe fn notify_completion(&mut self, io_result: Result<(), WinError>) -> Result<(), WinError> {
         win32_trace!("[$ {:?}] notify_completion", self.handle);
 
         // Regardless whether the kernel reported success or error,
@@ -583,16 +583,11 @@ impl MessageReader {
 
         match io_result {
             Ok(()) => {}
-            Err(winapi::ERROR_BROKEN_PIPE) => {
+            Err(WinError::WindowsResult(winapi::ERROR_BROKEN_PIPE)) => {
                 // Remote end closed the channel.
                 return Err(WinError::ChannelClosed);
             }
-            Err(err) => {
-                // Other errors shouldn't come up here...
-                // If they do, we don't really understand the situation --
-                // so we can't handle this gracefully.
-                panic!("[$ {:?}] *** notify_completion: unhandled error reported! {}", self.handle, err);
-            }
+            Err(err) => return Err(err),
         }
 
         let nbytes = ov.InternalHigh as u32;
@@ -646,7 +641,7 @@ impl MessageReader {
                 }
                 // We pass err through to notify_completion so
                 // that it can handle other errors.
-                Err(err)
+                Err(WinError::from_system(err, "GetOverlappedResult"))
             } else {
                 Ok(())
             };
@@ -769,8 +764,7 @@ impl MessageReader {
                 Err(WinError::ChannelClosed) => {
                     return Err(WinError::from_system(winapi::ERROR_BROKEN_PIPE, "ReadFile"))
                 }
-                // In blocking mode, `fetch_async_result()` has no other expected failure modes.
-                Err(_) => unreachable!(),
+                Err(err) => return Err(err),
                 Ok(()) => {}
             };
         }
@@ -1309,15 +1303,17 @@ impl OsIpcReceiverSet {
                                                              winapi::INFINITE);
                 win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
                 let io_result = if ok == winapi::FALSE {
+                    let err = WinError::last("GetQueuedCompletionStatus");
+
                     // If the OVERLAPPED result is NULL, then the
                     // function call itself failed or timed out.
                     // Otherwise, the async IO operation failed, and
                     // we want to hand the error to notify_completion below.
                     if ov_ptr.is_null() {
-                        return Err(WinError::last("GetQueuedCompletionStatus"));
+                        return Err(err);
                     }
 
-                    Err(GetLastError())
+                    Err(err)
                 } else {
                     Ok(())
                 };
