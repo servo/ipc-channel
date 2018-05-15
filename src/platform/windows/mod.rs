@@ -714,8 +714,9 @@ impl MessageReader {
 
         self.entry_id = Some(entry_id);
 
-        // Make sure that the reader has a read in flight,
-        // otherwise a later select() will hang.
+        // The readers in the IOCP need to have async reads in flight,
+        // so they can actually get completion events --
+        // otherwise, a subsequent `select()` call would just hang indefinitely.
         self.start_read()
     }
 
