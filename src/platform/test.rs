@@ -706,11 +706,14 @@ fn no_receiver_notification() {
     let (sender, receiver) = platform::channel().unwrap();
     drop(receiver);
     let data: &[u8] = b"1234567";
-    let result = sender.send(data, vec![], vec![]);
-    assert!(result.is_err());
-    // We don't have an actual method for distinguishing a "broken pipe" error --
-    // but at least it's not supposed to signal the same condition as closing the sender.
-    assert!(!result.unwrap_err().channel_is_closed());
+    loop {
+        if let Err(err) = sender.send(data, vec![], vec![]) {
+            // We don't have an actual method for distinguishing a "broken pipe" error --
+            // but at least it's not supposed to signal the same condition as closing the sender.
+            assert!(!err.channel_is_closed());
+            break;
+        }
+    }
 }
 
 #[test]
@@ -756,9 +759,13 @@ fn no_senders_notification_try_recv() {
     assert!(result.is_err());
     assert!(!result.unwrap_err().channel_is_closed());
     drop(sender);
-    let result = receiver.try_recv();
-    assert!(result.is_err());
-    assert!(result.unwrap_err().channel_is_closed());
+    loop {
+        let result = receiver.try_recv();
+        assert!(result.is_err());
+        if result.unwrap_err().channel_is_closed() {
+            break;
+        }
+    }
 }
 
 #[test]
