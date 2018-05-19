@@ -1275,6 +1275,75 @@ impl OsIpcReceiverSet {
         Ok(entry_id)
     }
 
+    /// Conclude an async read operation on any of the receivers in the set.
+    ///
+    /// This fetches a completion event from the set's IOCP;
+    /// finds the matching `MessageReader`;
+    /// removes it from the list of active readers
+    /// (since no operation is in flight on this reader at this point);
+    /// and notifies the reader of the completion event.
+    ///
+    /// If the IOCP call is successful, this returns the respective reader,
+    /// along with an inner status describing the type of event received.
+    /// This can be a success status, indicating data has been received,
+    /// and is ready to be picked up with `get_message()` on the reader;
+    /// an error status indicating that the sender connected to this receiver
+    /// has closed the connection;
+    /// or some other I/O error status.
+    ///
+    /// Unless a "closed" status is returned,
+    /// the respective reader remains a member of the set,
+    /// and the caller should add it back to the list of active readers
+    /// after kicking off a new read operation on it.
+    fn fetch_iocp_result(&mut self) -> Result<(MessageReader, Result<(), WinError>), WinError> {
+        unsafe {
+            let mut nbytes: u32 = 0;
+            let mut completion_key = INVALID_HANDLE_VALUE as winapi::ULONG_PTR;
+            let mut ov_ptr: *mut winapi::OVERLAPPED = ptr::null_mut();
+            // XXX use GetQueuedCompletionStatusEx to dequeue multiple CP at once!
+            let ok = kernel32::GetQueuedCompletionStatus(self.iocp.as_raw(),
+                                                         &mut nbytes,
+                                                         &mut completion_key,
+                                                         &mut ov_ptr,
+                                                         winapi::INFINITE);
+            win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
+            let io_result = if ok == winapi::FALSE {
+                let err = WinError::last("GetQueuedCompletionStatus");
+
+                // If the OVERLAPPED result is NULL, then the
+                // function call itself failed or timed out.
+                // Otherwise, the async IO operation failed, and
+                // we want to hand the error to notify_completion below.
+                if ov_ptr.is_null() {
+                    return Err(err);
+                }
+
+                Err(err)
+            } else {
+                Ok(())
+            };
+
+            assert!(!ov_ptr.is_null());
+            assert!(completion_key != INVALID_HANDLE_VALUE as winapi::ULONG_PTR);
+
+            // Find the matching receiver
+            let (reader_index, _) = self.readers.iter().enumerate()
+                                    .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
+                                    .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
+
+            // Remove the entry from the set for now -- we will re-add it later,
+            // if we can successfully initiate another async read operation.
+            let mut reader = self.readers.swap_remove(reader_index);
+
+            win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
+
+            // tell it about the completed IO op
+            let result = reader.notify_completion(io_result);
+
+            Ok((reader, result))
+        }
+    }
+
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,WinError> {
         assert!(self.readers.len() + self.closed_readers.len() > 0, "selecting with no objects?");
         win32_trace!("[# {:?}] select() with {} active and {} closed receivers", self.iocp.as_raw(), self.readers.len(), self.closed_readers.len());
@@ -1291,51 +1360,7 @@ impl OsIpcReceiverSet {
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
         while selection_results.is_empty() {
-            let (mut reader, result) = unsafe {
-                let mut nbytes: u32 = 0;
-                let mut completion_key = INVALID_HANDLE_VALUE as winapi::ULONG_PTR;
-                let mut ov_ptr: *mut winapi::OVERLAPPED = ptr::null_mut();
-                // XXX use GetQueuedCompletionStatusEx to dequeue multiple CP at once!
-                let ok = kernel32::GetQueuedCompletionStatus(self.iocp.as_raw(),
-                                                             &mut nbytes,
-                                                             &mut completion_key,
-                                                             &mut ov_ptr,
-                                                             winapi::INFINITE);
-                win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
-                let io_result = if ok == winapi::FALSE {
-                    let err = WinError::last("GetQueuedCompletionStatus");
-
-                    // If the OVERLAPPED result is NULL, then the
-                    // function call itself failed or timed out.
-                    // Otherwise, the async IO operation failed, and
-                    // we want to hand the error to notify_completion below.
-                    if ov_ptr.is_null() {
-                        return Err(err);
-                    }
-
-                    Err(err)
-                } else {
-                    Ok(())
-                };
-
-                assert!(!ov_ptr.is_null());
-                assert!(completion_key != INVALID_HANDLE_VALUE as winapi::ULONG_PTR);
-
-                // Find the matching receiver
-                let (reader_index, _) = self.readers.iter().enumerate()
-                                        .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
-                                        .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
-
-                // Remove the entry from the set for now -- we will re-add it later,
-                // if we can successfully initiate another async read operation.
-                let mut reader = self.readers.swap_remove(reader_index);
-
-                win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
-
-                // tell it about the completed IO op
-                let result = reader.notify_completion(io_result);
-                (reader, result)
-            };
+            let (mut reader, result) = try!(self.fetch_iocp_result());
 
             let mut closed = match result {
                 Ok(()) => false,
