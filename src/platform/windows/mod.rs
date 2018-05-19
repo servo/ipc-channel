@@ -439,12 +439,27 @@ impl MessageReader {
         mem::replace(self, MessageReader::new(WinHandle::invalid()))
     }
 
-    fn cancel_io(&mut self) {
+    /// Request the kernel to cancel a pending async I/O operation on this reader.
+    ///
+    /// Note that this only schedules the cancel request;
+    /// but doesn't guarantee that the operation is done
+    /// (and the buffers are no longer used by the kernel)
+    /// before this method returns.
+    ///
+    /// A caller that wants to ensure the operation is really done,
+    /// will need to wait using `fetch_async_result()`.
+    /// (Or `fetch_iocp_result()` for readers in a set.)
+    ///
+    /// The only exception is if the kernel indicates
+    /// that no operation was actually outstanding at this point.
+    /// In that case, the `async` data is released immediately;
+    /// and the caller should not attempt waiting for completion.
+    fn issue_async_cancel(&mut self) {
         unsafe {
-            if self.async.is_some() {
-                let status = kernel32::CancelIoEx(self.handle.as_raw(),
-                                                  self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
+            let status = kernel32::CancelIoEx(self.handle.as_raw(),
+                                              self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
 
+            if status == winapi::FALSE {
                 // A cancel operation is not expected to fail.
                 // If it does, callers are not prepared for that -- so we have to bail.
                 //
@@ -453,14 +468,38 @@ impl MessageReader {
                 // and the caller definitely must not free the aliased data in that case!
                 //
                 // Sometimes `CancelIoEx()` fails with `ERROR_NOT_FOUND` though,
-                // meaning there is actually no async operation outstanding at this point,
-                // i.e. we can safely free the async data without further action.
+                // meaning there is actually no async operation outstanding at this point.
                 // (Specifically, this is triggered by the `receiver_set_big_data()` test.)
                 // Not sure why that happens -- but I *think* it should be benign...
-                assert!(status != winapi::FALSE || GetLastError() == winapi::ERROR_NOT_FOUND);
+                //
+                // In that case, we can safely free the async data right now;
+                // and the caller should not attempt to wait for completion.
+                assert!(GetLastError() == winapi::ERROR_NOT_FOUND);
 
-                let async_data = self.async.take().unwrap().into_inner();
-                self.read_buf = async_data.buf;
+                self.read_buf = self.async.take().unwrap().into_inner().buf;
+            }
+        }
+    }
+
+    fn cancel_io(&mut self) {
+        if self.async.is_some() {
+            // This doesn't work for readers in a receiver set.
+            // (`fetch_async_result()` would hang indefinitely.)
+            // Receiver sets have to handle cancellation specially,
+            // and make sure they always do that *before* dropping readers.
+            assert!(self.entry_id.is_none());
+
+            self.issue_async_cancel();
+
+            // If there is an operation still in flight, wait for it to complete.
+            //
+            // This will usually fail with `ERROR_OPERATION_ABORTED`;
+            // but it could also return success, or some other error,
+            // if the operation actually completed in the mean time.
+            // We don't really care either way --
+            // we just want to be certain there is no operation in flight any more.
+            if self.async.is_some() {
+                let _ = self.fetch_async_result(BlockingMode::Blocking);
             }
         }
     }
@@ -1230,6 +1269,26 @@ pub struct OsIpcReceiverSet {
     ///
     /// Only the `entry_id` is necessary for that.
     closed_readers: Vec<u64>,
+}
+
+impl Drop for OsIpcReceiverSet {
+    fn drop(&mut self) {
+        // We need to cancel any in-flight read operations before we drop the receivers,
+        // since otherwise the receivers' `Drop` implementation would try to cancel them --
+        // but the implementation there doesn't work for receivers in a set...
+        for reader in &mut self.readers {
+            reader.issue_async_cancel();
+        }
+
+        // Wait for any reads still in flight to complete,
+        // thus freeing the associated async data.
+        self.readers.retain(|r| r.async.is_some());
+        while !self.readers.is_empty() {
+            // We unwrap the outer result (can't deal with the IOCP call failing here),
+            // but don't care about the actual results of the completed read operations.
+            let _ = self.fetch_iocp_result().unwrap();
+        }
+    }
 }
 
 impl OsIpcReceiverSet {
