@@ -340,6 +340,9 @@ impl WinHandle {
 /// Helper struct for all data being aliased by the kernel during async reads.
 #[derive(Debug)]
 struct AsyncData {
+    /// File handle of the pipe on which the async operation is performed.
+    handle: WinHandle,
+
     /// Meta-data for this async read operation, filled by the kernel.
     ///
     /// This must be on the heap, in order for its memory location --
@@ -362,12 +365,21 @@ struct AsyncData {
 #[derive(Debug)]
 struct MessageReader {
     /// The pipe read handle.
+    ///
+    /// Note: this is only set while no async read operation
+    /// is currently in progress with the kernel.
+    /// When an async read is in progress,
+    /// it is moved into the `async` sub-structure (see below)
+    /// along with the other fields used for the async operation,
+    /// to make sure they all stay in sync,
+    /// and nothing else can meddle with the the pipe
+    /// until the operation is completed.
     handle: WinHandle,
 
     /// Buffer for outstanding data, that has been received but not yet processed.
     ///
-    /// Note: this is only set while no async read operation
-    /// is currently in progress with the kernel.
+    /// Note: just like `handle` above,
+    /// this is only set while no async read is in progress.
     /// When an async read is in progress,
     /// the receive buffer is aliased by the kernel;
     /// so we need to temporarily move it into an `AliasedCell`,
@@ -460,7 +472,7 @@ impl MessageReader {
     /// and the caller should not attempt waiting for completion.
     fn issue_async_cancel(&mut self) {
         unsafe {
-            let status = kernel32::CancelIoEx(self.handle.as_raw(),
+            let status = kernel32::CancelIoEx(self.async.as_ref().unwrap().alias().handle.as_raw(),
                                               self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
 
             if status == winapi::FALSE {
@@ -480,7 +492,9 @@ impl MessageReader {
                 // and the caller should not attempt to wait for completion.
                 assert!(GetLastError() == winapi::ERROR_NOT_FOUND);
 
-                self.read_buf = self.async.take().unwrap().into_inner().buf;
+                let async_data = self.async.take().unwrap().into_inner();
+                self.handle = async_data.handle;
+                self.read_buf = async_data.buf;
             }
         }
     }
@@ -537,6 +551,7 @@ impl MessageReader {
 
             // issue the read to the buffer, at the current length offset
             self.async = Some(AliasedCell::new(AsyncData {
+                handle: self.handle.take(),
                 ov: Box::new(mem::zeroed()),
                 buf: mem::replace(&mut self.read_buf, vec![]),
             }));
@@ -544,7 +559,7 @@ impl MessageReader {
             let ok = {
                 let async_data = self.async.as_mut().unwrap().alias_mut();
                 let remaining_buf = &mut async_data.buf[buf_len..];
-                kernel32::ReadFile(self.handle.as_raw(),
+                kernel32::ReadFile(async_data.handle.as_raw(),
                                    remaining_buf.as_mut_ptr() as LPVOID,
                                    remaining_buf.len() as u32,
                                    &mut bytes_read,
@@ -587,11 +602,18 @@ impl MessageReader {
                 },
                 Err(winapi::ERROR_BROKEN_PIPE) => {
                     win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
-                    self.read_buf = self.async.take().unwrap().into_inner().buf;
+
+                    let async_data = self.async.take().unwrap().into_inner();
+                    self.handle = async_data.handle;
+                    self.read_buf = async_data.buf;
+
                     Err(WinError::ChannelClosed)
                 },
                 Err(err) => {
-                    self.read_buf = self.async.take().unwrap().into_inner().buf;
+                    let async_data = self.async.take().unwrap().into_inner();
+                    self.handle = async_data.handle;
+                    self.read_buf = async_data.buf;
+
                     Err(WinError::from_system(err, "ReadFile"))
                 },
             }
@@ -615,12 +637,13 @@ impl MessageReader {
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
     unsafe fn notify_completion(&mut self, io_result: Result<(), WinError>) -> Result<(), WinError> {
-        win32_trace!("[$ {:?}] notify_completion", self.handle);
+        win32_trace!("[$ {:?}] notify_completion", self.async.as_ref().unwrap().alias().handle);
 
         // Regardless whether the kernel reported success or error,
         // it doesn't have an async read operation in flight at this point anymore.
         // (And it's safe again to access the `async` data.)
         let async_data = self.async.take().unwrap().into_inner();
+        self.handle = async_data.handle;
         let ov = async_data.ov;
         self.read_buf = async_data.buf;
 
@@ -671,7 +694,7 @@ impl MessageReader {
                 BlockingMode::Blocking => winapi::TRUE,
                 BlockingMode::Nonblocking => winapi::FALSE,
             };
-            let ok = kernel32::GetOverlappedResult(self.handle.as_raw(),
+            let ok = kernel32::GetOverlappedResult(self.async.as_ref().unwrap().alias().handle.as_raw(),
                                                    self.async.as_mut().unwrap().alias_mut().ov.deref_mut(),
                                                    &mut nbytes,
                                                    block);
@@ -1399,7 +1422,10 @@ impl OsIpcReceiverSet {
 
             // Find the matching receiver
             let (reader_index, _) = self.readers.iter().enumerate()
-                                    .find(|&(_, ref reader)| reader.handle.as_raw() as winapi::ULONG_PTR == completion_key)
+                                    .find(|&(_, ref reader)| {
+                                        let raw_handle = reader.async.as_ref().unwrap().alias().handle.as_raw();
+                                        raw_handle as winapi::ULONG_PTR == completion_key
+                                    })
                                     .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
 
             // Remove the entry from the set for now -- we will re-add it later,

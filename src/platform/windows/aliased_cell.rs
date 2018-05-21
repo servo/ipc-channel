@@ -105,6 +105,19 @@ impl<T> AliasedCell<T> {
         &mut self.value
     }
 
+    /// Get a shared (immutable) pointer to the inner value.
+    ///
+    /// With this method it's possible to get an alias
+    /// while only holding a shared reference to the `AliasedCell`.
+    ///
+    /// Since all the unsafe aliases are untracked,
+    /// it's up to the callers to make sure no shared aliases are used
+    /// while the data might actually be mutated elsewhere
+    /// through some outstanding mutable aliases.
+    pub unsafe fn alias(&self) -> &T {
+        &self.inner
+    }
+
     /// Move out the wrapped value, making it accessible from safe code again.
     pub unsafe fn into_inner(self) -> T {
         mem::forget(self.drop_bomb);
