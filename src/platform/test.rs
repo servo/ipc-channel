@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
+use std::u8;
 
 use platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
@@ -118,22 +119,31 @@ fn medium_data_with_sender_transfer() {
                (data, vec![], vec![]));
 }
 
-#[test]
-fn big_data() {
+fn check_big_data(size: u32) {
     let (tx, rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0.. size).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
     let (received_data, received_channels, received_shared_memory_regions) =
         rx.recv().unwrap();
-    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0.. size).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(received_data.len(), data.len());
     assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
                (&data[..], vec![], vec![]));
     thread.join().unwrap();
+}
+
+#[test]
+fn big_data() {
+    check_big_data(1024 * 1024);
+}
+
+#[test]
+fn huge_data() {
+    check_big_data(1024 * 1024 * 50);
 }
 
 #[test]

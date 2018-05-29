@@ -421,10 +421,14 @@ impl OsIpcSender {
     pub fn send(&self,
                 data: &[u8],
                 ports: Vec<OsIpcChannel>,
-                shared_memory_regions: Vec<OsIpcSharedMemory>)
+                mut shared_memory_regions: Vec<OsIpcSharedMemory>)
                 -> Result<(),MachError> {
         unsafe {
-            let size = Message::size_of(data.len(), ports.len(), shared_memory_regions.len());
+            // Convert the data payload into a shared memory region to avoid exceeding
+            // any message size limits.
+            shared_memory_regions.push(OsIpcSharedMemory::from_bytes(data));
+
+            let size = Message::size_of(ports.len(), shared_memory_regions.len());
             let message = libc::malloc(size as size_t) as *mut Message;
             (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
                 MACH_MSGH_BITS_COMPLEX;
@@ -463,17 +467,6 @@ impl OsIpcSender {
                 mem::forget(shared_memory_region);
                 shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
             }
-
-            // Zero out the last word for paranoia's sake.
-            *((message as *mut u8).offset(size as isize - 4) as *mut u32) = 0;
-
-            let mut data_dest = shared_memory_descriptor_dest as *mut u8;
-            let data_size = data.len();
-            let data_size_dest = data_dest as *mut usize;
-            *data_size_dest = data_size;
-
-            data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
-            ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
 
             let os_result = mach_sys::mach_msg(message as *mut _,
                                                MACH_SEND_MSG,
@@ -675,13 +668,8 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             descriptors_remaining -= 1;
         }
 
-        let mut payload_ptr = shared_memory_descriptor as *mut u8;
-        let payload_size = *(payload_ptr as *mut usize);
-        let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
-            (shared_memory_descriptor as usize);
-        assert!(payload_size <= max_payload_size);
-        payload_ptr = payload_ptr.offset(mem::size_of::<usize>() as isize);
-        let payload = slice::from_raw_parts(payload_ptr, payload_size).to_vec();
+        let ool_payload = shared_memory_regions.pop().expect("Missing OOL shared memory region");
+        let payload = ool_payload.to_vec();
 
         if let Some(allocated_buffer) = allocated_buffer {
             libc::free(allocated_buffer)
@@ -846,11 +834,10 @@ struct Message {
 }
 
 impl Message {
-    fn size_of(data_length: usize, port_length: usize, shared_memory_length: usize) -> usize {
+    fn size_of(port_length: usize, shared_memory_length: usize) -> usize {
         let mut size = mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
-            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            mem::size_of::<usize>() + data_length;
+            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length;
 
         // Round up to the next 4 bytes; mach_msg_send returns an error for unaligned sizes.
         if (size & 0x3) != 0 {
