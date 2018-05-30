@@ -176,9 +176,14 @@ impl OsIpcReceiver {
         }
     }
 
-    fn consume_port(&self) -> mach_port_t {
+    fn extract_port(&self) -> mach_port_t {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
+        port
+    }
+
+    fn consume_port(&self) -> mach_port_t {
+        let port = self.extract_port();
         self.port.set(MACH_PORT_NULL);
         port
     }
@@ -509,6 +514,7 @@ impl OsOpaqueIpcChannel {
 
 pub struct OsIpcReceiverSet {
     port: Cell<mach_port_t>,
+    ports: Vec<mach_port_t>,
 }
 
 impl OsIpcReceiverSet {
@@ -516,15 +522,17 @@ impl OsIpcReceiverSet {
         let port = try!(mach_port_allocate(MACH_PORT_RIGHT_PORT_SET));
         Ok(OsIpcReceiverSet {
             port: Cell::new(port),
+            ports: vec![],
         })
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
-        let receiver_port = receiver.consume_port();
         let os_result = unsafe {
-            mach_sys::mach_port_move_member(mach_task_self(), receiver_port, self.port.get())
+            mach_sys::mach_port_move_member(mach_task_self(), receiver.extract_port(), self.port.get())
         };
         if os_result == KERN_SUCCESS {
+            let receiver_port = receiver.consume_port();
+            self.ports.push(receiver_port);
             Ok(receiver_port as u64)
         } else {
             Err(MachError::from(os_result))
@@ -533,6 +541,25 @@ impl OsIpcReceiverSet {
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MachError> {
         select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result])
+    }
+}
+
+impl Drop for OsIpcReceiverSet {
+    fn drop(&mut self) {
+        unsafe {
+            for port in &self.ports {
+                assert_eq!(mach_sys::mach_port_mod_refs(mach_task_self(),
+                                                        *port,
+                                                        MACH_PORT_RIGHT_RECEIVE,
+                                                        -1),
+                           KERN_SUCCESS);
+            }
+            let error = mach_sys::mach_port_mod_refs(mach_task_self(),
+                                                     self.port.get(),
+                                                     MACH_PORT_RIGHT_PORT_SET,
+                                                     -1);
+            assert_eq!(error, KERN_SUCCESS);
+        }
     }
 }
 
