@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t};
+use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg_return_t};
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
@@ -37,8 +37,14 @@ static BOOTSTRAP_PREFIX: &'static str = "org.rust-lang.ipc-channel.";
 
 const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const BOOTSTRAP_SUCCESS: kern_return_t = 0;
+const KERN_NOT_IN_SET: kern_return_t = 12;
+const KERN_INVALID_NAME: kern_return_t = 15;
 const KERN_INVALID_RIGHT: kern_return_t = 17;
+const KERN_INVALID_VALUE: kern_return_t = 18;
+const KERN_UREFS_OVERFLOW: kern_return_t = 19;
+const KERN_INVALID_CAPABILITY: kern_return_t = 20;
 const KERN_SUCCESS: kern_return_t = 0;
+const KERN_NO_SPACE: kern_return_t = 3;
 const MACH_MSGH_BITS_COMPLEX: u32 = 0x80000000;
 const MACH_MSG_IPC_KERNEL: kern_return_t = 0x00000800;
 const MACH_MSG_IPC_SPACE: kern_return_t = 0x00002000;
@@ -133,15 +139,20 @@ impl Drop for OsIpcReceiver {
     }
 }
 
+fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, MachError> {
+    let mut port: mach_port_t = 0;
+    let os_result = unsafe {
+        mach_sys::mach_port_allocate(mach_task_self(), right, &mut port)
+    };
+    if os_result == KERN_SUCCESS {
+        return Ok(port);
+    }
+    Err(os_result.into())
+}
+
 impl OsIpcReceiver {
     fn new() -> Result<OsIpcReceiver,MachError> {
-        let mut port: mach_port_t = 0;
-        let os_result = unsafe {
-            mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &mut port)
-        };
-        if os_result != KERN_SUCCESS {
-            return Err(MachError::from(os_result))
-        }
+        let port = try!(mach_port_allocate(MACH_PORT_RIGHT_RECEIVE));
         let limits = mach_port_limits_t {
             mpl_qlimit: MACH_PORT_QLIMIT_MAX,
         };
@@ -502,17 +513,10 @@ pub struct OsIpcReceiverSet {
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,MachError> {
-        let mut port: mach_port_t = 0;
-        let os_result = unsafe {
-            mach_sys::mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_PORT_SET, &mut port)
-        };
-        if os_result == KERN_SUCCESS {
-            Ok(OsIpcReceiverSet {
-                port: Cell::new(port),
-            })
-        } else {
-            Err(MachError::from(os_result))
-        }
+        let port = try!(mach_port_allocate(MACH_PORT_RIGHT_PORT_SET));
+        Ok(OsIpcReceiverSet {
+            port: Cell::new(port),
+        })
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
@@ -823,8 +827,38 @@ impl Message {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
+pub enum KernelError {
+    Success,
+    NoSpace,
+    InvalidName,
+    InvalidRight,
+    InvalidValue,
+    InvalidCapability,
+    UrefsOverflow,
+    NotInSet,
+    Unknown(kern_return_t),
+}
+
+impl From<kern_return_t> for KernelError {
+    fn from(code: kern_return_t) -> KernelError {
+        match code {
+            KERN_SUCCESS => KernelError::Success,
+            KERN_NO_SPACE => KernelError::NoSpace,
+            KERN_INVALID_NAME => KernelError::InvalidName,
+            KERN_INVALID_RIGHT => KernelError::InvalidRight,
+            KERN_INVALID_VALUE => KernelError::InvalidValue,
+            KERN_INVALID_CAPABILITY => KernelError::InvalidCapability,
+            KERN_UREFS_OVERFLOW => KernelError::UrefsOverflow,
+            KERN_NOT_IN_SET => KernelError::NotInSet,
+            code => KernelError::Unknown(code),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MachError {
     Success,
+    Kernel(KernelError),
     IpcSpace,
     VmSpace,
     IpcKernel,
@@ -863,7 +897,7 @@ pub enum MachError {
     SendNoBuffer,
     SendTimedOut,
     SendTooLarge,
-    Unknown(kern_return_t),
+    Unknown(mach_msg_return_t),
 }
 
 impl MachError {
@@ -879,8 +913,8 @@ impl From<MachError> for bincode::Error {
     }
 }
 
-impl From<kern_return_t> for MachError {
-    fn from(code: kern_return_t) -> MachError {
+impl From<mach_msg_return_t> for MachError {
+    fn from(code: mach_msg_return_t) -> MachError {
         match code {
             MACH_MSG_SUCCESS => MachError::Success,
             MACH_MSG_IPC_KERNEL => MachError::IpcKernel,
@@ -926,11 +960,50 @@ impl From<kern_return_t> for MachError {
     }
 }
 
+impl From<KernelError> for MachError {
+    fn from(kernel_error: KernelError) -> MachError {
+        MachError::Kernel(kernel_error)
+    }
+}
+
 impl From<MachError> for Error {
-    /// These error descriptions are from `mach/message.h`.
+    /// These error descriptions are from `mach/message.h` and `mach/kern_return.h`.
     fn from(mach_error: MachError) -> Error {
         match mach_error {
             MachError::Success => Error::new(ErrorKind::Other, "Success"),
+            MachError::Kernel(KernelError::Success) => Error::new(ErrorKind::Other, "Success."),
+            MachError::Kernel(KernelError::NoSpace) => {
+                Error::new(ErrorKind::Other,
+                           "No room in IPC name space for another right.")
+            }
+            MachError::Kernel(KernelError::InvalidName) => {
+                Error::new(ErrorKind::Other,
+                           "Name doesn't denote a right in the task.")
+            }
+            MachError::Kernel(KernelError::InvalidRight) => {
+                Error::new(ErrorKind::Other,
+                           "Name denotes a right, but not an appropriate right.")
+            }
+            MachError::Kernel(KernelError::InvalidValue) => {
+                Error::new(ErrorKind::Other,
+                           "Blatant range error.")
+            }
+            MachError::Kernel(KernelError::InvalidCapability) => {
+                Error::new(ErrorKind::Other,
+                           "The supplied (port) capability is improper.")
+            }
+            MachError::Kernel(KernelError::UrefsOverflow) => {
+                Error::new(ErrorKind::Other,
+                           "Operation would overflow limit on user-references.")
+            }
+            MachError::Kernel(KernelError::NotInSet) => {
+                Error::new(ErrorKind::Other,
+                           "Receive right is not a member of a port set.")
+            }
+            MachError::Kernel(KernelError::Unknown(code)) => {
+                Error::new(ErrorKind::Other,
+                           format!("Unknown kernel error: {:x}", code))
+            }
             MachError::IpcSpace => {
                 Error::new(ErrorKind::Other,
                            "No room in IPC name space for another capability name.")
