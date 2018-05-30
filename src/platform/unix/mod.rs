@@ -343,7 +343,7 @@ impl OsIpcSender {
                     // using a reduced send buffer size.
                     //
                     // Any other errors we might get here are non-recoverable.
-                    if !(error.0 == libc::ENOBUFS
+                    if !(error == UnixError::Errno(libc::ENOBUFS)
                          && downsize(&mut sendbuf_size, data.len()).is_ok()) {
                         return Err(error)
                     }
@@ -382,7 +382,7 @@ impl OsIpcSender {
             };
 
             if let Err(error) = result {
-                if error.0 == libc::ENOBUFS
+                if error == UnixError::Errno(libc::ENOBUFS)
                    && downsize(&mut sendbuf_size, end_byte_position - byte_position).is_ok() {
                     // If the kernel failed to allocate a buffer large enough for the packet,
                     // retry with a smaller size (if possible).
@@ -807,17 +807,20 @@ impl OsIpcSharedMemory {
     }
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct UnixError(c_int);
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum UnixError {
+    Errno(c_int),
+    ChannelClosed,
+}
 
 impl UnixError {
     fn last() -> UnixError {
-        UnixError(Error::last_os_error().raw_os_error().unwrap())
+        UnixError::Errno(Error::last_os_error().raw_os_error().unwrap())
     }
 
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
-        self.0 == libc::ECONNRESET
+        *self == UnixError::ChannelClosed
     }
 }
 
@@ -829,13 +832,22 @@ impl From<UnixError> for bincode::Error {
 
 impl From<UnixError> for Error {
     fn from(unix_error: UnixError) -> Error {
-        Error::from_raw_os_error(unix_error.0)
+        match unix_error {
+            UnixError::Errno(errno) => Error::from_raw_os_error(errno),
+            UnixError::ChannelClosed => Error::new(ErrorKind::ConnectionReset,
+                                                   "All senders for this socket closed"),
+        }
     }
 }
 
 impl From<Error> for UnixError {
     fn from(e: Error) -> UnixError {
-        UnixError(e.raw_os_error().unwrap())
+        if let Some(errno) = e.raw_os_error() {
+            UnixError::Errno(errno)
+        } else {
+            assert!(e.kind() == ErrorKind::ConnectionReset);
+            UnixError::ChannelClosed
+        }
     }
 }
 
@@ -932,7 +944,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         };
 
         if result == 0 {
-            return Err(UnixError(libc::ECONNRESET))
+            return Err(UnixError::ChannelClosed)
         } else if result < 0 {
             return Err(UnixError::last())
         };
@@ -1011,7 +1023,7 @@ impl UnixCmsg {
         let result = if result > 0 {
             Ok(result as usize)
         } else if result == 0 {
-            Err(UnixError(libc::ECONNRESET))
+            Err(UnixError::ChannelClosed)
         } else {
             Err(UnixError::last())
         };
