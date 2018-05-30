@@ -332,6 +332,9 @@ pub struct OsIpcSender {
 
 impl Drop for OsIpcSender {
     fn drop(&mut self) {
+        if self.port == MACH_PORT_NULL {
+            return;
+        }
         unsafe {
             let error = mach_sys::mach_port_mod_refs(mach_task_self(),
                                                      self.port,
@@ -348,14 +351,22 @@ impl Drop for OsIpcSender {
 
 impl Clone for OsIpcSender {
     fn clone(&self) -> OsIpcSender {
-        unsafe {
-            assert!(mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                 self.port,
-                                                 MACH_PORT_RIGHT_SEND,
-                                                 1) == KERN_SUCCESS);
+        let mut cloned_port = self.port;
+        if cloned_port != MACH_PORT_NULL {
+            unsafe {
+                let error = mach_sys::mach_port_mod_refs(mach_task_self(),
+                                                         cloned_port,
+                                                         MACH_PORT_RIGHT_SEND,
+                                                         1);
+                if error == KERN_INVALID_RIGHT {
+                    cloned_port = MACH_PORT_NULL;
+                } else if error != KERN_SUCCESS {
+                    panic!("mach_port_mod_refs(1, {}) failed: {:08x}", cloned_port, error);
+                }
+            }
         }
         OsIpcSender {
-            port: self.port,
+            port: cloned_port,
             nosync_marker: PhantomData,
         }
     }
