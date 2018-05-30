@@ -716,6 +716,56 @@ fn no_receiver_notification() {
     }
 }
 
+/// Checks for broken pipe notification when receiver is closed
+/// while there are pending unreceived messages.
+///
+/// This can result in a different error condition
+/// than dropping the receiver before a send is attempted.
+/// (Linux reports `ECONNRESET` instead of `EPIPE` in this case.)
+#[test]
+fn no_receiver_notification_pending() {
+    let (sender, receiver) = platform::channel().unwrap();
+    let data: &[u8] = b"1234567";
+
+    let result = sender.send(data, vec![], vec![]);
+    assert!(result.is_ok());
+
+    drop(receiver);
+    loop {
+        if let Err(err) = sender.send(data, vec![], vec![]) {
+            // We don't have an actual method for distinguishing a "broken pipe" error --
+            // but at least it's not supposed to signal the same condition as closing the sender.
+            assert!(!err.channel_is_closed());
+            break;
+        }
+    }
+}
+
+/// Checks for broken pipe notification when receiver is closed after a delay.
+///
+/// This might uncover some timing-related issues.
+#[test]
+fn no_receiver_notification_delayed() {
+    let (sender, receiver) = platform::channel().unwrap();
+
+    let thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(42));
+        drop(receiver);
+    });
+
+    let data: &[u8] = b"1234567";
+    loop {
+        if let Err(err) = sender.send(data, vec![], vec![]) {
+            // We don't have an actual method for distinguishing a "broken pipe" error --
+            // but at least it's not supposed to signal the same condition as closing the sender.
+            assert!(!err.channel_is_closed());
+            break;
+        }
+    }
+
+    thread.join().unwrap();
+}
+
 #[test]
 fn shared_memory() {
     let (tx, rx) = platform::channel().unwrap();
@@ -766,6 +816,32 @@ fn no_senders_notification_try_recv() {
             break;
         }
     }
+}
+
+/// Checks for channel closed notification when receiver is closed after a delay.
+///
+/// This might uncover some timing-related issues.
+#[test]
+fn no_senders_notification_try_recv_delayed() {
+    let (sender, receiver) = platform::channel().unwrap();
+    let result = receiver.try_recv();
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().channel_is_closed());
+
+    let thread = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(42));
+        drop(sender);
+    });
+
+    loop {
+        let result = receiver.try_recv();
+        assert!(result.is_err());
+        if result.unwrap_err().channel_is_closed() {
+            break;
+        }
+    }
+
+    thread.join().unwrap();
 }
 
 #[test]
