@@ -12,6 +12,7 @@ env:
     - RUST_BACKTRACE=1
   matrix:
     - FEATURES="unstable"
+    - FEATURES="unstable memfd"
 
 script:
   - cargo build --features "$FEATURES"
