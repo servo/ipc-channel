@@ -12,6 +12,7 @@ env:
     - RUST_BACKTRACE=1
   matrix:
     - FEATURES="unstable"
+    - FEATURES="unstable memfd"
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
