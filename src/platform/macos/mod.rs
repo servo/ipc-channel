@@ -129,12 +129,7 @@ impl Drop for OsIpcReceiver {
     fn drop(&mut self) {
         let port = self.port.get();
         if port != MACH_PORT_NULL {
-            unsafe {
-                assert!(mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                     port,
-                                                     MACH_PORT_RIGHT_RECEIVE,
-                                                     -1) == KERN_SUCCESS);
-            }
+            mach_port_mod_release(port, MACH_PORT_RIGHT_RECEIVE).unwrap();
         }
     }
 }
@@ -148,6 +143,26 @@ fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, MachError
         return Ok(port);
     }
     Err(os_result.into())
+}
+
+fn mach_port_mod_addref(port: mach_port_t, right: mach_port_right_t) -> Result<(), KernelError> {
+    let err = unsafe {
+        mach_sys::mach_port_mod_refs(mach_task_self(), port, right, 1)
+    };
+    if err == KERN_SUCCESS {
+        return Ok(());
+    }
+    Err(err.into())
+}
+
+fn mach_port_mod_release(port: mach_port_t, right: mach_port_right_t) -> Result<(), KernelError> {
+    let err = unsafe {
+        mach_sys::mach_port_mod_refs(mach_task_self(), port, right, -1)
+    };
+    if err == KERN_SUCCESS {
+        return Ok(());
+    }
+    Err(err.into())
 }
 
 impl OsIpcReceiver {
@@ -335,16 +350,11 @@ impl Drop for OsIpcSender {
         if self.port == MACH_PORT_NULL {
             return;
         }
-        unsafe {
-            let error = mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                     self.port,
-                                                     MACH_PORT_RIGHT_SEND,
-                                                     -1);
+        match mach_port_mod_release(self.port, MACH_PORT_RIGHT_SEND) {
             // `KERN_INVALID_RIGHT` is returned if (as far as I can tell) the receiver already shut
             // down. This is fine.
-            if error != KERN_SUCCESS && error != KERN_INVALID_RIGHT {
-                panic!("mach_port_mod_refs(-1, {}) failed: {:08x}", self.port, error)
-            }
+            Ok(()) | Err(KernelError::InvalidRight) => (),
+            Err(error) => panic!("mach_port_mod_refs(-1, {}) failed: {:?}", self.port, error),
         }
     }
 }
@@ -353,16 +363,10 @@ impl Clone for OsIpcSender {
     fn clone(&self) -> OsIpcSender {
         let mut cloned_port = self.port;
         if cloned_port != MACH_PORT_NULL {
-            unsafe {
-                let error = mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                         cloned_port,
-                                                         MACH_PORT_RIGHT_SEND,
-                                                         1);
-                if error == KERN_INVALID_RIGHT {
-                    cloned_port = MACH_PORT_NULL;
-                } else if error != KERN_SUCCESS {
-                    panic!("mach_port_mod_refs(1, {}) failed: {:08x}", cloned_port, error);
-                }
+            match mach_port_mod_addref(cloned_port, MACH_PORT_RIGHT_SEND) {
+                Ok(()) => (),
+                Err(KernelError::InvalidRight) => cloned_port = MACH_PORT_NULL,
+                Err(error) => panic!("mach_port_mod_refs(1, {}) failed: {:?}", cloned_port, error),
             }
         }
         OsIpcSender {
@@ -557,20 +561,10 @@ impl OsIpcReceiverSet {
 
 impl Drop for OsIpcReceiverSet {
     fn drop(&mut self) {
-        unsafe {
-            for port in &self.ports {
-                assert_eq!(mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                        *port,
-                                                        MACH_PORT_RIGHT_RECEIVE,
-                                                        -1),
-                           KERN_SUCCESS);
-            }
-            let error = mach_sys::mach_port_mod_refs(mach_task_self(),
-                                                     self.port.get(),
-                                                     MACH_PORT_RIGHT_PORT_SET,
-                                                     -1);
-            assert_eq!(error, KERN_SUCCESS);
+        for port in &self.ports {
+            mach_port_mod_release(*port, MACH_PORT_RIGHT_RECEIVE).unwrap();
         }
+        mach_port_mod_release(self.port.get(), MACH_PORT_RIGHT_PORT_SET).unwrap();
     }
 }
 
