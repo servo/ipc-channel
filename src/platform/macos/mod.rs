@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg_return_t};
-use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t};
+use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 
@@ -134,7 +134,7 @@ impl Drop for OsIpcReceiver {
     }
 }
 
-fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, MachError> {
+fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, KernelError> {
     let mut port: mach_port_t = 0;
     let os_result = unsafe {
         mach_sys::mach_port_allocate(mach_task_self(), right, &mut port)
@@ -165,6 +165,34 @@ fn mach_port_mod_release(port: mach_port_t, right: mach_port_right_t) -> Result<
     Err(err.into())
 }
 
+fn mach_port_move_member(port: mach_port_t, set: mach_port_t) -> Result<(), KernelError> {
+    let error = unsafe {
+        mach_sys::mach_port_move_member(mach_task_self(), port, set)
+    };
+    if error == KERN_SUCCESS {
+        return Ok(());
+    }
+    Err(error.into())
+}
+
+fn mach_port_extract_right(
+    port: mach_port_t,
+    message_type: mach_msg_type_name_t
+) -> Result<(mach_port_t, mach_msg_type_name_t), KernelError> {
+    let (mut right, mut acquired_right) = (0, 0);
+    let error = unsafe {
+        mach_sys::mach_port_extract_right(mach_task_self(),
+                                          port,
+                                          message_type,
+                                          &mut right,
+                                          &mut acquired_right)
+    };
+    if error == KERN_SUCCESS {
+        return Ok((right, acquired_right));
+    }
+    Err(error.into())
+}
+
 impl OsIpcReceiver {
     fn new() -> Result<OsIpcReceiver,MachError> {
         let port = try!(mach_port_allocate(MACH_PORT_RIGHT_RECEIVE));
@@ -181,7 +209,7 @@ impl OsIpcReceiver {
         if os_result == KERN_SUCCESS {
             Ok(OsIpcReceiver::from_name(port))
         } else {
-            Err(MachError::from(os_result))
+            Err(KernelError::from(os_result).into())
         }
     }
 
@@ -210,20 +238,9 @@ impl OsIpcReceiver {
     fn sender(&self) -> Result<OsIpcSender,MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
-        unsafe {
-            let (mut right, mut acquired_right) = (0, 0);
-            let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
-                                                              port,
-                                                              MACH_MSG_TYPE_MAKE_SEND as u32,
-                                                              &mut right,
-                                                              &mut acquired_right);
-            if os_result == KERN_SUCCESS {
-                debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
-                Ok(OsIpcSender::from_name(right))
-            } else {
-                Err(MachError::from(os_result))
-            }
-        }
+        let (right, acquired_right) = mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
+        debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
+        Ok(OsIpcSender::from_name(right))
     }
 
     fn register_bootstrap_name(&self) -> Result<String,MachError> {
@@ -235,20 +252,12 @@ impl OsIpcReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError::from(os_result))
+                return Err(KernelError::from(os_result).into())
             }
 
 
             // FIXME(pcwalton): Does this leak?
-            let (mut right, mut acquired_right) = (0, 0);
-            let os_result = mach_sys::mach_port_extract_right(mach_task_self(),
-                                                              port,
-                                                              MACH_MSG_TYPE_MAKE_SEND as u32,
-                                                              &mut right,
-                                                              &mut acquired_right);
-            if os_result != KERN_SUCCESS {
-                return Err(MachError::from(os_result))
-            }
+            let (right, acquired_right) = mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
             let mut os_result;
@@ -276,7 +285,7 @@ impl OsIpcReceiver {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError::from(os_result))
+                return Err(KernelError::from(os_result).into())
             }
 
             let c_name = CString::new(name).unwrap();
@@ -305,7 +314,7 @@ impl OsIpcReceiver {
                                                          MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
                                                          &mut 0);
             if os_result != KERN_SUCCESS {
-                return Err(MachError::from(os_result))
+                return Err(KernelError::from(os_result).into())
             }
         }
         Ok(())
@@ -391,7 +400,7 @@ impl OsIpcSender {
                                                             TASK_BOOTSTRAP_PORT,
                                                             &mut bootstrap_port);
             if os_result != KERN_SUCCESS {
-                return Err(MachError::from(os_result))
+                return Err(KernelError::from(os_result).into())
             }
 
             let mut port = 0;
@@ -542,16 +551,10 @@ impl OsIpcReceiverSet {
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
-        let os_result = unsafe {
-            mach_sys::mach_port_move_member(mach_task_self(), receiver.extract_port(), self.port.get())
-        };
-        if os_result == KERN_SUCCESS {
-            let receiver_port = receiver.consume_port();
-            self.ports.push(receiver_port);
-            Ok(receiver_port as u64)
-        } else {
-            Err(MachError::from(os_result))
-        }
+        mach_port_move_member(receiver.extract_port(), self.port.get())?;
+        let receiver_port = receiver.consume_port();
+        self.ports.push(receiver_port);
+        Ok(receiver_port as u64)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MachError> {
