@@ -537,7 +537,7 @@ impl OsOpaqueIpcChannel {
 }
 
 pub struct OsIpcReceiverSet {
-    port: Cell<mach_port_t>,
+    port: mach_port_t,
     ports: Vec<mach_port_t>,
 }
 
@@ -545,20 +545,20 @@ impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,MachError> {
         let port = try!(mach_port_allocate(MACH_PORT_RIGHT_PORT_SET));
         Ok(OsIpcReceiverSet {
-            port: Cell::new(port),
+            port: port,
             ports: vec![],
         })
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
-        mach_port_move_member(receiver.extract_port(), self.port.get())?;
+        mach_port_move_member(receiver.extract_port(), self.port)?;
         let receiver_port = receiver.consume_port();
         self.ports.push(receiver_port);
         Ok(receiver_port as u64)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MachError> {
-        select(self.port.get(), BlockingMode::Blocking).map(|result| vec![result])
+        select(self.port, BlockingMode::Blocking).map(|result| vec![result])
     }
 }
 
@@ -567,7 +567,7 @@ impl Drop for OsIpcReceiverSet {
         for port in &self.ports {
             mach_port_mod_release(*port, MACH_PORT_RIGHT_RECEIVE).unwrap();
         }
-        mach_port_mod_release(self.port.get(), MACH_PORT_RIGHT_PORT_SET).unwrap();
+        mach_port_mod_release(self.port, MACH_PORT_RIGHT_PORT_SET).unwrap();
     }
 }
 
