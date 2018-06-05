@@ -428,3 +428,11 @@ fn test_reentrant() {
     sender.send(null.clone()).unwrap();
     assert_eq!(null, receiver.recv().unwrap());
 }
+
+#[test]
+fn transfer_closed_sender() {
+    let (main_tx, main_rx) = ipc::channel().unwrap();
+    let (transfer_tx, _) = ipc::channel::<()>().unwrap();
+    assert!(main_tx.send(transfer_tx).is_ok());
+    let _transferred_tx = main_rx.recv().unwrap();
+}
