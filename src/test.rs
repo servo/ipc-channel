@@ -436,3 +436,11 @@ fn transfer_closed_sender() {
     assert!(main_tx.send(transfer_tx).is_ok());
     let _transferred_tx = main_rx.recv().unwrap();
 }
+
+#[test]
+fn rustc_bug() {
+    let (_system_reporter_sender, system_reporter_receiver) = ipc::channel::<()>().unwrap();
+    ROUTER.add_route(system_reporter_receiver.to_opaque(), Box::new(|_message| {
+    }));
+    ::std::thread::sleep(::std::time::Duration::from_millis(5000));
+}
