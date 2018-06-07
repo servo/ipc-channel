@@ -198,9 +198,15 @@ fn with_n_fds(n: usize, size: usize) {
     let (super_tx, super_rx) = platform::channel().unwrap();
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-    super_tx.send(&data[..], sender_fds, vec![]).unwrap();
+    let thread = {
+        let data = data.clone();
+        thread::spawn(move || {
+            super_tx.send(&data[..], sender_fds, vec![]).unwrap();
+        })
+    };
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
+    thread.join().unwrap();
 
     assert_eq!(received_data.len(), data.len());
     assert_eq!(&received_data[..], &data[..]);
