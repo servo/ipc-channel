@@ -14,6 +14,7 @@ use libc::intptr_t;
 use std::cell::{Cell, RefCell};
 use std::cmp::PartialEq;
 use std::default::Default;
+#[cfg(feature = "win32-trace")]
 use std::env;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
@@ -33,14 +34,17 @@ use self::aliased_cell::AliasedCell;
 lazy_static! {
     static ref CURRENT_PROCESS_ID: winapi::ULONG = unsafe { kernel32::GetCurrentProcessId() };
     static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { kernel32::GetCurrentProcess() });
+}
 
+#[cfg(feature = "win32-trace")]
+lazy_static! {
     static ref DEBUG_TRACE_ENABLED: bool = { env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some() };
 }
 
 /// Debug macro to better track what's going on in case of errors.
 macro_rules! win32_trace {
     ($($rest:tt)*) => {
-        if cfg!(feature = "win32-trace") {
+        #[cfg(feature = "win32-trace")] {
             if *DEBUG_TRACE_ENABLED { println!($($rest)*); }
         }
     }
@@ -1017,8 +1021,8 @@ impl OsIpcReceiver {
                 },
 
                 // Anything else signifies some actual I/O error.
-                err => {
-                    win32_trace!("[$ {:?}] accept error -> {}", handle.as_raw(), err);
+                _err => {
+                    win32_trace!("[$ {:?}] accept error -> {}", handle.as_raw(), _err);
                     Err(WinError::last("ConnectNamedPipe"))
                 },
             };
@@ -1700,8 +1704,8 @@ impl WinError {
         }
     }
 
-    fn from_system(err: u32, f: &str) -> WinError {
-        win32_trace!("WinError: {} ({}) from {}", WinError::error_string(err), err, f);
+    fn from_system(err: u32, _f: &str) -> WinError {
+        win32_trace!("WinError: {} ({}) from {}", WinError::error_string(err), err, _f);
         WinError::WindowsResult(err)
     }
 
