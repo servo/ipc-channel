@@ -814,6 +814,14 @@ impl MessageReader {
 
         Ok(mem::replace(&mut self.read_buf, vec![]))
     }
+
+    /// Get raw handle of the receive port.
+    ///
+    /// This is only for debug tracing purposes, and must not be used for anything else.
+    #[cfg(feature = "win32-trace")]
+    fn get_raw_handle(&self) -> HANDLE {
+        self.handle.as_raw()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1323,13 +1331,13 @@ impl OsIpcReceiverSet {
 
         match reader.add_to_iocp(&self.iocp, entry_id) {
             Ok(()) => {
-                win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", self.iocp.as_raw(), reader.handle.as_raw(), entry_id);
+                win32_trace!("[# {:?}] ReceiverSet add {:?}, id {}", self.iocp.as_raw(), reader.get_raw_handle(), entry_id);
                 self.readers.push(reader);
             }
             Err(WinError::ChannelClosed) => {
                 // If the sender has already been closed, we need to stash this information,
                 // so we can report the corresponding event in the next `select()` call.
-                win32_trace!("[# {:?}] ReceiverSet add {:?} (closed), id {}", self.iocp.as_raw(), reader.handle.as_raw(), entry_id);
+                win32_trace!("[# {:?}] ReceiverSet add {:?} (closed), id {}", self.iocp.as_raw(), reader.get_raw_handle(), entry_id);
                 self.closed_readers.push(entry_id);
             }
             Err(err) => return Err(err),
@@ -1398,7 +1406,7 @@ impl OsIpcReceiverSet {
             // if we can successfully initiate another async read operation.
             let mut reader = self.readers.swap_remove(reader_index);
 
-            win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.handle.as_raw());
+            win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.get_raw_handle());
 
             // tell it about the completed IO op
             let result = reader.notify_completion(io_result);
@@ -1434,10 +1442,10 @@ impl OsIpcReceiverSet {
             if !closed {
                 // Drain as many messages as we can.
                 while let Some((data, channels, shmems)) = try!(reader.get_message()) {
-                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
+                    win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.get_raw_handle(), reader.entry_id.unwrap());
                     selection_results.push(OsIpcSelectionResult::DataReceived(reader.entry_id.unwrap(), data, channels, shmems));
                 }
-                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- no message", self.iocp.as_raw(), reader.get_raw_handle(), reader.entry_id.unwrap());
 
                 // Now that we are done frobbing the buffer,
                 // we can safely initiate the next async read operation.
@@ -1461,7 +1469,7 @@ impl OsIpcReceiverSet {
             // or while trying to re-initiate an async read after receiving data --
             // add an event to this effect to the result list.
             if closed {
-                win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.handle.as_raw(), reader.entry_id.unwrap());
+                win32_trace!("[# {:?}] receiver {:?} ({}) -- now closed!", self.iocp.as_raw(), reader.get_raw_handle(), reader.entry_id.unwrap());
                 selection_results.push(OsIpcSelectionResult::ChannelClosed(reader.entry_id.unwrap()));
             }
         }
