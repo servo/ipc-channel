@@ -512,21 +512,19 @@ impl OsIpcSender {
                 shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
             }
 
-            let mut data_dest = shared_memory_descriptor_dest as *mut u8;
-            let is_inline_dest = data_dest as *mut usize;
-            *is_inline_dest = data.is_inline() as usize;
+            let is_inline_dest = shared_memory_descriptor_dest as *mut bool;
+            *is_inline_dest = data.is_inline();
 
             if data.is_inline() {
                 // Zero out the last word for paranoia's sake.
                 *((message as *mut u8).offset(size as isize - 4) as *mut u32) = 0;
 
-                data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
                 let data = data.inline_data();
                 let data_size = data.len();
-                let data_size_dest = data_dest as *mut usize;
+                let data_size_dest = is_inline_dest.offset(1) as *mut usize;
                 *data_size_dest = data_size;
 
-                data_dest = data_dest.offset(mem::size_of::<usize>() as isize);
+                let data_dest = data_size_dest.offset(1) as *mut u8;
                 ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
             }
 
@@ -740,15 +738,15 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             descriptors_remaining -= 1;
         }
 
-        let has_inline_data_ptr = shared_memory_descriptor as *mut u8;
-        let has_inline_data = *(has_inline_data_ptr as *mut usize) != 0;
+        let has_inline_data_ptr = shared_memory_descriptor as *mut bool;
+        let has_inline_data = *has_inline_data_ptr;
         let payload = if has_inline_data {
-            let mut payload_ptr = has_inline_data_ptr.offset(mem::size_of::<usize>() as isize);
-            let payload_size = *(payload_ptr as *mut usize);
+            let payload_size_ptr = has_inline_data_ptr.offset(1) as *mut usize;
+            let payload_size = *payload_size_ptr;
             let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
                 (shared_memory_descriptor as usize);
             assert!(payload_size <= max_payload_size);
-            payload_ptr = payload_ptr.offset(mem::size_of::<usize>() as isize);
+            let payload_ptr = payload_size_ptr.offset(1) as *mut u8;
             slice::from_raw_parts(payload_ptr, payload_size).to_vec()
         } else {
             let ool_payload = shared_memory_regions.pop().expect("Missing OOL shared memory region");
@@ -922,7 +920,7 @@ impl Message {
         let mut size = mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
             mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            mem::size_of::<usize>();
+            mem::size_of::<bool>();
 
         if data.is_inline() {
             size += mem::size_of::<usize>() + data.inline_data().len();
