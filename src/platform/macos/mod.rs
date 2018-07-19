@@ -484,30 +484,28 @@ impl OsIpcSender {
                 (ports.len() + shared_memory_regions.len()) as u32;
 
             let mut port_descriptor_dest = message.offset(1) as *mut mach_msg_port_descriptor_t;
-            for outgoing_port in ports.into_iter() {
+            for outgoing_port in &ports {
                 (*port_descriptor_dest).name = outgoing_port.port();
                 (*port_descriptor_dest).pad1 = 0;
 
-                (*port_descriptor_dest).disposition = match outgoing_port {
+                (*port_descriptor_dest).disposition = match *outgoing_port {
                     OsIpcChannel::Sender(_) => MACH_MSG_TYPE_MOVE_SEND,
                     OsIpcChannel::Receiver(_) => MACH_MSG_TYPE_MOVE_RECEIVE,
                 };
 
                 (*port_descriptor_dest).type_ = MACH_MSG_PORT_DESCRIPTOR;
                 port_descriptor_dest = port_descriptor_dest.offset(1);
-                mem::forget(outgoing_port);
             }
 
             let mut shared_memory_descriptor_dest =
                 port_descriptor_dest as *mut mach_msg_ool_descriptor_t;
-            for shared_memory_region in shared_memory_regions.into_iter() {
+            for shared_memory_region in &shared_memory_regions {
                 (*shared_memory_descriptor_dest).address =
                     shared_memory_region.as_ptr() as *const c_void as *mut c_void;
                 (*shared_memory_descriptor_dest).size = shared_memory_region.len() as u32;
                 (*shared_memory_descriptor_dest).deallocate = 1;
                 (*shared_memory_descriptor_dest).copy = MACH_MSG_VIRTUAL_COPY as u8;
                 (*shared_memory_descriptor_dest).type_ = MACH_MSG_OOL_DESCRIPTOR;
-                mem::forget(shared_memory_region);
                 shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
             }
 
@@ -539,6 +537,12 @@ impl OsIpcSender {
             libc::free(message as *mut _);
             if os_result != MACH_MSG_SUCCESS {
                 return Err(MachError::from(os_result))
+            }
+            for outgoing_port in ports {
+                mem::forget(outgoing_port);
+            }
+            for shared_memory_region in shared_memory_regions {
+                mem::forget(shared_memory_region);
             }
             Ok(())
         }
