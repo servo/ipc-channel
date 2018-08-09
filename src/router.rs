@@ -9,9 +9,9 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
+use crossbeam_channel::{self, Receiver, Sender};
 use ipc::{self, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcMessage};
 use ipc::{OpaqueIpcReceiver};
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ pub struct RouterProxy {
 
 impl RouterProxy {
     pub fn new() -> RouterProxy {
-        let (msg_sender, msg_receiver) = mpsc::channel();
+        let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let (wakeup_sender, wakeup_receiver) = ipc::channel().unwrap();
         thread::spawn(move || Router::new(msg_receiver, wakeup_receiver).run());
         RouterProxy {
@@ -39,34 +39,38 @@ impl RouterProxy {
 
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
-        comm.msg_sender.send(RouterMsg::AddRoute(receiver, callback)).unwrap();
+        comm.msg_sender.send(RouterMsg::AddRoute(receiver, callback));
         comm.wakeup_sender.send(()).unwrap();
     }
 
     /// A convenience function to route an `IpcReceiver<T>` to an existing `Sender<T>`.
-    pub fn route_ipc_receiver_to_mpsc_sender<T>(&self,
-                                                ipc_receiver: IpcReceiver<T>,
-                                                mpsc_sender: Sender<T>)
-                                                where T: for<'de> Deserialize<'de> +
-                                                         Serialize +
-                                                         Send +
-                                                         'static {
-        self.add_route(ipc_receiver.to_opaque(), Box::new(move |message| {
-            drop(mpsc_sender.send(message.to::<T>().unwrap()))
-        }))
+    pub fn route_ipc_receiver_to_crossbeam_sender<T>(
+        &self,
+        ipc_receiver: IpcReceiver<T>,
+        crossbeam_sender: Sender<T>,
+    ) where
+        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+    {
+        self.add_route(
+            ipc_receiver.to_opaque(),
+            Box::new(move |message| {
+                drop(crossbeam_sender.send(message.to::<T>().unwrap()))
+            }),
+        )
     }
 
     /// A convenience function to route an `IpcReceiver<T>` to a `Receiver<T>`: the most common
     /// use of a `Router`.
-    pub fn route_ipc_receiver_to_new_mpsc_receiver<T>(&self, ipc_receiver: IpcReceiver<T>)
-                                                  -> Receiver<T>
-                                                  where T: for<'de> Deserialize<'de> +
-                                                           Serialize +
-                                                           Send +
-                                                           'static {
-        let (mpsc_sender, mpsc_receiver) = mpsc::channel();
-        self.route_ipc_receiver_to_mpsc_sender(ipc_receiver, mpsc_sender);
-        mpsc_receiver
+    pub fn route_ipc_receiver_to_new_crossbeam_receiver<T>(
+        &self,
+        ipc_receiver: IpcReceiver<T>,
+    ) -> Receiver<T>
+    where
+        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+    {
+        let (crossbeam_sender, crossbeam_receiver) = crossbeam_channel::unbounded();
+        self.route_ipc_receiver_to_crossbeam_sender(ipc_receiver, crossbeam_sender);
+        crossbeam_receiver
     }
 }
 
@@ -129,4 +133,3 @@ enum RouterMsg {
 }
 
 pub type RouterHandler = Box<FnMut(OpaqueIpcMessage) + Send>;
-
