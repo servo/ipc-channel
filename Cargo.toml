@@ -19,7 +19,7 @@ lazy_static = "1"
 libc = "0.2.12"
 rand = "0.4"
 serde = { version="1.0", features=["rc"] }
-uuid = {version = "0.6", features = ["v4"]}
+uuid = {version = "0.7", features = ["v4"]}
 fnv = "1.0.3"
 tempfile = "3"
 
