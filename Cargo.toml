@@ -8,7 +8,7 @@ repository = "https://github.com/servo/ipc-channel"
 
 [features]
 force-inprocess = []
-memfd = ["sc"]
+memfd = []
 unstable = []
 async = ["futures"]
 
@@ -23,10 +23,14 @@ uuid = {version = "0.7", features = ["v4"]}
 fnv = "1.0.3"
 tempfile = "3"
 
+[target.'cfg(all(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"), feature = "memfd"))'.dependencies]
+shmemfdrs = { version = "0.1.1", features = ["memfd"] }
+[target.'cfg(all(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"), not(feature = "memfd")))'.dependencies]
+shmemfdrs = { version = "0.1.1", features = [] }
+
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
 mio = "0.6.11"
 
-sc = { version = "0.2.2", optional = true }
 futures = { version = "0.1", optional = true }
 
 [dev-dependencies]

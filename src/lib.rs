@@ -28,10 +28,10 @@ extern crate mio;
                                                 target_os = "openbsd",
                                                 target_os = "freebsd")))]
 extern crate fnv;
-#[cfg(all(feature = "memfd", not(feature = "force-inprocess"),
-          target_os="linux"))]
-#[macro_use]
-extern crate sc;
+#[cfg(any(target_os = "linux",
+          target_os = "openbsd",
+          target_os = "freebsd"))]
+extern crate shmemfdrs;
 
 #[cfg(feature = "async")]
 extern crate futures;
