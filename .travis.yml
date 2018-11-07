@@ -20,9 +20,6 @@ matrix:
     - os: linux
       env: FEATURES="unstable memfd"
 
-notifications:
-  webhooks: http://build.servo.org:54856/travis
-
 script:
   - cargo build --features "$FEATURES"
   - cargo test --features "$FEATURES"
