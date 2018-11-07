@@ -166,7 +166,7 @@ fn router_simple() {
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
     ROUTER.add_route(rx.to_opaque(), Box::new(move |person| {
-        callback_fired_sender.send(person.to().unwrap())
+        callback_fired_sender.send(person.to().unwrap()).unwrap();
     }));
     let received_person = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_person, person);
@@ -226,7 +226,7 @@ fn router_drops_callbacks_on_sender_shutdown() {
 
     impl Drop for Dropper {
         fn drop(&mut self) {
-            self.sender.send(42)
+            self.sender.send(42).unwrap();
         }
     }
 
@@ -238,7 +238,7 @@ fn router_drops_callbacks_on_sender_shutdown() {
 
     ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
     drop(tx0);
-    assert_eq!(drop_rx.recv(), Some(42));
+    assert_eq!(drop_rx.recv(), Ok(42));
 }
 
 #[test]
@@ -249,7 +249,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
 
     impl Drop for Dropper {
         fn drop(&mut self) {
-            self.sender.send(42)
+            self.sender.send(42).unwrap()
         }
     }
 
@@ -263,7 +263,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
     drop(txs);
     drop(tx0);
-    assert_eq!(drop_rx.recv(), Some(42));
+    assert_eq!(drop_rx.recv(), Ok(42));
 }
 
 #[test]
@@ -279,7 +279,7 @@ fn router_big_data() {
     let (callback_fired_sender, callback_fired_receiver) =
         crossbeam_channel::unbounded::<Vec<Person>>();
     ROUTER.add_route(rx.to_opaque(), Box::new(move |people| {
-        callback_fired_sender.send(people.to().unwrap())
+        callback_fired_sender.send(people.to().unwrap()).unwrap()
     }));
     let received_people = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_people, people);
