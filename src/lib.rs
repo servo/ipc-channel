@@ -10,7 +10,6 @@
 #![cfg_attr(all(feature = "unstable", test), feature(specialization))]
 
 extern crate bincode;
-#[macro_use]
 extern crate crossbeam_channel;
 #[macro_use]
 extern crate lazy_static;

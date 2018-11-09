@@ -39,7 +39,7 @@ impl RouterProxy {
 
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
-        comm.msg_sender.send(RouterMsg::AddRoute(receiver, callback));
+        comm.msg_sender.send(RouterMsg::AddRoute(receiver, callback)).unwrap();
         comm.wakeup_sender.send(()).unwrap();
     }
 
