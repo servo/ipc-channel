@@ -41,6 +41,36 @@ thread_local! {
         RefCell::new(Vec::new())
 }
 
+/// Create a connected [IpcSender] and [IpcReceiver] that
+/// transfer messages of a given type privided by type `T`
+/// or inferred by the types of messages sent by the sender.
+///
+/// Messages sent by the sender will be available to the
+/// receiver even if the sender or receiver has been moved
+/// to a different process. In addition, receivers and senders
+/// may be sent over an existing channel.
+///
+/// # Examples
+///
+/// ```
+/// # use ipc_channel::ipc;
+///
+/// let payload = "Hello, World!".to_owned();
+///
+/// // Create a channel
+/// let (tx, rx) = ipc::channel().unwrap();
+///
+/// // Send data
+/// tx.send(payload).unwrap();
+///
+/// // Receive the data
+/// let response = rx.recv().unwrap();
+///
+/// assert_eq!(response, "Hello, World!".to_owned());
+/// ```
+///
+/// [IpcSender]: struct.IpcSender.html
+/// [IpcReceiver]: struct.IpcReceiver.html
 pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
     let (os_sender, os_receiver) = try!(platform::channel());
@@ -55,6 +85,34 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
     Ok((ipc_sender, ipc_receiver))
 }
 
+/// Create a connected [IpcBytesSender] and [IpcBytesReceiver].
+///
+/// Note: The [IpcBytesSender] transfers messages of the type `[u8]`
+/// and the [IpcBytesReceiver] receives a `Vec<u8>`. This sender/receiver
+/// type does not serialize/deserialize messages through `serde`, making
+/// it more efficient where applicable.
+///
+/// # Examples
+///
+/// ```
+/// # use ipc_channel::ipc;
+///
+/// let payload = b"'Tis but a scratch!!";
+///
+/// // Create a channel
+/// let (tx, rx) = ipc::bytes_channel().unwrap();
+///
+/// // Send data
+/// tx.send(payload).unwrap();
+///
+/// // Receive the data
+/// let response = rx.recv().unwrap();
+///
+/// assert_eq!(response, payload);
+/// ```
+///
+/// [IpcBytesReceiver]: struct.IpcBytesReceiver.html
+/// [IpcBytesSender]: struct.IpcBytesSender.html
 pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
     let (os_sender, os_receiver) = try!(platform::channel());
     let ipc_bytes_receiver = IpcBytesReceiver {
@@ -66,6 +124,73 @@ pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
     Ok((ipc_bytes_sender, ipc_bytes_receiver))
 }
 
+/// Receiving end of a channel using serialized messages.
+///
+/// # Examples
+///
+/// ## Blocking IO
+///
+/// ```
+/// # use ipc_channel::ipc;
+/// #
+/// # let (tx, rx) = ipc::channel().unwrap();
+/// #
+/// # let q = "Answer to the ultimate question of life, the universe, and everything";
+/// #
+/// # tx.send(q.to_owned()).unwrap();
+/// let response = rx.recv().unwrap();
+/// println!("Received data...");
+/// # assert_eq!(response, q);
+/// ```
+///
+/// ## Non-blocking IO
+///
+/// ```
+/// # use ipc_channel::ipc;
+/// #
+/// # let (tx, rx) = ipc::channel().unwrap();
+/// #
+/// # let answer = "42";
+/// #
+/// # tx.send(answer.to_owned()).unwrap();
+/// loop {
+///     match rx.try_recv() {
+///         Ok(res) => {
+///             // Do something interesting wth your result
+///             println!("Received data...");
+///             break;
+///         },
+///         Err(_) => {
+///             // Do something else useful while we wait
+///             println!("Still waiting...");
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Embedding Receivers
+///
+/// ```
+/// # use ipc_channel::ipc;
+/// #
+/// let (tx, rx) = ipc::channel().unwrap();
+/// let (embedded_tx, embedded_rx) = ipc::channel().unwrap();
+/// # let data = [0x45, 0x6d, 0x62, 0x65, 0x64, 0x64, 0x65, 0x64, 0x00];
+/// // Send the IpcReceiver
+/// tx.send(embedded_rx).unwrap();
+/// # embedded_tx.send(data.to_owned()).unwrap();
+/// // Receive the sent IpcReceiver
+/// let received_rx = rx.recv().unwrap();
+/// // Receive any data sent to the received IpcReceiver
+/// let rx_data = received_rx.recv().unwrap();
+/// # assert_eq!(rx_data, data);
+/// ```
+///
+/// # Implementation details
+///
+/// Each [IpcReceiver] is backed by the OS specific implementations of `OsIpcReceiver`.
+///
+/// [IpcReceiver]: struct.IpcReceiver.html
 #[derive(Debug)]
 pub struct IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     os_receiver: OsIpcReceiver,
@@ -73,17 +198,22 @@ pub struct IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
 }
 
 impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
+    /// Blocking receive.
     pub fn recv(&self) -> Result<T, bincode::Error> {
         let (data, os_ipc_channels, os_ipc_shared_memory_regions) = try!(self.os_receiver.recv());
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
+    /// Non-blocking receive
     pub fn try_recv(&self) -> Result<T, bincode::Error> {
         let (data, os_ipc_channels, os_ipc_shared_memory_regions) =
             try!(self.os_receiver.try_recv());
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
+    /// Erase the type of the channel.
+    ///
+    /// Useful for adding routes to a `RouterProxy`.
     pub fn to_opaque(self) -> OpaqueIpcReceiver {
         OpaqueIpcReceiver {
             os_receiver: self.os_receiver,
@@ -142,6 +272,26 @@ impl<T> Serialize for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serial
     }
 }
 
+/// Sending end of a channel using serialized messages.
+///
+///
+/// ## Embedding Senders
+///
+/// ```
+/// # use ipc_channel::ipc;
+/// #
+/// # let (tx, rx) = ipc::channel().unwrap();
+/// # let (embedded_tx, embedded_rx) = ipc::channel().unwrap();
+/// # let data = [0x45, 0x6d, 0x62, 0x65, 0x64, 0x64, 0x65, 0x64, 0x00];
+/// // Send the IpcSender
+/// tx.send(embedded_tx).unwrap();
+/// // Receive the sent IpcSender
+/// let received_tx = rx.recv().unwrap();
+/// // Send data from the received IpcSender
+/// received_tx.send(data.clone()).unwrap();
+/// # let rx_data = embedded_rx.recv().unwrap();
+/// # assert_eq!(rx_data, data);
+/// ```
 #[derive(Debug)]
 pub struct IpcSender<T> where T: Serialize {
     os_sender: OsIpcSender,
@@ -158,6 +308,10 @@ impl<T> Clone for IpcSender<T> where T: Serialize {
 }
 
 impl<T> IpcSender<T> where T: Serialize {
+    /// Create an [IpcSender] connected to a previously defined [IpcOneShotServer].
+    ///
+    /// [IpcSender]: struct.IpcSender.html
+    /// [IpcOneShotServer]: struct.IpcOneShotServer.html
     pub fn connect(name: String) -> Result<IpcSender<T>,Error> {
         Ok(IpcSender {
             os_sender: try!(OsIpcSender::connect(name)),
@@ -165,6 +319,7 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
+    /// Send data accross the channel to the receiver.
     pub fn send(&self, data: T) -> Result<(), bincode::Error> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
@@ -214,26 +369,76 @@ impl<T> Serialize for IpcSender<T> where T: Serialize {
     }
 }
 
+/// Collection of [IpcReceiver]s moved into the set; thus creating a common
+/// (and exclusive) endpoint for receiving messages on any of the added
+/// channels.
+///
+/// # Examples
+///
+/// ```
+/// # use ipc_channel::ipc::{self, IpcReceiverSet, IpcSelectionResult};
+/// let data = vec![0x52, 0x75, 0x73, 0x74, 0x00];
+/// let (tx, rx) = ipc::channel().unwrap();
+/// let mut rx_set = IpcReceiverSet::new().unwrap();
+///
+/// // Add the receiver to the receiver set and send the data
+/// // from the sender
+/// let rx_id = rx_set.add(rx).unwrap();
+/// tx.send(data.clone()).unwrap();
+///
+/// // Poll the receiver set for any readable events
+/// for event in rx_set.select().unwrap() {
+///     match event {
+///         IpcSelectionResult::MessageReceived(id, message) => {
+///             let rx_data: Vec<u8> = message.to().unwrap();
+///             assert_eq!(id, rx_id);
+///             assert_eq!(data, rx_data);
+///             println!("Received: {:?} from {}...", data, id);
+///         },
+///         IpcSelectionResult::ChannelClosed(id) => {
+///             assert_eq!(id, rx_id);
+///             println!("No more data from {}...", id);
+///         }
+///     }
+/// }
+/// ```
+/// [IpcReceiver]: struct.IpcReceiver.html
 pub struct IpcReceiverSet {
     os_receiver_set: OsIpcReceiverSet,
 }
 
 impl IpcReceiverSet {
+    /// Create a new empty [IpcReceiverSet].
+    ///
+    /// Receivers may then be added to the set with the [add]
+    /// method.
+    ///
+    /// [add]: #method.add
+    /// [IpcReceiverSet]: struct.IpcReceiverSet.html
     pub fn new() -> Result<IpcReceiverSet,Error> {
         Ok(IpcReceiverSet {
             os_receiver_set: try!(OsIpcReceiverSet::new()),
         })
     }
 
+    /// Add and consume the [IpcReceiver] to the set of receivers to be polled.
+    /// [IpcReceiver]: struct.IpcReceiver.html
     pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<u64,Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
+    /// Add an [OpaqueIpcReceiver] to the set of receivers to be polled.
+    /// [OpaqueIpcReceiver]: struct.OpaqueIpcReceiver.html
     pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<u64,Error> {
         Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
     }
 
+    /// Wait for IPC messages received on any of the receivers in the set. The
+    /// method will return multiple events. An event may be either a message
+    /// received or a channel closed event.
+    ///
+    /// [IpcReceiver]: struct.IpcReceiver.html
     pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,Error> {
         let results = try!(self.os_receiver_set.select());
         Ok(results.into_iter().map(|result| {
@@ -260,6 +465,19 @@ impl IpcReceiverSet {
     }
 }
 
+/// Shared memory descriptor that will be made accessible to the receiver
+/// of an IPC message that contains the discriptor.
+///
+/// # Examples
+/// ```
+/// # use ipc_channel::ipc::{self, IpcSharedMemory};
+/// # let (tx, rx) = ipc::channel().unwrap();
+/// # let data = [0x76, 0x69, 0x6d, 0x00];
+/// let shmem = IpcSharedMemory::from_bytes(&data);
+/// tx.send(shmem.clone()).unwrap();
+/// # let rx_shmem = rx.recv().unwrap();
+/// # assert_eq!(shmem, rx_shmem);
+/// ```
 #[derive(Clone, Debug, PartialEq)]
 pub struct IpcSharedMemory {
     os_shared_memory: OsIpcSharedMemory,
@@ -307,12 +525,15 @@ impl Serialize for IpcSharedMemory {
 }
 
 impl IpcSharedMemory {
+    /// Create shared memory initialized with the bytes provided.
     pub fn from_bytes(bytes: &[u8]) -> IpcSharedMemory {
         IpcSharedMemory {
             os_shared_memory: OsIpcSharedMemory::from_bytes(bytes),
         }
     }
 
+    /// Create a chunk of shared memory that is filled with the byte
+    /// provided.
     pub fn from_byte(byte: u8, length: usize) -> IpcSharedMemory {
         IpcSharedMemory {
             os_shared_memory: OsIpcSharedMemory::from_byte(byte, length),
@@ -320,12 +541,32 @@ impl IpcSharedMemory {
     }
 }
 
+/// Result for readable events returned from [IpcReceiverSet::select].
+///
+/// [IpcReceiverSet::select]: struct.IpcReceiverSet.html#method.select
 pub enum IpcSelectionResult {
+    /// A message received from the [IpcReceiver] in the [opaque] form,
+    /// identified by the `u64` value.
+    ///
+    /// [IpcReceiver]: struct.IpcReceiver.html
+    /// [opaque]: struct.OpaqueIpcMessage.html
     MessageReceived(u64, OpaqueIpcMessage),
+    /// The channel has been closed for the [IpcReceiver] identified by the `u64` value.
+    /// [IpcReceiver]: struct.IpcReceiver.html
     ChannelClosed(u64),
 }
 
 impl IpcSelectionResult {
+    /// Helper method to move the value out of the [IpcSelectionResult] if it
+    /// is [MessageReceived].
+    ///
+    /// # Panics
+    ///
+    /// If the result is [ChannelClosed] this call will panic.
+    ///
+    /// [IpcSelectionResult]: enum.IpcSelectionResult.html
+    /// [MessageReceived]: enum.IpcSelectionResult.html#variant.MessageReceived
+    /// [ChannelClosed]: enum.IpcSelectionResult.html#variant.ChannelClosed
     pub fn unwrap(self) -> (u64, OpaqueIpcMessage) {
         match self {
             IpcSelectionResult::MessageReceived(id, message) => (id, message),
@@ -336,6 +577,12 @@ impl IpcSelectionResult {
     }
 }
 
+/// Structure used to represent a raw message from an [IpcSender].
+///
+/// Use the [to] method to deserialize the raw result into the requested type.
+///
+/// [IpcSender]: struct.IpcSender.html
+/// [to]: #method.to
 pub struct OpaqueIpcMessage {
     data: Vec<u8>,
     os_ipc_channels: Vec<OsOpaqueIpcChannel>,
@@ -367,6 +614,7 @@ impl OpaqueIpcMessage {
         }
     }
 
+    /// Deserialize the raw data in the contained message into the inferred type.
     pub fn to<T>(mut self) -> Result<T, bincode::Error> where T: for<'de> Deserialize<'de> + Serialize {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
@@ -422,6 +670,39 @@ pub struct OpaqueIpcReceiver {
     os_receiver: OsIpcReceiver,
 }
 
+/// A server associated with a given name.
+///
+/// # Examples
+///
+/// ## Basic Usage
+///
+/// ```
+/// use ipc_channel::ipc::{self, IpcOneShotServer, IpcSender, IpcReceiver};
+///
+/// let (server, server_name) = IpcOneShotServer::new().unwrap();
+/// let tx: IpcSender<Vec<u8>> = IpcSender::connect(server_name).unwrap();
+///
+/// tx.send(vec![0x10, 0x11, 0x12, 0x13]).unwrap();
+/// let (_, data): (_, Vec<u8>) = server.accept().unwrap();
+/// assert_eq!(data, vec![0x10, 0x11, 0x12, 0x13]);
+/// ```
+///
+/// ## Sending a [IpcSender]
+/// ```
+/// use ipc_channel::ipc::{self, IpcOneShotServer, IpcSender, IpcReceiver};
+/// let (server, name) = IpcOneShotServer::new().unwrap();
+///
+/// let (tx1, rx1): (IpcSender<Vec<u8>>, IpcReceiver<Vec<u8>>) = ipc::channel().unwrap();
+/// let tx0 = IpcSender::connect(name).unwrap();
+/// tx0.send(tx1).unwrap();
+///
+/// let (_, tx1): (_, IpcSender<Vec<u8>>) = server.accept().unwrap();
+/// tx1.send(vec![0x48, 0x65, 0x6b, 0x6b, 0x6f, 0x00]).unwrap();
+///
+/// let data = rx1.recv().unwrap();
+/// assert_eq!(data, vec![0x48, 0x65, 0x6b, 0x6b, 0x6f, 0x00]);
+/// ```
+/// [IpcSender]: struct.IpcSender.html
 pub struct IpcOneShotServer<T> {
     os_server: OsIpcOneShotServer,
     phantom: PhantomData<T>,
@@ -454,6 +735,7 @@ impl<T> IpcOneShotServer<T> where T: for<'de> Deserialize<'de> + Serialize {
     }
 }
 
+/// Receiving end of a channel that does not used serialized messages.
 #[derive(Debug)]
 pub struct IpcBytesReceiver {
     os_receiver: OsIpcReceiver,
@@ -498,6 +780,7 @@ impl Serialize for IpcBytesReceiver {
     }
 }
 
+/// Sending end of a channel that does not used serialized messages.
 #[derive(Debug)]
 pub struct IpcBytesSender {
     os_sender: OsIpcSender,
