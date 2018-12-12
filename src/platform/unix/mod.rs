@@ -25,6 +25,7 @@ use std::mem;
 use std::ops::{Deref, RangeFrom};
 use std::ptr;
 use std::slice;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::time::UNIX_EPOCH;
@@ -108,6 +109,12 @@ impl Drop for OsIpcReceiver {
     }
 }
 
+impl AsRawFd for OsIpcReceiver {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd.get()
+    }
+}
+
 impl OsIpcReceiver {
     fn from_fd(fd: c_int) -> OsIpcReceiver {
         OsIpcReceiver {
@@ -156,6 +163,12 @@ pub struct OsIpcSender {
     // (Rather, senders should just be cloned, as they are shared internally anyway --
     // another layer of sharing only adds unnecessary overhead...)
     nosync_marker: PhantomData<Cell<()>>,
+}
+
+impl AsRawFd for OsIpcSender {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd.0
+    }
 }
 
 impl OsIpcSender {

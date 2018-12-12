@@ -437,3 +437,22 @@ fn transfer_closed_sender() {
     assert!(main_tx.send(transfer_tx).is_ok());
     let _transferred_tx = main_rx.recv().unwrap();
 }
+
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+#[test]
+fn test_as_raw_fd() {
+    use std::os::unix::io::AsRawFd;
+    let (tx, rx) = ipc::bytes_channel().unwrap();
+    let rx_fd = rx.as_raw_fd();
+    unsafe {
+        let flag = libc::fcntl(rx_fd, libc::F_GETFL);
+        assert!(flag & libc::O_RDWR != 0);
+    }
+    let tx_fd = tx.as_raw_fd();
+    unsafe {
+        let flag = libc::fcntl(tx_fd, libc::F_GETFL);
+        assert!(flag & libc::O_RDWR != 0);
+    }
+}

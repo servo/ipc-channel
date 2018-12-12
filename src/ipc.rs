@@ -19,6 +19,10 @@ use std::io::Error;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+use std::os::unix::io::{AsRawFd, RawFd};
 
 #[cfg(feature = "async")]
 use futures::{Async, Poll, Stream};
@@ -221,6 +225,15 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     }
 }
 
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+impl<T> AsRawFd for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
+    fn as_raw_fd(&self) -> RawFd {
+        self.os_receiver.as_raw_fd()
+    }
+}
+
 #[cfg(feature = "async")]
 impl<T> Stream for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     type Item = T;
@@ -304,6 +317,15 @@ impl<T> Clone for IpcSender<T> where T: Serialize {
             os_sender: self.os_sender.clone(),
             phantom: PhantomData,
         }
+    }
+}
+
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+impl<T> AsRawFd for IpcSender<T> where T: Serialize {
+    fn as_raw_fd(&self) -> RawFd {
+        self.os_sender.as_raw_fd()
     }
 }
 
@@ -751,6 +773,15 @@ impl IpcBytesReceiver {
     }
 }
 
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+impl AsRawFd for IpcBytesReceiver {
+    fn as_raw_fd(&self) -> RawFd {
+        self.os_receiver.as_raw_fd()
+    }
+}
+
 impl<'de> Deserialize<'de> for IpcBytesReceiver {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
         let index: usize = try!(Deserialize::deserialize(deserializer));
@@ -791,6 +822,15 @@ impl Clone for IpcBytesSender {
         IpcBytesSender {
             os_sender: self.os_sender.clone(),
         }
+    }
+}
+
+#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
+                                                target_os = "openbsd",
+                                                target_os = "freebsd")))]
+impl AsRawFd for IpcBytesSender {
+    fn as_raw_fd(&self) -> RawFd {
+        self.os_sender.as_raw_fd()
     }
 }
 
