@@ -42,14 +42,14 @@ const SCM_RIGHTS: c_int = 0x01;
 // Empirically, we have to deduct 32 bytes from that.
 const RESERVED_SIZE: usize = 32;
 
-#[cfg(target_os = "linux")]
+#[cfg(target_env = "gnu")]
 type IovLen = usize;
-#[cfg(target_os = "linux")]
+#[cfg(target_env = "gnu")]
 type MsgControlLen = size_t;
 
-#[cfg(any(target_os = "openbsd", target_os = "freebsd"))]
+#[cfg(not(target_env = "gnu"))]
 type IovLen = i32;
-#[cfg(any(target_os = "openbsd", target_os = "freebsd"))]
+#[cfg(not(target_env = "gnu"))]
 type MsgControlLen = socklen_t;
 
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
@@ -271,16 +271,7 @@ impl OsIpcSender {
                     },
                 ];
 
-                let msghdr = msghdr {
-                    msg_name: ptr::null_mut(),
-                    msg_namelen: 0,
-                    msg_iov: iovec.as_mut_ptr(),
-                    msg_iovlen: iovec.len() as IovLen,
-                    msg_control: cmsg_buffer as *mut c_void,
-                    msg_controllen: cmsg_space as MsgControlLen,
-                    msg_flags: 0,
-                };
-
+                let msghdr = new_msghdr(&mut iovec, cmsg_buffer, cmsg_space as MsgControlLen);
                 let result = sendmsg(sender_fd, &msghdr, 0);
                 libc::free(cmsg_buffer as *mut c_void);
                 result
@@ -953,6 +944,19 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     Ok((main_data_buffer, channels, shared_memory_regions))
 }
 
+// https://github.com/servo/ipc-channel/issues/192
+fn new_msghdr(iovec: &mut [iovec], cmsg_buffer: *mut cmsghdr, cmsg_space: MsgControlLen) -> msghdr {
+    let mut msghdr: msghdr = unsafe { mem::zeroed() };
+    msghdr.msg_name = ptr::null_mut();
+    msghdr.msg_namelen = 0;
+    msghdr.msg_iov = iovec.as_mut_ptr();
+    msghdr.msg_iovlen = iovec.len() as IovLen;
+    msghdr.msg_control = cmsg_buffer as *mut c_void;
+    msghdr.msg_controllen = cmsg_space;
+    msghdr.msg_flags = 0;
+    msghdr
+}
+
 #[cfg(not(all(target_os="linux", feature="memfd")))]
 fn create_shmem(name: CString, length: usize) -> c_int {
     unsafe {
@@ -999,15 +1003,7 @@ impl UnixCmsg {
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
         UnixCmsg {
             cmsg_buffer: cmsg_buffer,
-            msghdr: msghdr {
-                msg_name: ptr::null_mut(),
-                msg_namelen: 0,
-                msg_iov: iovec.as_mut_ptr(),
-                msg_iovlen: iovec.len() as IovLen,
-                msg_control: cmsg_buffer as *mut c_void,
-                msg_controllen: cmsg_length as MsgControlLen,
-                msg_flags: 0,
-            },
+            msghdr: new_msghdr(iovec, cmsg_buffer, cmsg_length as MsgControlLen)
         }
     }
 
