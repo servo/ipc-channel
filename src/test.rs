@@ -22,6 +22,9 @@ use std::ptr;
 use std::sync::Arc;
 use std::thread;
 
+#[cfg(feature = "async")]
+use futures::{Async, Stream};
+
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use ipc::IpcOneShotServer;
 
@@ -436,4 +439,14 @@ fn transfer_closed_sender() {
     let (transfer_tx, _) = ipc::channel::<()>().unwrap();
     assert!(main_tx.send(transfer_tx).is_ok());
     let _transferred_tx = main_rx.recv().unwrap();
+}
+
+#[cfg(feature = "async")]
+#[test]
+fn test_bytes_receiver_stream() {
+    let payload = b"'Tis but a scratch!!";
+    let (tx, mut rx) = ipc::bytes_channel().unwrap();
+    assert_eq!(rx.poll().unwrap(), Async::NotReady);
+    tx.send(payload).unwrap();
+    assert_eq!(rx.poll().unwrap(), Async::Ready(Some(payload.to_vec())));
 }

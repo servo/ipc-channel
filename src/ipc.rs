@@ -230,12 +230,29 @@ impl<T> Stream for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize
         match self.try_recv() {
             Ok(msg) => Ok(Some(msg).into()),
             Err(err) => match *err {
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset => {
-                    Ok(Async::Ready(None))
-                }
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    Ok(Async::NotReady)
-                }
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset =>
+                    Ok(Async::Ready(None)),
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock =>
+                    Ok(Async::NotReady),
+                _ => Err(err),
+            },
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl Stream for IpcBytesReceiver {
+    type Item = Vec<u8>;
+    type Error = bincode::Error;
+
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+        match self.try_recv() {
+            Ok(msg) => Ok(Some(msg).into()),
+            Err(err) => match *err {
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset =>
+                    Ok(Async::Ready(None)),
+                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock =>
+                    Ok(Async::NotReady),
                 _ => Err(err),
             },
         }
@@ -742,9 +759,18 @@ pub struct IpcBytesReceiver {
 }
 
 impl IpcBytesReceiver {
+    /// Blocking receive.
     #[inline]
     pub fn recv(&self) -> Result<Vec<u8>, bincode::Error> {
         match self.os_receiver.recv() {
+            Ok((data, _, _)) => Ok(data),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Non-blocking receive
+    pub fn try_recv(&self) -> Result<Vec<u8>, bincode::Error> {
+        match self.os_receiver.try_recv() {
             Ok((data, _, _)) => Ok(data),
             Err(err) => Err(err.into()),
         }
