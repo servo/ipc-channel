@@ -413,7 +413,7 @@ impl<'de> Deserialize<'de> for HasWeirdSerializer {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where D: Deserializer<'de>
     {
-        Ok(HasWeirdSerializer(try!(Deserialize::deserialize(deserializer))))
+        Ok(HasWeirdSerializer(Deserialize::deserialize(deserializer)?))
     }
 }
 

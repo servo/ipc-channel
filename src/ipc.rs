@@ -73,7 +73,7 @@ thread_local! {
 /// [IpcReceiver]: struct.IpcReceiver.html
 pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
-    let (os_sender, os_receiver) = try!(platform::channel());
+    let (os_sender, os_receiver) = platform::channel()?;
     let ipc_receiver = IpcReceiver {
         os_receiver: os_receiver,
         phantom: PhantomData,
@@ -114,7 +114,7 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
 /// [IpcBytesReceiver]: struct.IpcBytesReceiver.html
 /// [IpcBytesSender]: struct.IpcBytesSender.html
 pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
-    let (os_sender, os_receiver) = try!(platform::channel());
+    let (os_sender, os_receiver) = platform::channel()?;
     let ipc_bytes_receiver = IpcBytesReceiver {
         os_receiver: os_receiver,
     };
@@ -200,14 +200,14 @@ pub struct IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
 impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     /// Blocking receive.
     pub fn recv(&self) -> Result<T, bincode::Error> {
-        let (data, os_ipc_channels, os_ipc_shared_memory_regions) = try!(self.os_receiver.recv());
+        let (data, os_ipc_channels, os_ipc_shared_memory_regions) = self.os_receiver.recv()?;
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
     /// Non-blocking receive
     pub fn try_recv(&self) -> Result<T, bincode::Error> {
         let (data, os_ipc_channels, os_ipc_shared_memory_regions) =
-            try!(self.os_receiver.try_recv());
+            self.os_receiver.try_recv()?;
         OpaqueIpcMessage::new(data, os_ipc_channels, os_ipc_shared_memory_regions).to()
     }
 
@@ -244,7 +244,7 @@ impl<T> Stream for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize
 
 impl<'de, T> Deserialize<'de> for IpcReceiver<T> where T: for<'dde> Deserialize<'dde> + Serialize {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let index: usize = try!(Deserialize::deserialize(deserializer));
+        let index: usize = Deserialize::deserialize(deserializer)?;
         let os_receiver =
             OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
                 // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
@@ -314,7 +314,7 @@ impl<T> IpcSender<T> where T: Serialize {
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
     pub fn connect(name: String) -> Result<IpcSender<T>,Error> {
         Ok(IpcSender {
-            os_sender: try!(OsIpcSender::connect(name)),
+            os_sender: OsIpcSender::connect(name)?,
             phantom: PhantomData,
         })
     }
@@ -355,7 +355,7 @@ impl<T> IpcSender<T> where T: Serialize {
 
 impl<'de, T> Deserialize<'de> for IpcSender<T> where T: Serialize {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
+        let os_sender = deserialize_os_ipc_sender(deserializer)?;
         Ok(IpcSender {
             os_sender: os_sender,
             phantom: PhantomData,
@@ -417,7 +417,7 @@ impl IpcReceiverSet {
     /// [IpcReceiverSet]: struct.IpcReceiverSet.html
     pub fn new() -> Result<IpcReceiverSet,Error> {
         Ok(IpcReceiverSet {
-            os_receiver_set: try!(OsIpcReceiverSet::new()),
+            os_receiver_set: OsIpcReceiverSet::new()?,
         })
     }
 
@@ -425,13 +425,13 @@ impl IpcReceiverSet {
     /// [IpcReceiver]: struct.IpcReceiver.html
     pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<u64,Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
-        Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
+        Ok(self.os_receiver_set.add(receiver.os_receiver)?)
     }
 
     /// Add an [OpaqueIpcReceiver] to the set of receivers to be polled.
     /// [OpaqueIpcReceiver]: struct.OpaqueIpcReceiver.html
     pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<u64,Error> {
-        Ok(try!(self.os_receiver_set.add(receiver.os_receiver)))
+        Ok(self.os_receiver_set.add(receiver.os_receiver)?)
     }
 
     /// Wait for IPC messages received on any of the receivers in the set. The
@@ -440,7 +440,7 @@ impl IpcReceiverSet {
     ///
     /// [IpcReceiver]: struct.IpcReceiver.html
     pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,Error> {
-        let results = try!(self.os_receiver_set.select());
+        let results = self.os_receiver_set.select()?;
         Ok(results.into_iter().map(|result| {
             match result {
                 OsIpcSelectionResult::DataReceived(os_receiver_id,
@@ -494,7 +494,7 @@ impl Deref for IpcSharedMemory {
 
 impl<'de> Deserialize<'de> for IpcSharedMemory {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let index: usize = try!(Deserialize::deserialize(deserializer));
+        let index: usize = Deserialize::deserialize(deserializer)?;
         let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
             |os_ipc_shared_memory_regions_for_deserialization| {
                 // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
@@ -652,7 +652,7 @@ impl OpaqueIpcSender {
 
 impl<'de> Deserialize<'de> for OpaqueIpcSender {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
+        let os_sender = deserialize_os_ipc_sender(deserializer)?;
         Ok(OpaqueIpcSender {
             os_sender: os_sender,
         })
@@ -710,7 +710,7 @@ pub struct IpcOneShotServer<T> {
 
 impl<T> IpcOneShotServer<T> where T: for<'de> Deserialize<'de> + Serialize {
     pub fn new() -> Result<(IpcOneShotServer<T>, String),Error> {
-        let (os_server, name) = try!(OsIpcOneShotServer::new());
+        let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((IpcOneShotServer {
             os_server: os_server,
             phantom: PhantomData,
@@ -719,15 +719,15 @@ impl<T> IpcOneShotServer<T> where T: for<'de> Deserialize<'de> + Serialize {
 
     pub fn accept(self) -> Result<(IpcReceiver<T>,T), bincode::Error> {
         let (os_receiver, data, os_channels, os_shared_memory_regions) =
-            try!(self.os_server.accept());
-        let value = try!(OpaqueIpcMessage {
+            self.os_server.accept()?;
+        let value = OpaqueIpcMessage {
             data: data,
             os_ipc_channels: os_channels,
             os_ipc_shared_memory_regions: os_shared_memory_regions.into_iter()
                                                                   .map(|os_shared_memory_region| {
                 Some(os_shared_memory_region)
             }).collect(),
-        }.to());
+        }.to()?;
         Ok((IpcReceiver {
             os_receiver: os_receiver,
             phantom: PhantomData,
@@ -753,7 +753,7 @@ impl IpcBytesReceiver {
 
 impl<'de> Deserialize<'de> for IpcBytesReceiver {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let index: usize = try!(Deserialize::deserialize(deserializer));
+        let index: usize = Deserialize::deserialize(deserializer)?;
         let os_receiver =
             OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
                 // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
@@ -796,7 +796,7 @@ impl Clone for IpcBytesSender {
 
 impl<'de> Deserialize<'de> for IpcBytesSender {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let os_sender = try!(deserialize_os_ipc_sender(deserializer));
+        let os_sender = deserialize_os_ipc_sender(deserializer)?;
         Ok(IpcBytesSender {
             os_sender: os_sender,
         })
@@ -830,7 +830,7 @@ fn serialize_os_ipc_sender<S>(os_ipc_sender: &OsIpcSender, serializer: S)
 
 fn deserialize_os_ipc_sender<'de, D>(deserializer: D)
                                 -> Result<OsIpcSender, D::Error> where D: Deserializer<'de> {
-    let index: usize = try!(Deserialize::deserialize(deserializer));
+    let index: usize = Deserialize::deserialize(deserializer)?;
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
         // FIXME(pcwalton): This could panic if the data was corrupt and the index was out of
         // bounds. We should return an `Err` result instead.

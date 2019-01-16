@@ -349,7 +349,7 @@ impl OsIpcSender {
         //
         // The receiver end of the channel is sent with the first fragment
         // along any other file descriptors that are to be transferred in the message.
-        let (dedicated_tx, dedicated_rx) = try!(channel());
+        let (dedicated_tx, dedicated_rx) = channel()?;
         // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
         fds.push(dedicated_rx.fd.get());
 
@@ -441,7 +441,7 @@ impl OsIpcReceiverSet {
         let fnv = BuildHasherDefault::<FnvHasher>::default();
         Ok(OsIpcReceiverSet {
             incrementor: 0..,
-            poll: try!(Poll::new()),
+            poll: Poll::new()?,
             pollfds: HashMap::with_hasher(fnv),
             events: Events::with_capacity(10)
         })
@@ -456,10 +456,10 @@ impl OsIpcReceiverSet {
             id: last_index,
             fd: fd
         };
-        try!(self.poll.register(&io,
-                                fd_token,
-                                Ready::readable(),
-                                PollOpt::level()));
+        self.poll.register(&io,
+                           fd_token,
+                           Ready::readable(),
+                           PollOpt::level())?;
         self.pollfds.insert(fd_token, poll_entry);
         Ok(last_index)
     }
@@ -620,10 +620,10 @@ impl OsIpcOneShotServer {
             if client_fd < 0 {
                 return Err(UnixError::last())
             }
-            try!(make_socket_lingering(client_fd));
+            make_socket_lingering(client_fd)?;
 
             let receiver = OsIpcReceiver::from_fd(client_fd);
-            let (data, channels, shared_memory_regions) = try!(receiver.recv());
+            let (data, channels, shared_memory_regions) = receiver.recv()?;
             Ok((receiver, data, channels, shared_memory_regions))
         }
     }
@@ -876,7 +876,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         ];
         let mut cmsg = UnixCmsg::new(&mut iovec);
 
-        let bytes_read = try!(cmsg.recv(fd, blocking_mode));
+        let bytes_read = cmsg.recv(fd, blocking_mode)?;
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
 
         let cmsg_fds = CMSG_DATA(cmsg.cmsg_buffer) as *const c_int;

@@ -115,9 +115,9 @@ const VM_INHERIT_SHARE: vm_inherit_t = 0;
 type name_t = *const c_char;
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),MachError> {
-    let receiver = try!(OsIpcReceiver::new());
-    let sender = try!(receiver.sender());
-    try!(receiver.request_no_senders_notification());
+    let receiver = OsIpcReceiver::new()?;
+    let sender = receiver.sender()?;
+    receiver.request_no_senders_notification()?;
     Ok((sender, receiver))
 }
 
@@ -196,7 +196,7 @@ fn mach_port_extract_right(
 
 impl OsIpcReceiver {
     fn new() -> Result<OsIpcReceiver,MachError> {
-        let port = try!(mach_port_allocate(MACH_PORT_RIGHT_RECEIVE));
+        let port = mach_port_allocate(MACH_PORT_RIGHT_RECEIVE)?;
         let limits = mach_port_limits_t {
             mpl_qlimit: MACH_PORT_QLIMIT_MAX,
         };
@@ -615,7 +615,7 @@ pub struct OsIpcReceiverSet {
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,MachError> {
-        let port = try!(mach_port_allocate(MACH_PORT_RIGHT_PORT_SET));
+        let port = mach_port_allocate(MACH_PORT_RIGHT_PORT_SET)?;
         Ok(OsIpcReceiverSet {
             port: port,
             ports: vec![],
@@ -786,8 +786,8 @@ impl Drop for OsIpcOneShotServer {
 
 impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String),MachError> {
-        let receiver = try!(OsIpcReceiver::new());
-        let name = try!(receiver.register_bootstrap_name());
+        let receiver = OsIpcReceiver::new()?;
+        let name = receiver.register_bootstrap_name()?;
         Ok((OsIpcOneShotServer {
             receiver: receiver,
             name: name.clone(),
@@ -798,7 +798,7 @@ impl OsIpcOneShotServer {
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>),MachError> {
-        let (bytes, channels, shared_memory_regions) = try!(self.receiver.recv());
+        let (bytes, channels, shared_memory_regions) = self.receiver.recv()?;
         Ok((self.receiver.consume(), bytes, channels, shared_memory_regions))
     }
 }
