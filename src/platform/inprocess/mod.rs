@@ -234,7 +234,7 @@ pub struct OsIpcOneShotServer {
 
 impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String), ChannelError> {
-        let (sender, receiver) = try!(channel());
+        let (sender, receiver) = channel()?;
 
         let name = Uuid::new_v4().to_string();
         let record = ServerRecord::new(sender);
@@ -264,7 +264,7 @@ impl OsIpcOneShotServer {
             .clone();
         record.accept();
         ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
-        let (data, channels, shmems) = try!(self.receiver.recv());
+        let (data, channels, shmems) = self.receiver.recv()?;
         Ok((self.receiver, data, channels, shmems))
     }
 }
