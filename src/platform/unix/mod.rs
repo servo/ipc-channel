@@ -26,7 +26,7 @@ use std::ops::{Deref, RangeFrom};
 use std::ptr;
 use std::slice;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
 use std::thread;
 use mio::unix::EventedFd;
@@ -73,7 +73,7 @@ lazy_static! {
 }
 
 // A global count used to create unique IDs
-static SHM_COUNT: AtomicUsize = ATOMIC_USIZE_INIT;
+static SHM_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),UnixError> {
     let mut results = [0, 0];
