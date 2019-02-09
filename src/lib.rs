@@ -41,28 +41,37 @@ extern crate crossbeam_channel;
 
 #[macro_use]
 extern crate lazy_static;
+#[cfg(all(
+    not(feature = "force-inprocess"),
+    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
+))]
+extern crate fnv;
 extern crate libc;
+#[cfg(all(
+    not(feature = "force-inprocess"),
+    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
+))]
+extern crate mio;
 extern crate rand;
 extern crate serde;
-#[cfg(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios"))]
-extern crate uuid;
 extern crate tempfile;
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "openbsd",
-                                                target_os = "freebsd")))]
-extern crate mio;
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "openbsd",
-                                                target_os = "freebsd")))]
-extern crate fnv;
-#[cfg(all(feature = "memfd", not(feature = "force-inprocess"),
-          target_os="linux"))]
+#[cfg(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+))]
+extern crate uuid;
+#[cfg(all(
+    feature = "memfd",
+    not(feature = "force-inprocess"),
+    target_os = "linux"
+))]
 #[macro_use]
 extern crate sc;
 
 #[cfg(feature = "async")]
 extern crate futures;
-
 
 pub mod ipc;
 pub mod platform;
