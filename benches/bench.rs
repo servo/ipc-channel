@@ -197,8 +197,10 @@ mod ipc {
 
     fn bench_transfer_senders(b: &mut test::Bencher, count: usize) {
         let (main_tx, main_rx) = ipc::channel().unwrap();
-        let transfer_txs: Vec<_> = (0..count).map(|_| ipc::channel::<()>().unwrap())
-                                             .map(|(tx, _)| tx).collect();
+        let transfer_txs: Vec<_> = (0..count)
+            .map(|_| ipc::channel::<()>().unwrap())
+            .map(|(tx, _)| tx)
+            .collect();
         let mut transfer_txs = Some(transfer_txs);
         b.iter(|| {
             for _ in 0..ITERATIONS {
@@ -230,8 +232,10 @@ mod ipc {
 
     fn bench_transfer_receivers(b: &mut test::Bencher, count: usize) {
         let (main_tx, main_rx) = ipc::channel().unwrap();
-        let transfer_rxs: Vec<_> = (0..count).map(|_| ipc::channel::<()>().unwrap())
-                                             .map(|(_, rx)| rx).collect();
+        let transfer_rxs: Vec<_> = (0..count)
+            .map(|_| ipc::channel::<()>().unwrap())
+            .map(|(_, rx)| rx)
+            .collect();
         let mut transfer_rxs = Some(transfer_rxs);
         b.iter(|| {
             for _ in 0..ITERATIONS {

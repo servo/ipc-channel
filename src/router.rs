@@ -12,8 +12,8 @@ use std::sync::Mutex;
 use std::thread;
 
 use crossbeam_channel::{self, Receiver, Sender};
+use ipc::OpaqueIpcReceiver;
 use ipc::{self, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcMessage};
-use ipc::{OpaqueIpcReceiver};
 use serde::{Deserialize, Serialize};
 
 lazy_static! {
@@ -39,7 +39,9 @@ impl RouterProxy {
 
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
-        comm.msg_sender.send(RouterMsg::AddRoute(receiver, callback)).unwrap();
+        comm.msg_sender
+            .send(RouterMsg::AddRoute(receiver, callback))
+            .unwrap();
         comm.wakeup_sender.send(()).unwrap();
     }
 
@@ -53,9 +55,7 @@ impl RouterProxy {
     {
         self.add_route(
             ipc_receiver.to_opaque(),
-            Box::new(move |message| {
-                drop(crossbeam_sender.send(message.to::<T>().unwrap()))
-            }),
+            Box::new(move |message| drop(crossbeam_sender.send(message.to::<T>().unwrap()))),
         )
     }
 
@@ -83,7 +83,7 @@ struct Router {
     msg_receiver: Receiver<RouterMsg>,
     msg_wakeup_id: u64,
     ipc_receiver_set: IpcReceiverSet,
-    handlers: HashMap<u64,RouterHandler>,
+    handlers: HashMap<u64, RouterHandler>,
 }
 
 impl Router {
@@ -106,22 +106,19 @@ impl Router {
             };
             for result in results.into_iter() {
                 match result {
-                    IpcSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {
+                    IpcSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id =>
                         match self.msg_receiver.recv().unwrap() {
                             RouterMsg::AddRoute(receiver, handler) => {
-                                let new_receiver_id = self.ipc_receiver_set
-                                                          .add_opaque(receiver)
-                                                          .unwrap();
+                                let new_receiver_id =
+                                    self.ipc_receiver_set.add_opaque(receiver).unwrap();
                                 self.handlers.insert(new_receiver_id, handler);
-                            }
-                        }
-                    }
-                    IpcSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get_mut(&id).unwrap()(message)
-                    }
+                            },
+                        },
+                    IpcSelectionResult::MessageReceived(id, message) =>
+                        self.handlers.get_mut(&id).unwrap()(message),
                     IpcSelectionResult::ChannelClosed(id) => {
                         self.handlers.remove(&id).unwrap();
-                    }
+                    },
                 }
             }
         }
