@@ -10,7 +10,7 @@ repository = "https://github.com/servo/ipc-channel"
 force-inprocess = []
 memfd = ["sc"]
 unstable = []
-async = ["futures"]
+async = ["futures-preview", "futures-test-preview"]
 
 [dependencies]
 bincode = "1"
@@ -22,12 +22,12 @@ serde = { version="1.0", features=["rc"] }
 uuid = {version = "0.7", features = ["v4"]}
 fnv = "1.0.3"
 tempfile = "3"
+futures-preview = { version = "0.3.0-alpha", optional = true }
+futures-test-preview = { version = "0.3.0-alpha", optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
 mio = "0.6.11"
-
 sc = { version = "0.2.2", optional = true }
-futures = { version = "0.1", optional = true }
 
 [dev-dependencies]
 crossbeam = "0.2"
