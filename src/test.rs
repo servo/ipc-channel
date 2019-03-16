@@ -7,6 +7,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
+use crate::ipc::IpcReceiver;
+use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use crate::router::ROUTER;
 use crossbeam_channel::{self, Sender};
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -14,16 +23,7 @@ use crossbeam_channel::{self, Sender};
     target_os = "android",
     target_os = "ios"
 )))]
-use ipc::IpcReceiver;
-use ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
 use libc;
-use router::ROUTER;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::iter;
@@ -46,7 +46,7 @@ use futures::{Async, Stream};
     target_os = "android",
     target_os = "ios"
 )))]
-use ipc::IpcOneShotServer;
+use crate::ipc::IpcOneShotServer;
 
 #[cfg(not(any(
     feature = "force-inprocess",

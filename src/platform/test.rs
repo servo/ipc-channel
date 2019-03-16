@@ -7,18 +7,18 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use platform::{self, OsIpcChannel, OsIpcReceiverSet};
-use platform::{OsIpcSharedMemory};
+use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
+use crate::platform::{OsIpcSharedMemory};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
-use platform::{OsIpcSender, OsIpcOneShotServer};
+use crate::platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc::{kill, SIGSTOP, SIGCONT};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use test::{fork, Wait};
+use crate::test::{fork, Wait};
 
 #[test]
 fn simple() {
@@ -211,7 +211,7 @@ fn with_n_fds(n: usize, size: usize) {
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "freebsd")))]
 mod fragment_tests {
-    use platform;
+    use crate::platform;
     use super::with_n_fds;
 
     lazy_static! {
@@ -960,7 +960,7 @@ fn try_recv_large_delayed() {
 
 #[cfg(feature = "unstable")]
 mod sync_test {
-    use platform;
+    use crate::platform;
 
     trait SyncTest {
         fn test_not_sync();

@@ -5,6 +5,7 @@ description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
+edition = "2018"
 
 [features]
 force-inprocess = []
