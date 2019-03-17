@@ -11,9 +11,11 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread;
 
+use crate::ipc::OpaqueIpcReceiver;
+use crate::ipc::{
+    self, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcMessage,
+};
 use crossbeam_channel::{self, Receiver, Sender};
-use ipc::OpaqueIpcReceiver;
-use ipc::{self, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcMessage};
 use serde::{Deserialize, Serialize};
 
 lazy_static! {

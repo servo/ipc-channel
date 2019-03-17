@@ -16,8 +16,8 @@ const ITERATIONS: usize = 1;
 mod platform {
     extern crate crossbeam;
 
+    use crate::ITERATIONS;
     use ipc_channel::platform;
-    use ITERATIONS;
 
     use std::sync::{mpsc, Mutex};
     use test;
@@ -179,8 +179,8 @@ mod platform {
 }
 
 mod ipc {
+    use crate::ITERATIONS;
     use ipc_channel::ipc;
-    use ITERATIONS;
 
     use test;
 
@@ -266,8 +266,8 @@ mod ipc {
     }
 
     mod receiver_set {
+        use crate::ITERATIONS;
         use ipc_channel::ipc::{self, IpcReceiverSet};
-        use ITERATIONS;
 
         use test;
 
