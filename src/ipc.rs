@@ -704,7 +704,7 @@ pub struct OpaqueIpcReceiver {
 /// assert_eq!(data, vec![0x10, 0x11, 0x12, 0x13]);
 /// ```
 ///
-/// ## Sending a [IpcSender]
+/// ## Sending an [IpcSender]
 /// ```
 /// use ipc_channel::ipc::{self, IpcOneShotServer, IpcSender, IpcReceiver};
 /// let (server, name) = IpcOneShotServer::new().unwrap();
