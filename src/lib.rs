@@ -78,7 +78,7 @@ extern crate futures;
 extern crate futures_test;
 
 #[cfg(feature = "async")]
-pub mod async;
+pub mod asynch;
 
 pub mod ipc;
 pub mod platform;
