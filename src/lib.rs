@@ -8,6 +8,7 @@
 // except according to those terms.
 
 #![cfg_attr(all(feature = "unstable", test), feature(specialization))]
+#![cfg_attr(feature = "async", feature(futures_api))]
 
 //! An implementation of the Rust channel API over process boundaries. Under the
 //! hood, this API uses Mach ports on Mac and file descriptor passing over Unix
@@ -72,6 +73,12 @@ extern crate sc;
 
 #[cfg(feature = "async")]
 extern crate futures;
+
+#[cfg(all(feature = "async", test))]
+extern crate futures_test;
+
+#[cfg(feature = "async")]
+pub mod asynch;
 
 pub mod ipc;
 pub mod platform;

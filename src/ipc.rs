@@ -20,11 +20,6 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 
-#[cfg(feature = "async")]
-use futures::{Async, Poll, Stream};
-#[cfg(feature = "async")]
-use std::io::ErrorKind;
-
 thread_local! {
     static OS_IPC_CHANNELS_FOR_DESERIALIZATION: RefCell<Vec<OsOpaqueIpcChannel>> =
         RefCell::new(Vec::new())
@@ -217,44 +212,6 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     pub fn to_opaque(self) -> OpaqueIpcReceiver {
         OpaqueIpcReceiver {
             os_receiver: self.os_receiver,
-        }
-    }
-}
-
-#[cfg(feature = "async")]
-impl<T> Stream for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
-    type Item = T;
-    type Error = bincode::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.try_recv() {
-            Ok(msg) => Ok(Some(msg).into()),
-            Err(err) => match *err {
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset =>
-                    Ok(Async::Ready(None)),
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock =>
-                    Ok(Async::NotReady),
-                _ => Err(err),
-            },
-        }
-    }
-}
-
-#[cfg(feature = "async")]
-impl Stream for IpcBytesReceiver {
-    type Item = Vec<u8>;
-    type Error = bincode::Error;
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.try_recv() {
-            Ok(msg) => Ok(Some(msg).into()),
-            Err(err) => match *err {
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::ConnectionReset =>
-                    Ok(Async::Ready(None)),
-                bincode::ErrorKind::Io(ref e) if e.kind() == ErrorKind::WouldBlock =>
-                    Ok(Async::NotReady),
-                _ => Err(err),
-            },
         }
     }
 }

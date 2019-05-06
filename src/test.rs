@@ -37,9 +37,6 @@ use std::ptr;
 use std::sync::Arc;
 use std::thread;
 
-#[cfg(feature = "async")]
-use futures::{Async, Stream};
-
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "windows",
@@ -518,10 +515,25 @@ fn transfer_closed_sender() {
 
 #[cfg(feature = "async")]
 #[test]
-fn test_bytes_receiver_stream() {
-    let payload = b"'Tis but a scratch!!";
-    let (tx, mut rx) = ipc::bytes_channel().unwrap();
-    assert_eq!(rx.poll().unwrap(), Async::NotReady);
-    tx.send(payload).unwrap();
-    assert_eq!(rx.poll().unwrap(), Async::Ready(Some(payload.to_vec())));
+fn test_receiver_stream() {
+    use futures::Stream;
+    use futures::Poll;
+    use std::pin::Pin;
+    let (tx, rx) = ipc::channel().unwrap();
+    let (waker, count) = futures_test::task::new_count_waker();
+    let mut stream = rx.to_stream();
+
+    assert_eq!(count, 0);
+    match Pin::new(&mut stream).poll_next(&waker) {
+        Poll::Pending => (),
+        _ => panic!("Stream shouldn't have data"),
+    };
+    assert_eq!(count, 0);
+    tx.send(5).unwrap();
+    thread::sleep(std::time::Duration::from_millis(1000));
+    assert_eq!(count, 1);
+    match Pin::new(&mut stream).poll_next(&waker) {
+        Poll::Ready(Some(Ok(5))) => (),
+        _ => panic!("Stream should have 5"),
+    };
 }
