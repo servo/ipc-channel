@@ -25,12 +25,12 @@ lazy_static = "1"
 libc = "0.2.12"
 rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
-tempfile = "3.4"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
 mio = { version = "0.8", features = ["os-ext"] }
 sc = { version = "0.2.2", optional = true }
+tempfile = "3.4"
 
 [dev-dependencies]
 crossbeam-utils = "0.8"
