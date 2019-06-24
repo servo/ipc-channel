@@ -20,17 +20,12 @@ use crate::platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc::{kill, SIGSTOP, SIGCONT};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-<<<<<<< HEAD
 use crate::test::{fork, Wait};
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-=======
-use test::{fork, Wait};
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
->>>>>>> Implement ipc-channel on Windows
-use test::{get_channel_name_arg, spawn_server};
+use crate::test::{get_channel_name_arg, spawn_server};
 
 #[test]
 fn simple() {
@@ -198,15 +193,9 @@ fn with_n_fds(n: usize, size: usize) {
     let (super_tx, super_rx) = platform::channel().unwrap();
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
-    let thread = {
-        let data = data.clone();
-        thread::spawn(move || {
-            super_tx.send(&data[..], sender_fds, vec![]).unwrap();
-        })
-    };
+    super_tx.send(&data[..], sender_fds, vec![]).unwrap();
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
-    thread.join().unwrap();
 
     assert_eq!(received_data.len(), data.len());
     assert_eq!(&received_data[..], &data[..]);

@@ -115,7 +115,7 @@ impl<T> AliasedCell<T> {
     /// while the data might actually be mutated elsewhere
     /// through some outstanding mutable aliases.
     pub unsafe fn alias(&self) -> &T {
-        &self.inner
+        &self.value // orig &self.inner
     }
 
     /// Move out the wrapped value, making it accessible from safe code again.
