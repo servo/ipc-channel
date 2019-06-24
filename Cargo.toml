@@ -11,13 +11,8 @@ edition = "2018"
 force-inprocess = []
 memfd = ["sc"]
 unstable = []
-<<<<<<< HEAD
 async = ["futures-preview", "futures-test-preview"]
 win32-trace = []
-=======
-async = ["futures"]
-win32-trace = []
->>>>>>> Implement ipc-channel on Windows
 
 [dependencies]
 bincode = "1"
