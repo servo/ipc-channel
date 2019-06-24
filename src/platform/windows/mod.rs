@@ -14,7 +14,6 @@ use libc::intptr_t;
 use std::cell::{Cell, RefCell};
 use std::cmp::PartialEq;
 use std::default::Default;
-#[cfg(feature = "win32-trace")]
 use std::env;
 use std::ffi::CString;
 use std::io::{Error, ErrorKind};
@@ -36,7 +35,6 @@ lazy_static! {
     static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { kernel32::GetCurrentProcess() });
 }
 
-#[cfg(feature = "win32-trace")]
 lazy_static! {
     static ref DEBUG_TRACE_ENABLED: bool = { env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some() };
 }
@@ -44,7 +42,7 @@ lazy_static! {
 /// Debug macro to better track what's going on in case of errors.
 macro_rules! win32_trace {
     ($($rest:tt)*) => {
-        #[cfg(feature = "win32-trace")] {
+        if cfg!(feature = "win32-trace") {
             if *DEBUG_TRACE_ENABLED { println!($($rest)*); }
         }
     }
@@ -72,8 +70,8 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),WinError> {
     let pipe_id = make_pipe_id();
     let pipe_name = make_pipe_name(&pipe_id);
 
-    let receiver = try!(OsIpcReceiver::new_named(&pipe_name));
-    let sender = try!(OsIpcSender::connect_named(&pipe_name));
+    let receiver = OsIpcReceiver::new_named(&pipe_name)?;
+    let sender = OsIpcSender::connect_named(&pipe_name)?;
 
     Ok((sender, receiver))
 }
@@ -207,7 +205,7 @@ impl<'de> serde::Deserialize<'de> for OutOfBandMessage {
         where D: serde::Deserializer<'de>
     {
         let (target_process_id, channel_handles, shmem_handles, big_data_receiver_handle) =
-            try!(serde::Deserialize::deserialize(deserializer));
+            serde::Deserialize::deserialize(deserializer)?;
         Ok(OutOfBandMessage {
             target_process_id: target_process_id,
             channel_handles: channel_handles,
@@ -408,7 +406,7 @@ struct MessageReader {
     /// We thus wrap it in an `AliasedCell`,
     /// making sure the data is only accessible from code marked `unsafe`;
     /// and only move it out when the kernel signals that the async read is done.
-    async: Option<AliasedCell<AsyncData>>,
+    r#async: Option<AliasedCell<AsyncData>>,
 
     /// Token identifying the reader/receiver within an `OsIpcReceiverSet`.
     ///
@@ -442,7 +440,7 @@ impl MessageReader {
         MessageReader {
             handle: handle,
             read_buf: Vec::new(),
-            async: None,
+            r#async: None,
             entry_id: None,
         }
     }
@@ -472,8 +470,8 @@ impl MessageReader {
     /// and the caller should not attempt waiting for completion.
     fn issue_async_cancel(&mut self) {
         unsafe {
-            let status = kernel32::CancelIoEx(self.async.as_ref().unwrap().alias().handle.as_raw(),
-                                              self.async.as_mut().unwrap().alias_mut().ov.deref_mut());
+            let status = kernel32::CancelIoEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
+                                              self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut());
 
             if status == winapi::FALSE {
                 // A cancel operation is not expected to fail.
@@ -492,7 +490,7 @@ impl MessageReader {
                 // and the caller should not attempt to wait for completion.
                 assert!(GetLastError() == winapi::ERROR_NOT_FOUND);
 
-                let async_data = self.async.take().unwrap().into_inner();
+                let async_data = self.r#async.take().unwrap().into_inner();
                 self.handle = async_data.handle;
                 self.read_buf = async_data.buf;
             }
@@ -500,7 +498,7 @@ impl MessageReader {
     }
 
     fn cancel_io(&mut self) {
-        if self.async.is_some() {
+        if self.r#async.is_some() {
             // This doesn't work for readers in a receiver set.
             // (`fetch_async_result()` would hang indefinitely.)
             // Receiver sets have to handle cancellation specially,
@@ -516,7 +514,7 @@ impl MessageReader {
             // if the operation actually completed in the mean time.
             // We don't really care either way --
             // we just want to be certain there is no operation in flight any more.
-            if self.async.is_some() {
+            if self.r#async.is_some() {
                 let _ = self.fetch_async_result(BlockingMode::Blocking);
             }
         }
@@ -532,7 +530,7 @@ impl MessageReader {
     /// (See documentation of the `read_buf` and `async` fields.)
     fn start_read(&mut self) -> Result<(),WinError> {
         // Nothing needs to be done if an async read operation is already in progress.
-        if self.async.is_some() {
+        if self.r#async.is_some() {
             return Ok(());
         }
 
@@ -550,14 +548,14 @@ impl MessageReader {
             self.read_buf.set_len(buf_cap);
 
             // issue the read to the buffer, at the current length offset
-            self.async = Some(AliasedCell::new(AsyncData {
+            self.r#async = Some(AliasedCell::new(AsyncData {
                 handle: self.handle.take(),
                 ov: Box::new(mem::zeroed()),
                 buf: mem::replace(&mut self.read_buf, vec![]),
             }));
             let mut bytes_read: u32 = 0;
             let ok = {
-                let async_data = self.async.as_mut().unwrap().alias_mut();
+                let async_data = self.r#async.as_mut().unwrap().alias_mut();
                 let remaining_buf = &mut async_data.buf[buf_len..];
                 kernel32::ReadFile(async_data.handle.as_raw(),
                                    remaining_buf.as_mut_ptr() as LPVOID,
@@ -579,7 +577,7 @@ impl MessageReader {
             // which could pose a potential danger in its own right.
             // Also, it avoids the need to keep a separate state variable --
             // which would bear some risk of getting out of sync.
-            self.async.as_mut().unwrap().alias_mut().buf.set_len(buf_len);
+            self.r#async.as_mut().unwrap().alias_mut().buf.set_len(buf_len);
 
             let result = if ok == winapi::FALSE {
                 Err(GetLastError())
@@ -603,14 +601,14 @@ impl MessageReader {
                 Err(winapi::ERROR_BROKEN_PIPE) => {
                     win32_trace!("[$ {:?}] BROKEN_PIPE straight from ReadFile", self.handle);
 
-                    let async_data = self.async.take().unwrap().into_inner();
+                    let async_data = self.r#async.take().unwrap().into_inner();
                     self.handle = async_data.handle;
                     self.read_buf = async_data.buf;
 
                     Err(WinError::ChannelClosed)
                 },
                 Err(err) => {
-                    let async_data = self.async.take().unwrap().into_inner();
+                    let async_data = self.r#async.take().unwrap().into_inner();
                     self.handle = async_data.handle;
                     self.read_buf = async_data.buf;
 
@@ -637,12 +635,12 @@ impl MessageReader {
     /// between receiving the completion notification from the kernel
     /// and invoking this method.
     unsafe fn notify_completion(&mut self, io_result: Result<(), WinError>) -> Result<(), WinError> {
-        win32_trace!("[$ {:?}] notify_completion", self.async.as_ref().unwrap().alias().handle);
+        win32_trace!("[$ {:?}] notify_completion", self.r#async.as_ref().unwrap().alias().handle);
 
         // Regardless whether the kernel reported success or error,
         // it doesn't have an async read operation in flight at this point anymore.
         // (And it's safe again to access the `async` data.)
-        let async_data = self.async.take().unwrap().into_inner();
+        let async_data = self.r#async.take().unwrap().into_inner();
         self.handle = async_data.handle;
         let ov = async_data.ov;
         self.read_buf = async_data.buf;
@@ -694,8 +692,8 @@ impl MessageReader {
                 BlockingMode::Blocking => winapi::TRUE,
                 BlockingMode::Nonblocking => winapi::FALSE,
             };
-            let ok = kernel32::GetOverlappedResult(self.async.as_ref().unwrap().alias().handle.as_raw(),
-                                                   self.async.as_mut().unwrap().alias_mut().ov.deref_mut(),
+            let ok = kernel32::GetOverlappedResult(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
+                                                   self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut(),
                                                    &mut nbytes,
                                                    block);
             let io_result = if ok == winapi::FALSE {
@@ -721,7 +719,7 @@ impl MessageReader {
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
-        if self.async.is_some() {
+        if self.r#async.is_some() {
             return Ok(None);
         }
 
@@ -750,7 +748,7 @@ impl MessageReader {
                 if oob.big_data_receiver_handle.is_some() {
                     let (handle, big_data_size) = oob.big_data_receiver_handle.unwrap();
                     let receiver = OsIpcReceiver::from_handle(WinHandle::new(handle as HANDLE));
-                    big_data = Some(try!(receiver.recv_raw(big_data_size as usize)));
+                    big_data = Some(receiver.recv_raw(big_data_size as usize)?);
                 }
             }
 
@@ -841,7 +839,6 @@ impl MessageReader {
     /// Get raw handle of the receive port.
     ///
     /// This is only for debug tracing purposes, and must not be used for anything else.
-    #[cfg(feature = "win32-trace")]
     fn get_raw_handle(&self) -> HANDLE {
         self.handle.as_raw()
     }
@@ -960,7 +957,7 @@ impl OsIpcReceiver {
 
     pub fn consume(&self) -> OsIpcReceiver {
         let mut reader = self.reader.borrow_mut();
-        assert!(reader.async.is_none());
+        assert!(reader.r#async.is_none());
         OsIpcReceiver::from_handle(reader.handle.take())
     }
 
@@ -977,12 +974,12 @@ impl OsIpcReceiver {
         loop {
             // First, try to fetch a message, in case we have one pending
             // in the reader's receive buffer
-            if let Some((data, channels, shmems)) = try!(reader.get_message()) {
+            if let Some((data, channels, shmems)) = reader.get_message()? {
                 return Ok((data, channels, shmems));
             }
 
             // Then, issue a read if we don't have one already in flight.
-            try!(reader.start_read());
+            reader.start_read()?;
 
             // Attempt to complete the read.
             //
@@ -990,7 +987,7 @@ impl OsIpcReceiver {
             // The async read remains in flight in that case;
             // and another attempt at getting a result
             // can be done the next time we are called.
-            try!(reader.fetch_async_result(blocking_mode));
+            reader.fetch_async_result(blocking_mode)?;
 
             // If we're not blocking, pretend that we are blocking, since we got part of
             // a message already.  Keep reading until we get a complete message.
@@ -1138,7 +1135,7 @@ impl OsIpcSender {
 
     fn get_pipe_server_process_handle_and_pid(&self) -> Result<(WinHandle, winapi::ULONG),WinError> {
         unsafe {
-            let server_pid = try!(self.get_pipe_server_process_id());
+            let server_pid = self.get_pipe_server_process_id()?;
             if server_pid == *CURRENT_PROCESS_ID {
                 return Ok((WinHandle::new(CURRENT_PROCESS_HANDLE.as_raw()), server_pid));
             }
@@ -1167,7 +1164,7 @@ impl OsIpcSender {
     /// An internal-use-only send method that sends just raw data, with no header.
     fn send_raw(&self, data: &[u8]) -> Result<(),WinError> {
         win32_trace!("[c {:?}] writing {} bytes raw to (pid {}->{})", self.handle.as_raw(), data.len(), *CURRENT_PROCESS_ID,
-             try!(self.get_pipe_server_process_id()));
+             self.get_pipe_server_process_id()?);
 
         // Write doesn't need to be atomic,
         // since the pipe is exclusive for this message,
@@ -1187,7 +1184,7 @@ impl OsIpcSender {
         assert!(data.len() <= u32::max_value() as usize);
 
         let (server_h, server_pid) = if !shared_memory_regions.is_empty() || !ports.is_empty() {
-            try!(self.get_pipe_server_process_handle_and_pid())
+            self.get_pipe_server_process_handle_and_pid()?
         } else {
             (WinHandle::invalid(), 0)
         };
@@ -1196,23 +1193,23 @@ impl OsIpcSender {
 
         for ref shmem in shared_memory_regions {
             // shmem.handle, shmem.length
-            let mut remote_handle = try!(dup_handle_to_process(&shmem.handle, &server_h));
+            let mut remote_handle = dup_handle_to_process(&shmem.handle, &server_h)?;
             oob.shmem_handles.push((remote_handle.take_raw() as intptr_t, shmem.length as u64));
         }
 
         for port in ports {
             match port {
                 OsIpcChannel::Sender(s) => {
-                    let mut raw_remote_handle = try!(move_handle_to_process(s.handle, &server_h));
+                    let mut raw_remote_handle = move_handle_to_process(s.handle, &server_h)?;
                     oob.channel_handles.push(raw_remote_handle.take_raw() as intptr_t);
                 },
                 OsIpcChannel::Receiver(r) => {
-                    if try!(r.prepare_for_transfer()) == false {
+                    if r.prepare_for_transfer()? == false {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
 
                     let handle = r.reader.into_inner().handle.take();
-                    let mut raw_remote_handle = try!(move_handle_to_process(handle, &server_h));
+                    let mut raw_remote_handle = move_handle_to_process(handle, &server_h)?;
                     oob.channel_handles.push(raw_remote_handle.take_raw() as intptr_t);
                 },
             }
@@ -1222,17 +1219,17 @@ impl OsIpcSender {
         let big_data_sender: Option<OsIpcSender> =
             if OsIpcSender::needs_fragmentation(data.len(), &oob) {
                 // We need to create a channel for the big data
-                let (sender, receiver) = try!(channel());
+                let (sender, receiver) = channel()?;
 
                 let (server_h, server_pid) = if server_h.is_valid() {
                     (server_h, server_pid)
                 } else {
-                    try!(self.get_pipe_server_process_handle_and_pid())
+                    self.get_pipe_server_process_handle_and_pid()?
                 };
 
                 // Put the receiver in the OOB data
                 let handle = receiver.reader.into_inner().handle.take();
-                let mut raw_receiver_handle = try!(move_handle_to_process(handle, &server_h));
+                let mut raw_receiver_handle = move_handle_to_process(handle, &server_h)?;
                 oob.big_data_receiver_handle = Some((raw_receiver_handle.take_raw() as intptr_t, data.len() as u64));
                 oob.target_process_id = server_pid;
 
@@ -1270,13 +1267,13 @@ impl OsIpcSender {
             // Write needs to be atomic, since otherwise concurrent sending
             // could result in parts of different messages getting intermixed,
             // and the receiver would not be able to extract the individual messages.
-            try!(write_buf(&self.handle, &*full_message, AtomicMode::Atomic));
+            write_buf(&self.handle, &*full_message, AtomicMode::Atomic)?;
         } else {
             full_message.extend_from_slice(&*oob_data);
             assert!(full_message.len() == full_in_band_len);
 
-            try!(write_buf(&self.handle, &*full_message, AtomicMode::Atomic));
-            try!(big_data_sender.unwrap().send_raw(data));
+            write_buf(&self.handle, &*full_message, AtomicMode::Atomic)?;
+            big_data_sender.unwrap().send_raw(data)?;
         }
 
         Ok(())
@@ -1317,7 +1314,7 @@ impl Drop for OsIpcReceiverSet {
 
         // Wait for any reads still in flight to complete,
         // thus freeing the associated async data.
-        self.readers.retain(|r| r.async.is_some());
+        self.readers.retain(|r| r.r#async.is_some());
         while !self.readers.is_empty() {
             // We unwrap the outer result (can't deal with the IOCP call failing here),
             // but don't care about the actual results of the completed read operations.
@@ -1423,7 +1420,7 @@ impl OsIpcReceiverSet {
             // Find the matching receiver
             let (reader_index, _) = self.readers.iter().enumerate()
                                     .find(|&(_, ref reader)| {
-                                        let raw_handle = reader.async.as_ref().unwrap().alias().handle.as_raw();
+                                        let raw_handle = reader.r#async.as_ref().unwrap().alias().handle.as_raw();
                                         raw_handle as winapi::ULONG_PTR == completion_key
                                     })
                                     .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
@@ -1457,7 +1454,7 @@ impl OsIpcReceiverSet {
         // Do this in a loop, because we may need to dequeue multiple packets to
         // read a complete message.
         while selection_results.is_empty() {
-            let (mut reader, result) = try!(self.fetch_iocp_result());
+            let (mut reader, result) = self.fetch_iocp_result()?;
 
             let mut closed = match result {
                 Ok(()) => false,
@@ -1467,7 +1464,7 @@ impl OsIpcReceiverSet {
 
             if !closed {
                 // Drain as many messages as we can.
-                while let Some((data, channels, shmems)) = try!(reader.get_message()) {
+                while let Some((data, channels, shmems)) = reader.get_message()? {
                     win32_trace!("[# {:?}] receiver {:?} ({}) got a message", self.iocp.as_raw(), reader.get_raw_handle(), reader.entry_id.unwrap());
                     selection_results.push(OsIpcSelectionResult::DataReceived(reader.entry_id.unwrap(), data, channels, shmems));
                 }
@@ -1640,7 +1637,7 @@ impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String),WinError> {
         let pipe_id = make_pipe_id();
         let pipe_name = make_pipe_name(&pipe_id);
-        let receiver = try!(OsIpcReceiver::new_named(&pipe_name));
+        let receiver = OsIpcReceiver::new_named(&pipe_name)?;
         Ok((
             OsIpcOneShotServer {
                 receiver: receiver,
@@ -1654,8 +1651,8 @@ impl OsIpcOneShotServer {
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>),WinError> {
         let receiver = self.receiver;
-        try!(receiver.accept());
-        let (data, channels, shmems) = try!(receiver.recv());
+        receiver.accept()?;
+        let (data, channels, shmems) = receiver.recv()?;
         Ok((receiver, data, channels, shmems))
     }
 }
