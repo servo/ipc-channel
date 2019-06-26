@@ -35,5 +35,4 @@ sc = { version = "0.2.2", optional = true }
 crossbeam = "0.2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = "0.2"
-kernel32-sys = "0.2"
+winapi = {version = "0.3.7", features = ["ioapiset", "memoryapi", "namedpipeapi", "handleapi"]}
