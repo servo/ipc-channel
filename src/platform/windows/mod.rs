@@ -27,6 +27,7 @@ use uuid::Uuid;
 use winapi::um::winnt::{HANDLE};
 use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
 use winapi::shared::minwindef::{LPVOID};
+use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION};
 use winapi;
 use std::fmt;
 
@@ -38,6 +39,9 @@ lazy_static! {
     static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { winapi::um::processthreadsapi::GetCurrentProcess() });
 }
 
+// Added to overcome build error where Box<winapi::um::minwinbase::OVERLAPPED> was used and
+// struct had a trait of #[derive(Debug)].  Adding NoDebug<> overrode the Debug() trait.
+// e.g. - NoDebug<Box<winapi::um::minwinbase::OVERLAPPED>>,
 struct NoDebug<T>(T);
 
 impl<T> Deref for NoDebug<T> {
@@ -54,7 +58,7 @@ impl<T> DerefMut for NoDebug<T> {
 }
 
 impl<T> fmt::Debug for NoDebug<T> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
         Ok(())
     }
 }
@@ -319,17 +323,65 @@ impl Default for WinHandle {
 
 impl PartialEq for WinHandle {
     fn eq(&self, other: &WinHandle) -> bool {
-        // FIXME This does not actually implement the desired behaviour:
-        // we want a way to compare the underlying objects the handles refer to,
-        // rather than just comparing the handles.
+        // WPre-Windows 10 API GetFileInformationByHandle() is used to
+        // to compare the underlying objects the handles refer to,
         //
         // On Windows 10, we could use:
         // ```
-        // unsafe { winapi::um:handleapi::CompareObjectHandles(self.h, other.h) == winapi::shared::minwindef::TRUE }
+        // unsafe { winapi::um::handleapi::CompareObjectHandles(self.h, other.h) == winapi::shared::minwindef::TRUE }
         // ```
         //
         // This API call however is not available on older versions.
-        self.h == other.h
+
+        // Initialize variables needed by GetFileInformationByHandle().
+        let mut _handle_info1: BY_HANDLE_FILE_INFORMATION = Default::default();
+        let mut _handle_info2: BY_HANDLE_FILE_INFORMATION = Default::default();
+        let mut _h1: winapi::shared::minwindef::BOOL = Default::default();
+        let mut _h2: winapi::shared::minwindef::BOOL = Default::default();
+
+        // for testing and debugging numerous APIs to determine if shmem_handles
+        // point to the same shared memory.
+        let mut _h3: winapi::shared::minwindef::BOOL = Default::default();
+        let mut _h4: winapi::shared::minwindef::BOOL = Default::default();
+        let mut _svrsessionid: winapi::shared::minwindef::ULONG = Default::default();
+        let mut _clntsessionid: winapi::shared::minwindef::ULONG = Default::default();
+
+        unsafe {
+            //_h1 = winapi::um::fileapi::GetFileInformationByHandle(self.h, &mut _handle_info1);
+			//_h2 = winapi::um::fileapi::GetFileInformationByHandle(other.h, &mut _handle_info2);
+
+            // need windowsapp.lib _h3 = winapi::um::handleapi::CompareObjectHandles(self.h, other.h);
+
+            _h1 = winapi::um::winbase::GetNamedPipeServerSessionId(other.h, &mut _svrsessionid);
+            _h2 = winapi::um::winbase::GetNamedPipeClientSessionId(self.h, &mut _clntsessionid);
+
+            println!("GetNamedPipeServer/ClientSessionID return values and GetLastError Information.");
+            println!("Getlasterror = {}", GetLastError());
+            println!("_h1 = {} andd GetNamedPipeServerSessionID = {}", _h1, _svrsessionid);
+            println!("_h2 = {} andd GetNamedPipeClientSessionId = {}", _h2, _clntsessionid);
+		 }
+
+         // If the 2 handles self.h and other.h have different values, but point to the same
+         // memory region/file serial number then the handles are just duplicates.
+         //
+         // Per Microsoft you need to check the FileIndexHigh, FileIndexLow, and
+         // dwVolumeSerialNumber for both handles' BY_HANDLE_FILE_INFORMATION structures
+         // to verify if the 2 handles point to the same object.
+         //
+         // see https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/ns-fileapi-_by_handle_file_information
+         // println!("GetlastError() = {}", GetLastError());
+         // println!("Value of _h3 = {}", _h3);
+
+         //println!("Value of _h1 = {}, Value of _h2 = {}", _h1, _h2);
+         //println!("Handle1  = {:?}, Handle2 = {:?}", self.h, other.h);
+         //println!("handle1 serial# = {}, handle2 serial#  = {}", _handle_info1.dwVolumeSerialNumber, _handle_info2.dwVolumeSerialNumber);
+         //println!("FileIndexHigh Vaules: {} and {} ", _handle_info1.nFileIndexHigh, _handle_info2.nFileIndexHigh);
+         //println!("FileIndexLow Vaules: {} and {} ", _handle_info1.nFileIndexLow, _handle_info2.nFileIndexLow);
+
+         (_h1 > 0) && (_h2 > 0)
+         //(_handle_info1.dwVolumeSerialNumber == _handle_info2.dwVolumeSerialNumber) &&
+         //(_handle_info1.nFileIndexHigh == _handle_info2.nFileIndexHigh) &&
+         //(_handle_info1.nFileIndexLow == _handle_info2.nFileIndexLow)
     }
 }
 
