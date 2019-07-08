@@ -8,7 +8,6 @@
 // except according to those terms.
 
 #![cfg_attr(all(feature = "unstable", test), feature(specialization))]
-#![cfg_attr(feature = "async", feature(futures_api))]
 
 //! An implementation of the Rust channel API over process boundaries. Under the
 //! hood, this API uses Mach ports on Mac and file descriptor passing over Unix

@@ -11,21 +11,21 @@ use futures::Stream;
 use futures::stream::FusedStream;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::channel::mpsc::UnboundedSender;
+use futures::task::Context;
 use futures::task::Poll;
-use ipc::IpcReceiver;
-use ipc::IpcReceiverSet;
-use ipc::IpcSelectionResult;
-use ipc::IpcSender;
-use ipc::OpaqueIpcMessage;
-use ipc::OpaqueIpcReceiver;
-use ipc;
+use crate::ipc::IpcReceiver;
+use crate::ipc::IpcReceiverSet;
+use crate::ipc::IpcSelectionResult;
+use crate::ipc::IpcSender;
+use crate::ipc::OpaqueIpcMessage;
+use crate::ipc::OpaqueIpcReceiver;
+use crate::ipc;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Mutex;
-use std::task::Waker;
 use std::thread;
 
 /// A stream built from an IPC channel.
@@ -56,7 +56,7 @@ lazy_static! {
             while let Ok(mut selections) = receivers.select() {
                 for selection in selections.drain(..) {
                     match selection {
-                        IpcSelectionResult::MessageReceived(id, msg) => if let Some(mut sender) = senders.get(&id) {
+                        IpcSelectionResult::MessageReceived(id, msg) => if let Some(sender) = senders.get(&id) {
                             let _ = sender.unbounded_send(msg);
                         },
                         IpcSelectionResult::ChannelClosed(id) => {
@@ -96,9 +96,9 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
 impl<T> Stream for IpcStream<T> where T: for<'de> Deserialize<'de> + Serialize {
     type Item = Result<T, bincode::Error>;
 
-    fn poll_next(mut self: Pin<&mut Self>, waker: &Waker) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
         let recv = Pin::new(&mut self.0);
-        match recv.poll_next(waker) {
+        match recv.poll_next(ctx) {
             Poll::Ready(Some(msg)) => Poll::Ready(Some(msg.to())),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
