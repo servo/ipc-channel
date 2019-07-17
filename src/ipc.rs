@@ -187,7 +187,7 @@ pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
 ///
 /// [IpcReceiver]: struct.IpcReceiver.html
 #[derive(Debug)]
-pub struct IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
+pub struct IpcReceiver<T> {
     os_receiver: OsIpcReceiver,
     phantom: PhantomData<T>,
 }
@@ -216,7 +216,7 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     }
 }
 
-impl<'de, T> Deserialize<'de> for IpcReceiver<T> where T: for<'dde> Deserialize<'dde> + Serialize {
+impl<'de, T> Deserialize<'de> for IpcReceiver<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
         let index: usize = Deserialize::deserialize(deserializer)?;
         let os_receiver =
@@ -232,7 +232,7 @@ impl<'de, T> Deserialize<'de> for IpcReceiver<T> where T: for<'dde> Deserialize<
     }
 }
 
-impl<T> Serialize for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
+impl<T> Serialize for IpcReceiver<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             let mut os_ipc_channels_for_serialization =
@@ -267,7 +267,7 @@ impl<T> Serialize for IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serial
 /// # assert_eq!(rx_data, data);
 /// ```
 #[derive(Debug)]
-pub struct IpcSender<T> where T: Serialize {
+pub struct IpcSender<T> {
     os_sender: OsIpcSender,
     phantom: PhantomData<T>,
 }
@@ -327,7 +327,7 @@ impl<T> IpcSender<T> where T: Serialize {
     }
 }
 
-impl<'de, T> Deserialize<'de> for IpcSender<T> where T: Serialize {
+impl<'de, T> Deserialize<'de> for IpcSender<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
         let os_sender = deserialize_os_ipc_sender(deserializer)?;
         Ok(IpcSender {
@@ -337,7 +337,7 @@ impl<'de, T> Deserialize<'de> for IpcSender<T> where T: Serialize {
     }
 }
 
-impl<T> Serialize for IpcSender<T> where T: Serialize {
+impl<T> Serialize for IpcSender<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         serialize_os_ipc_sender(&self.os_sender, serializer)
     }
