@@ -516,15 +516,17 @@ fn transfer_closed_sender() {
 #[cfg(feature = "async")]
 #[test]
 fn test_receiver_stream() {
+    use futures::task::Context;
     use futures::Stream;
     use futures::Poll;
     use std::pin::Pin;
     let (tx, rx) = ipc::channel().unwrap();
     let (waker, count) = futures_test::task::new_count_waker();
+    let mut ctx = Context::from_waker(&waker);
     let mut stream = rx.to_stream();
 
     assert_eq!(count, 0);
-    match Pin::new(&mut stream).poll_next(&waker) {
+    match Pin::new(&mut stream).poll_next(&mut ctx) {
         Poll::Pending => (),
         _ => panic!("Stream shouldn't have data"),
     };
@@ -532,7 +534,7 @@ fn test_receiver_stream() {
     tx.send(5).unwrap();
     thread::sleep(std::time::Duration::from_millis(1000));
     assert_eq!(count, 1);
-    match Pin::new(&mut stream).poll_next(&waker) {
+    match Pin::new(&mut stream).poll_next(&mut ctx) {
         Poll::Ready(Some(Ok(5))) => (),
         _ => panic!("Stream should have 5"),
     };

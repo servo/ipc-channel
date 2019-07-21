@@ -20,7 +20,7 @@ mod platform {
     use ipc_channel::platform;
 
     use std::sync::{mpsc, Mutex};
-    use test;
+    use crate::test;
 
     #[bench]
     fn create_channel(b: &mut test::Bencher) {
@@ -182,7 +182,7 @@ mod ipc {
     use crate::ITERATIONS;
     use ipc_channel::ipc;
 
-    use test;
+    use crate::test;
 
     #[bench]
     fn transfer_empty(b: &mut test::Bencher) {
@@ -269,7 +269,7 @@ mod ipc {
         use crate::ITERATIONS;
         use ipc_channel::ipc::{self, IpcReceiverSet};
 
-        use test;
+        use crate::test;
 
         // Benchmark selecting over a set of `n` receivers,
         // with `to_send` of them actually having pending data.
