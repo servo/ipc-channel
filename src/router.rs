@@ -161,7 +161,7 @@ impl Router {
                     IpcSelectionResult::MessageReceived(id, message) =>
                         self.handlers.get_mut(&id).unwrap()(message),
                     IpcSelectionResult::ChannelClosed(id) => {
-                        self.handlers.remove(&id).unwrap();
+                        let _ = self.handlers.remove(&id).unwrap();
                     },
                 }
             }
@@ -176,4 +176,4 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<FnMut(OpaqueIpcMessage) + Send>;
+pub type RouterHandler = Box<dyn FnMut(OpaqueIpcMessage) + Send>;

@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.12.0"
+version = "0.12.1"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
@@ -16,15 +16,15 @@ async = ["futures-preview", "futures-test-preview"]
 [dependencies]
 bincode = "1"
 crossbeam-channel = "0.3"
-lazy_static = "1"
-libc = "0.2.12"
-rand = "0.6"
-serde = { version="1.0", features=["rc"] }
-uuid = {version = "0.7", features = ["v4"]}
 fnv = "1.0.3"
-tempfile = "3"
 futures-preview = { version = "0.3.0-alpha.17", optional = true }
 futures-test-preview = { version = "0.3.0-alpha.17", optional = true }
+lazy_static = "1"
+libc = "0.2.12"
+rand = "0.7"
+serde = { version = "1.0", features = ["rc"] }
+tempfile = "3"
+uuid = { version = "0.7", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
 mio = "0.6.11"
