@@ -14,7 +14,7 @@ extern crate test;
 const ITERATIONS: usize = 1;
 
 mod platform {
-    extern crate crossbeam;
+    extern crate crossbeam_utils;
 
     use crate::ITERATIONS;
     use ipc_channel::platform;
@@ -40,9 +40,9 @@ mod platform {
 
         if size > platform::OsIpcSender::get_max_fragment_size() {
             b.iter(|| {
-                crossbeam::scope(|scope| {
+                crossbeam_utils::thread::scope(|scope| {
                     let tx = tx.clone();
-                    scope.spawn(|| {
+                    scope.spawn(|_| {
                         let wait_rx = wait_rx.lock().unwrap();
                         let tx = tx;
                         for _ in 0..ITERATIONS {
