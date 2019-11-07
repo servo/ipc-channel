@@ -15,7 +15,7 @@ async = ["futures-preview", "futures-test-preview"]
 
 [dependencies]
 bincode = "1"
-crossbeam-channel = "0.3"
+crossbeam-channel = "0.4"
 fnv = "1.0.3"
 futures-preview = { version = "0.3.0-alpha.17", optional = true }
 futures-test-preview = { version = "0.3.0-alpha.17", optional = true }
@@ -31,4 +31,4 @@ mio = "0.6.11"
 sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
-crossbeam = "0.2"
+crossbeam = "0.7"
