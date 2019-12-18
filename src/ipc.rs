@@ -218,13 +218,7 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
 
 impl<'de, T> Deserialize<'de> for IpcReceiver<T> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let index: usize = Deserialize::deserialize(deserializer)?;
-        let os_receiver =
-            OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
-                // of bounds. We should return an `Err` result instead.
-                os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver()
-            });
+        let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
         Ok(IpcReceiver {
             os_receiver: os_receiver,
             phantom: PhantomData,
@@ -234,15 +228,7 @@ impl<'de, T> Deserialize<'de> for IpcReceiver<T> {
 
 impl<T> Serialize for IpcReceiver<T> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
-            let mut os_ipc_channels_for_serialization =
-                os_ipc_channels_for_serialization.borrow_mut();
-            let index = os_ipc_channels_for_serialization.len();
-            os_ipc_channels_for_serialization.push(OsIpcChannel::Receiver(self.os_receiver
-                                                                              .consume()));
-            index
-        });
-        index.serialize(serializer)
+        serialize_os_ipc_receiver(&self.os_receiver, serializer)
     }
 }
 
@@ -736,13 +722,7 @@ impl IpcBytesReceiver {
 
 impl<'de> Deserialize<'de> for IpcBytesReceiver {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
-        let index: usize = Deserialize::deserialize(deserializer)?;
-        let os_receiver =
-            OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
-                // of bounds. We should return an `Err` result instead.
-                os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver()
-            });
+        let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
         Ok(IpcBytesReceiver {
             os_receiver: os_receiver,
         })
@@ -751,15 +731,7 @@ impl<'de> Deserialize<'de> for IpcBytesReceiver {
 
 impl Serialize for IpcBytesReceiver {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-        let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
-            let mut os_ipc_channels_for_serialization =
-                os_ipc_channels_for_serialization.borrow_mut();
-            let index = os_ipc_channels_for_serialization.len();
-            os_ipc_channels_for_serialization.push(OsIpcChannel::Receiver(self.os_receiver
-                                                                              .consume()));
-            index
-        });
-        index.serialize(serializer)
+        serialize_os_ipc_receiver(&self.os_receiver, serializer)
     }
 }
 
@@ -818,5 +790,29 @@ fn deserialize_os_ipc_sender<'de, D>(deserializer: D)
         // FIXME(pcwalton): This could panic if the data was corrupt and the index was out of
         // bounds. We should return an `Err` result instead.
         Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
+    })
+}
+
+fn serialize_os_ipc_receiver<S>(os_receiver: &OsIpcReceiver, serializer: S)
+                              -> Result<S::Ok, S::Error> where S: Serializer {
+    let index = OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
+        let mut os_ipc_channels_for_serialization =
+            os_ipc_channels_for_serialization.borrow_mut();
+        let index = os_ipc_channels_for_serialization.len();
+        os_ipc_channels_for_serialization.push(OsIpcChannel::Receiver(os_receiver
+                                                                          .consume()));
+        index
+    });
+    index.serialize(serializer)
+}
+
+fn deserialize_os_ipc_receiver<'de, D>(deserializer: D)
+                                -> Result<OsIpcReceiver, D::Error> where D: Deserializer<'de> {
+    let index: usize = Deserialize::deserialize(deserializer)?;
+
+    OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
+        // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
+        // of bounds. We should return an `Err` result instead.
+        Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver())
     })
 }
