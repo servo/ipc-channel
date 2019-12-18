@@ -630,6 +630,30 @@ pub struct OpaqueIpcReceiver {
     os_receiver: OsIpcReceiver,
 }
 
+impl OpaqueIpcReceiver {
+    pub fn to<'de, T>(self) -> IpcReceiver<T> where T: Deserialize<'de> + Serialize {
+        IpcReceiver {
+            os_receiver: self.os_receiver,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for OpaqueIpcReceiver {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+        let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
+        Ok(OpaqueIpcReceiver {
+            os_receiver: os_receiver,
+        })
+    }
+}
+
+impl Serialize for OpaqueIpcReceiver {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+        serialize_os_ipc_receiver(&self.os_receiver, serializer)
+    }
+}
+
 /// A server associated with a given name.
 ///
 /// # Examples
