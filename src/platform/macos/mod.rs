@@ -11,6 +11,7 @@ use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
+use self::mach_sys::mach_port_deallocate;
 
 use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
@@ -406,11 +407,13 @@ impl Drop for OsIpcSender {
         if self.port == MACH_PORT_NULL {
             return;
         }
-        match mach_port_mod_release(self.port, MACH_PORT_RIGHT_SEND) {
-            // `KERN_INVALID_RIGHT` is returned if (as far as I can tell) the receiver already shut
-            // down. This is fine.
-            Ok(()) | Err(KernelError::InvalidRight) => (),
-            Err(error) => panic!("mach_port_mod_refs(-1, {}) failed: {:?}", self.port, error),
+        // mach_port_deallocate and mach_port_mod_refs are very similar, except that
+        // mach_port_mod_refs returns an error when there are no receivers for the port,
+        // causing the sender port to never be deallocated. mach_port_deallocate handles
+        // this case correctly and is therefore important to avoid dangling port leaks.
+        let err = unsafe { mach_port_deallocate(mach_task_self(), self.port) };
+        if err != KERN_SUCCESS {
+            panic!("mach_port_deallocate({}) failed: {:?}", self.port, err);
         }
     }
 }
