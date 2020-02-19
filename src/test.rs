@@ -104,6 +104,11 @@ fn simple() {
     tx.send(person.clone()).unwrap();
     let received_person = rx.recv().unwrap();
     assert_eq!(person, received_person);
+    drop(tx);
+    match rx.recv().unwrap_err() {
+        ipc::IpcError::Disconnected => (),
+        e => panic!("expected disconnected error, got {:?}", e),
+    }
 }
 
 #[test]
@@ -391,11 +396,22 @@ fn embedded_opaque_senders() {
 fn try_recv() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
-    assert!(rx.try_recv().is_err());
+    match rx.try_recv() {
+        Err(ipc::TryRecvError::Empty) => (),
+        v => panic!("Expected empty channel err: {:?}", v),
+    }
     tx.send(person.clone()).unwrap();
     let received_person = rx.try_recv().unwrap();
     assert_eq!(person, received_person);
-    assert!(rx.try_recv().is_err());
+    match rx.try_recv() {
+        Err(ipc::TryRecvError::Empty) => (),
+        v => panic!("Expected empty channel err: {:?}", v),
+    }
+    drop(tx);
+    match rx.try_recv() {
+        Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
+        v => panic!("Expected disconnected err: {:?}", v),
+    }
 }
 
 #[test]
@@ -452,7 +468,7 @@ fn test_so_linger() {
     let val = match receiver.recv() {
         Ok(val) => val,
         Err(e) => {
-            panic!("err: `{}`", e);
+            panic!("err: `{:?}`", e);
         },
     };
     assert_eq!(val, 42);

@@ -7,8 +7,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::ipc;
 use bincode;
 use fnv::FnvHasher;
+use libc::{EAGAIN, EWOULDBLOCK};
 use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
 use libc::{SO_LINGER, S_IFMT, S_IFSOCK, c_char, c_int, c_void, getsockopt};
 use libc::{iovec, mode_t, msghdr, off_t, recvmsg, sendmsg};
@@ -827,6 +829,26 @@ impl From<UnixError> for Error {
             UnixError::Errno(errno) => Error::from_raw_os_error(errno),
             UnixError::ChannelClosed => Error::new(ErrorKind::ConnectionReset,
                                                    "All senders for this socket closed"),
+        }
+    }
+}
+
+impl From<UnixError> for ipc::IpcError {
+    fn from(error: UnixError) -> Self {
+        match error {
+            UnixError::ChannelClosed => ipc::IpcError::Disconnected,
+            e => ipc::IpcError::Io(Error::from(e)),
+        }
+    }
+}
+
+impl From<UnixError> for ipc::TryRecvError {
+    fn from(error: UnixError) -> Self {
+        match error {
+            UnixError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
+            UnixError::Errno(code) if code == EAGAIN || code == EWOULDBLOCK =>
+                ipc::TryRecvError::Empty,
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
         }
     }
 }

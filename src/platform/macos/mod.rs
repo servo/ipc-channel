@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::ipc;
 use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg_return_t};
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
@@ -1084,6 +1085,25 @@ impl From<mach_msg_return_t> for MachError {
 impl From<KernelError> for MachError {
     fn from(kernel_error: KernelError) -> MachError {
         MachError::Kernel(kernel_error)
+    }
+}
+
+impl From<MachError> for ipc::TryRecvError {
+    fn from(error: MachError) -> Self {
+        match error {
+            MachError::NotifyNoSenders => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
+            MachError::RcvTimedOut => ipc::TryRecvError::Empty,
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
+        }
+    }
+}
+
+impl From<MachError> for ipc::IpcError {
+    fn from(error: MachError) -> Self {
+        match error {
+            MachError::NotifyNoSenders => ipc::IpcError::Disconnected,
+            e => ipc::IpcError::Io(Error::from(e)),
+        }
     }
 }
 

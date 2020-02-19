@@ -9,6 +9,7 @@
 
 use bincode;
 use crossbeam_channel::{self, Receiver, Select, Sender, TryRecvError};
+use crate::ipc;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;
 use std::cell::{RefCell, Ref};
@@ -105,7 +106,7 @@ impl OsIpcReceiver {
             },
             Err(e) => {
                 match e {
-                    TryRecvError::Empty => Err(ChannelError::UnknownError),
+                    TryRecvError::Empty => Err(ChannelError::ChannelEmpty),
                     TryRecvError::Disconnected => Err(ChannelError::ChannelClosedError),
                 }
             }
@@ -371,6 +372,7 @@ impl OsIpcSharedMemory {
 pub enum ChannelError {
     ChannelClosedError,
     BrokenPipeError,
+    ChannelEmpty,
     UnknownError,
 }
 
@@ -387,11 +389,33 @@ impl From<ChannelError> for bincode::Error {
     }
 }
 
+impl From<ChannelError> for ipc::IpcError {
+    fn from(error: ChannelError) -> Self {
+        match error {
+            ChannelError::ChannelClosedError => ipc::IpcError::Disconnected,
+            e => ipc::IpcError::Bincode(Error::from(e).into()),
+        }
+    }
+}
+
+impl From<ChannelError> for ipc::TryRecvError {
+    fn from(error: ChannelError) -> Self {
+        match error {
+            ChannelError::ChannelClosedError => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
+            ChannelError::ChannelEmpty => ipc::TryRecvError::Empty,
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Bincode(Error::from(e).into())),
+        }
+    }
+}
+
 impl From<ChannelError> for Error {
     fn from(crossbeam_error: ChannelError) -> Error {
         match crossbeam_error {
             ChannelError::ChannelClosedError => {
                 Error::new(ErrorKind::ConnectionReset, "crossbeam-channel sender closed")
+            }
+            ChannelError::ChannelEmpty => {
+                Error::new(ErrorKind::ConnectionReset, "crossbeam-channel receiver has no received messages")
             }
             ChannelError::BrokenPipeError => {
                 Error::new(ErrorKind::BrokenPipe, "crossbeam-channel receiver closed")
