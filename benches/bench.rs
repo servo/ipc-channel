@@ -19,8 +19,8 @@ mod platform {
     use crate::ITERATIONS;
     use ipc_channel::platform;
 
-    use std::sync::{mpsc, Mutex};
     use crate::test;
+    use std::sync::{mpsc, Mutex};
 
     #[bench]
     fn create_channel(b: &mut test::Bencher) {

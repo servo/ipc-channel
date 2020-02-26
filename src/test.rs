@@ -222,6 +222,9 @@ fn cross_process_embedded_senders() {
 
 #[test]
 fn router_simple() {
+    // Note: All ROUTER operation need to run in a single test,
+    // since the state of the router will carry across tests.
+
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
@@ -235,6 +238,29 @@ fn router_simple() {
     );
     let received_person = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_person, person);
+
+    // Now shutdown the router.
+    ROUTER.shutdown();
+
+    // Use router after shutdown.
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person.clone()).unwrap();
+
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
+    ROUTER.add_route(
+        rx.to_opaque(),
+        Box::new(move |person| {
+            callback_fired_sender.send(person.to().unwrap()).unwrap();
+        }),
+    );
+
+    // The sender should have been dropped.
+    let received_person = callback_fired_receiver.recv();
+    assert!(received_person.is_err());
+
+    // Shutdown the router, again(should be a no-op).
+    ROUTER.shutdown();
 }
 
 #[test]
@@ -533,8 +559,8 @@ fn transfer_closed_sender() {
 #[test]
 fn test_receiver_stream() {
     use futures::task::Context;
-    use futures::Stream;
     use futures::Poll;
+    use futures::Stream;
     use std::pin::Pin;
     let (tx, rx) = ipc::channel().unwrap();
     let (waker, count) = futures_test::task::new_count_waker();

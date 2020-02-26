@@ -7,19 +7,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use futures::Stream;
-use futures::stream::FusedStream;
-use futures::channel::mpsc::UnboundedReceiver;
-use futures::channel::mpsc::UnboundedSender;
-use futures::task::Context;
-use futures::task::Poll;
+use crate::ipc;
 use crate::ipc::IpcReceiver;
 use crate::ipc::IpcReceiverSet;
 use crate::ipc::IpcSelectionResult;
 use crate::ipc::IpcSender;
 use crate::ipc::OpaqueIpcMessage;
 use crate::ipc::OpaqueIpcReceiver;
-use crate::ipc;
+use futures::channel::mpsc::UnboundedReceiver;
+use futures::channel::mpsc::UnboundedSender;
+use futures::stream::FusedStream;
+use futures::task::Context;
+use futures::task::Poll;
+use futures::Stream;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -56,9 +56,10 @@ lazy_static! {
             while let Ok(mut selections) = receivers.select() {
                 for selection in selections.drain(..) {
                     match selection {
-                        IpcSelectionResult::MessageReceived(id, msg) => if let Some(sender) = senders.get(&id) {
-                            let _ = sender.unbounded_send(msg);
-                        },
+                        IpcSelectionResult::MessageReceived(id, msg) =>
+                            if let Some(sender) = senders.get(&id) {
+                                let _ = sender.unbounded_send(msg);
+                            },
                         IpcSelectionResult::ChannelClosed(id) => {
                             senders.remove(&id);
                         },
@@ -68,7 +69,7 @@ lazy_static! {
                     while let Ok(Some((receiver, sender))) = recv.try_next() {
                         if let Ok(id) = receivers.add_opaque(receiver) {
                             senders.insert(id, sender);
-			}
+                        }
                     }
                 }
             }
@@ -80,7 +81,10 @@ lazy_static! {
     };
 }
 
-impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
+impl<T> IpcReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
     /// Convert this IPC receiver into a stream.
     pub fn to_stream(self) -> IpcStream<T> {
         let opaque = self.to_opaque();
@@ -93,7 +97,10 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
     }
 }
 
-impl<T> Stream for IpcStream<T> where T: for<'de> Deserialize<'de> + Serialize {
+impl<T> Stream for IpcStream<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
     type Item = Result<T, bincode::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
