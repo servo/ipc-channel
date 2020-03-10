@@ -31,8 +31,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
 use std::thread;
-use mio::unix::EventedFd;
-use mio::{Poll, Token, Events, Ready, PollOpt};
+use mio::unix::SourceFd;
+use mio::{Interest, Poll, Token, Events};
 use tempfile::{Builder, TempDir};
 
 const MAX_FDS_IN_CMSG: u32 = 64;
@@ -452,28 +452,22 @@ impl OsIpcReceiverSet {
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,UnixError> {
         let last_index = self.incrementor.next().unwrap();
         let fd = receiver.consume_fd();
-        let io = EventedFd(&fd);
+        let io = SourceFd(&fd);
         let fd_token = Token(fd as usize);
         let poll_entry = PollEntry {
             id: last_index,
             fd: fd
         };
-        self.poll.register(&io,
-                           fd_token,
-                           Ready::readable(),
-                           PollOpt::level())?;
+        self.poll.registry().register(&mut io, fd_token, Interest::READABLE)?;
         self.pollfds.insert(fd_token, poll_entry);
         Ok(last_index)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,UnixError> {
         let mut selection_results = Vec::new();
-        let mut num_events = 0;
-        while num_events == 0 {
+        loop {
             match self.poll.poll(&mut self.events, None) {
-                Ok(sz) => {
-                    num_events = sz;
-                },
+                Ok(()) => break,
                 Err(ref e) => {
                     if e.kind() != ErrorKind::Interrupted {
                         return Err(UnixError::last());
@@ -484,7 +478,7 @@ impl OsIpcReceiverSet {
 
         for evt in self.events.iter() {
             let evt_token = evt.token();
-            match (evt.readiness().is_readable(), self.pollfds.get(&evt_token)) {
+            match (evt.is_readable(), self.pollfds.get(&evt_token)) {
                 (true, Some(&poll_entry)) => {
                     match recv(poll_entry.fd, BlockingMode::Blocking) {
                         Ok((data, channels, shared_memory_regions)) => {
@@ -496,7 +490,7 @@ impl OsIpcReceiverSet {
                         }
                         Err(err) if err.channel_is_closed() => {
                             self.pollfds.remove(&evt_token).unwrap();
-                            self.poll.deregister(&EventedFd(&poll_entry.fd)).unwrap();
+                            self.poll.registry().deregister(&SourceFd(&poll_entry.fd)).unwrap();
                             unsafe {
                                 libc::close(poll_entry.fd);
                             }
@@ -506,8 +500,7 @@ impl OsIpcReceiverSet {
                     }
                 },
                 (true, None) => {
-                    panic!("Readable event for unknown token: {:?}, readiness: {:?}",
-                           evt_token, evt.readiness());
+                    panic!("Readable event for unknown token: {:?}", evt_token);
                 },
                 (false, _) => {
                     panic!("Received an event that was not readable for token: {:?}", evt_token)
