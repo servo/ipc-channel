@@ -27,7 +27,7 @@ tempfile = "3"
 uuid = { version = "0.8", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
-mio = "0.6.11"
+mio = { version = "0.7", features = ["os-poll", "os-util"] }
 sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
