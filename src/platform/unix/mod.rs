@@ -127,14 +127,12 @@ impl OsIpcReceiver {
         OsIpcReceiver::from_fd(self.consume_fd())
     }
 
-    pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd.get(), BlockingMode::Blocking)
+    pub fn recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
+        unsafe { recv(self.fd.get(), BlockingMode::Blocking) }
     }
 
-    pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
-        recv(self.fd.get(), BlockingMode::Nonblocking)
+    pub fn try_recv(&self) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
+        unsafe { recv(self.fd.get(), BlockingMode::Nonblocking) }
     }
 }
 
@@ -486,7 +484,7 @@ impl OsIpcReceiverSet {
             let evt_token = evt.token();
             match (evt.readiness().is_readable(), self.pollfds.get(&evt_token)) {
                 (true, Some(&poll_entry)) => {
-                    match recv(poll_entry.fd, BlockingMode::Blocking) {
+                    match unsafe { recv(poll_entry.fd, BlockingMode::Blocking) } {
                         Ok((data, channels, shared_memory_regions)) => {
                             selection_results.push(OsIpcSelectionResult::DataReceived(
                                     poll_entry.id,
@@ -870,8 +868,10 @@ enum BlockingMode {
     Nonblocking,
 }
 
-fn recv(fd: c_int, blocking_mode: BlockingMode)
-        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
+unsafe fn recv(
+    fd: c_int,
+    blocking_mode: BlockingMode,
+) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
 
     let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
 
@@ -881,41 +881,40 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
     // or need to receive additional fragments -- and if so, how much.
     let mut total_size = 0usize;
     let mut main_data_buffer;
-    unsafe {
-        // Allocate a buffer without initialising the memory.
-        main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size());
-        main_data_buffer.set_len(OsIpcSender::get_max_fragment_size());
 
-        let mut iovec = [
-            iovec {
-                iov_base: &mut total_size as *mut _ as *mut c_void,
-                iov_len: mem::size_of_val(&total_size),
-            },
-            iovec {
-                iov_base: main_data_buffer.as_mut_ptr() as *mut c_void,
-                iov_len: main_data_buffer.len(),
-            },
-        ];
-        let mut cmsg = UnixCmsg::new(&mut iovec);
+    // Allocate a buffer without initialising the memory.
+    main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size());
+    main_data_buffer.set_len(OsIpcSender::get_max_fragment_size());
 
-        let bytes_read = cmsg.recv(fd, blocking_mode)?;
-        main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
+    let mut iovec = [
+        iovec {
+            iov_base: &mut total_size as *mut _ as *mut c_void,
+            iov_len: mem::size_of_val(&total_size),
+        },
+        iovec {
+            iov_base: main_data_buffer.as_mut_ptr() as *mut c_void,
+            iov_len: main_data_buffer.len(),
+        },
+    ];
+    let mut cmsg = UnixCmsg::new(&mut iovec);
 
-        let cmsg_fds = CMSG_DATA(cmsg.cmsg_buffer) as *const c_int;
-        let cmsg_length = cmsg.msghdr.msg_controllen;
-        let channel_length = if cmsg_length == 0 {
-            0
-        } else {
-            (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
-        };
-        for index in 0..channel_length {
-            let fd = *cmsg_fds.offset(index as isize);
-            if is_socket(fd) {
-                channels.push(OsOpaqueIpcChannel::from_fd(fd));
-                continue
-            }
-            shared_memory_regions.push(OsIpcSharedMemory::from_fd(fd));
+    let bytes_read = cmsg.recv(fd, blocking_mode)?;
+    main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
+
+    let cmsg_fds = CMSG_DATA(cmsg.cmsg_buffer) as *const c_int;
+    let cmsg_length = cmsg.msghdr.msg_controllen;
+    let channel_length = if cmsg_length == 0 {
+        0
+    } else {
+        (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
+    };
+    for index in 0..channel_length {
+        let fd = *cmsg_fds.offset(index as isize);
+        if is_socket(fd) {
+            channels.push(OsOpaqueIpcChannel::from_fd(fd));
+            continue
         }
+        shared_memory_regions.push(OsIpcSharedMemory::from_fd(fd));
     }
 
     if total_size == main_data_buffer.len() {
