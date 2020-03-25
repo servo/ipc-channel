@@ -52,6 +52,7 @@ impl RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender: msg_sender,
                 wakeup_sender: wakeup_sender,
+                shutdown: false,
             }),
         }
     }
@@ -60,10 +61,41 @@ impl RouterProxy {
     /// to the router.
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
+
+        if comm.shutdown {
+            return;
+        }
+
         comm.msg_sender
             .send(RouterMsg::AddRoute(receiver, callback))
             .unwrap();
         comm.wakeup_sender.send(()).unwrap();
+    }
+
+    /// Send a shutdown message to the router containing a ACK sender,
+    /// send a wakeup message to the router, and block on the ACK.
+    /// Calling it is idempotent,
+    /// which can be useful when running a multi-process system in single-process mode.
+    pub fn shutdown(&self) {
+        let mut comm = self.comm.lock().unwrap();
+
+        if comm.shutdown {
+            return;
+        }
+        comm.shutdown = true;
+
+        let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
+        let _ = comm
+            .wakeup_sender
+            .send(())
+            .and_then(|_| {
+                comm.msg_sender
+                    .send(RouterMsg::Shutdown(ack_sender))
+                    .unwrap();
+                ack_receiver.recv().unwrap();
+                Ok(())
+            })
+            .unwrap();
     }
 
     /// A convenience function to route an `IpcReceiver<T>` to an existing `Sender<T>`.
@@ -98,14 +130,13 @@ impl RouterProxy {
 struct RouterProxyComm {
     msg_sender: Sender<RouterMsg>,
     wakeup_sender: IpcSender<()>,
+    shutdown: bool,
 }
 
 /// Router runs in its own thread listening for events. Adds events to its IpcReceiverSet
 /// and listens for events using select().
 struct Router {
-    /// Get messages from RouterProxy. Currently, the only message supported is:
-    /// `AddRoute(OpaqueIpcReceiver, RouterHandler)`. Add a new receiver which will
-    /// call function: RouterHandler when new event arrives.
+    /// Get messages from RouterProxy.
     msg_receiver: Receiver<RouterMsg>,
     /// The ID/index of the special channel we use to identify messages from msg_receiver.
     msg_wakeup_id: u64,
@@ -114,7 +145,6 @@ struct Router {
     /// Maps ids to their handler functions.
     handlers: HashMap<u64, RouterHandler>,
 }
-
 
 impl Router {
     fn new(msg_receiver: Receiver<RouterMsg>, wakeup_receiver: IpcReceiver<()>) -> Router {
@@ -156,6 +186,12 @@ impl Router {
                                     self.ipc_receiver_set.add_opaque(receiver).unwrap();
                                 self.handlers.insert(new_receiver_id, handler);
                             },
+                            RouterMsg::Shutdown(sender) => {
+                                sender
+                                    .send(())
+                                    .expect("Failed to send comfirmation of shutdown.");
+                                break;
+                            },
                         },
                     // Event from one of our registered receivers, call callback.
                     IpcSelectionResult::MessageReceived(id, message) =>
@@ -173,6 +209,8 @@ enum RouterMsg {
     /// Register the receiver OpaqueIpcReceiver for listening for events on.
     /// When a message comes from this receiver, call RouterHandler.
     AddRoute(OpaqueIpcReceiver, RouterHandler),
+    /// Shutdown the router, providing a sender to send an acknowledgement.
+    Shutdown(Sender<()>),
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
