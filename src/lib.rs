@@ -24,7 +24,7 @@
 //! ## `memfd`
 //!
 //! Use [memfd_create] to back [OsIpcSharedMemory] on Linux. [memfd_create] was
-//! introduced in version 3.17. __WARNING:__ Enabling this feature with kernel
+//! introduced in kernel version 3.17. __WARNING:__ Enabling this feature with kernel
 //! version less than 3.17 will cause panics on any use of [IpcSharedMemory].
 //!
 //! ## `unstable`
