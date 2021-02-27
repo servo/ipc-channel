@@ -9,6 +9,7 @@
 
 use serde;
 use bincode;
+use crate::ipc;
 
 use libc::intptr_t;
 use std::cell::{Cell, RefCell};
@@ -64,7 +65,7 @@ impl<T> fmt::Debug for NoDebug<T> {
 }
 
 lazy_static! {
-    static ref DEBUG_TRACE_ENABLED: bool = { env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some() };
+    static ref DEBUG_TRACE_ENABLED: bool = env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some();
 }
 
 /// Debug macro to better track what's going on in case of errors.
@@ -1828,6 +1829,25 @@ impl WinError {
 impl From<WinError> for bincode::Error {
     fn from(error: WinError) -> bincode::Error {
         Error::from(error).into()
+    }
+}
+
+impl From<WinError> for ipc::TryRecvError {
+    fn from(error: WinError) -> Self {
+        match error {
+            WinError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
+            WinError::NoData => ipc::TryRecvError::Empty,
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
+        }
+    }
+}
+
+impl From<WinError> for ipc::IpcError {
+    fn from(error: WinError) -> Self {
+        match error {
+            WinError::ChannelClosed => ipc::IpcError::Disconnected,
+            e => ipc::IpcError::Io(Error::from(e)),
+        }
     }
 }
 
