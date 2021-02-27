@@ -38,7 +38,7 @@ use std::process::{self, Command, Stdio};
     target_os = "android",
     target_os = "ios"
 )))]
-
+use std::ptr;
 use std::sync::Arc;
 use std::thread;
 
@@ -47,12 +47,14 @@ use std::thread;
     target_os = "android",
     target_os = "ios"
 )))]
+use crate::ipc::IpcOneShotServer;
 
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "android",
     target_os = "ios"
 )))]
+use std::io::Error;
 
 #[cfg(not(any(
     feature = "force-inprocess",
