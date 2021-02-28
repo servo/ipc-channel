@@ -444,8 +444,6 @@ fn shared_memory() {
 }
 
 #[test]
-// The Windows implementation can't handle this case due to system API limitations.
-#[cfg_attr(all(target_os = "windows", not(feature = "force-inprocess")), ignore)]
 fn shared_memory_object_equality() {
     let person = ("Patrick Walton".to_owned(), 29);
     let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));

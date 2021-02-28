@@ -28,7 +28,6 @@ use uuid::Uuid;
 use winapi::um::winnt::{HANDLE};
 use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
 use winapi::shared::minwindef::{LPVOID};
-use winapi::um::fileapi::{BY_HANDLE_FILE_INFORMATION};
 use winapi;
 use std::fmt;
 
@@ -322,67 +321,30 @@ impl Default for WinHandle {
     }
 }
 
+const WINDOWS_APP_MODULE_NAME: &'static str = "api-ms-win-core-handle-l1-1-0";
+const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &'static str = "CompareObjectHandles";
+
+lazy_static! {
+    static ref WINDOWS_APP_MODULE_NAME_CSTRING: CString = CString::new(WINDOWS_APP_MODULE_NAME).unwrap();
+    static ref COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING: CString = CString::new(COMPARE_OBJECT_HANDLES_FUNCTION_NAME).unwrap();
+}
+
+#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for WinHandle {
     fn eq(&self, other: &WinHandle) -> bool {
-        // WPre-Windows 10 API GetFileInformationByHandle() is used to
-        // to compare the underlying objects the handles refer to,
-        //
-        // On Windows 10, we could use:
-        // ```
-        // unsafe { winapi::um::handleapi::CompareObjectHandles(self.h, other.h) == winapi::shared::minwindef::TRUE }
-        // ```
-        //
-        // This API call however is not available on older versions.
-
-        // Initialize variables needed by GetFileInformationByHandle().
-        let mut _handle_info1: BY_HANDLE_FILE_INFORMATION = Default::default();
-        let mut _handle_info2: BY_HANDLE_FILE_INFORMATION = Default::default();
-        let mut _h1: winapi::shared::minwindef::BOOL = Default::default();
-        let mut _h2: winapi::shared::minwindef::BOOL = Default::default();
-
-        // for testing and debugging numerous APIs to determine if shmem_handles
-        // point to the same shared memory.
-        let mut _h3: winapi::shared::minwindef::BOOL = Default::default();
-        let mut _h4: winapi::shared::minwindef::BOOL = Default::default();
-        let mut _svrsessionid: winapi::shared::minwindef::ULONG = Default::default();
-        let mut _clntsessionid: winapi::shared::minwindef::ULONG = Default::default();
-
         unsafe {
-            //_h1 = winapi::um::fileapi::GetFileInformationByHandle(self.h, &mut _handle_info1);
-			//_h2 = winapi::um::fileapi::GetFileInformationByHandle(other.h, &mut _handle_info2);
-
-            // need windowsapp.lib _h3 = winapi::um::handleapi::CompareObjectHandles(self.h, other.h);
-
-            _h1 = winapi::um::winbase::GetNamedPipeServerSessionId(other.h, &mut _svrsessionid);
-            _h2 = winapi::um::winbase::GetNamedPipeClientSessionId(self.h, &mut _clntsessionid);
-
-            println!("GetNamedPipeServer/ClientSessionID return values and GetLastError Information.");
-            println!("Getlasterror = {}", GetLastError());
-            println!("_h1 = {} andd GetNamedPipeServerSessionID = {}", _h1, _svrsessionid);
-            println!("_h2 = {} andd GetNamedPipeClientSessionId = {}", _h2, _clntsessionid);
-		 }
-
-         // If the 2 handles self.h and other.h have different values, but point to the same
-         // memory region/file serial number then the handles are just duplicates.
-         //
-         // Per Microsoft you need to check the FileIndexHigh, FileIndexLow, and
-         // dwVolumeSerialNumber for both handles' BY_HANDLE_FILE_INFORMATION structures
-         // to verify if the 2 handles point to the same object.
-         //
-         // see https://docs.microsoft.com/en-us/windows/desktop/api/fileapi/ns-fileapi-_by_handle_file_information
-         // println!("GetlastError() = {}", GetLastError());
-         // println!("Value of _h3 = {}", _h3);
-
-         //println!("Value of _h1 = {}, Value of _h2 = {}", _h1, _h2);
-         //println!("Handle1  = {:?}, Handle2 = {:?}", self.h, other.h);
-         //println!("handle1 serial# = {}, handle2 serial#  = {}", _handle_info1.dwVolumeSerialNumber, _handle_info2.dwVolumeSerialNumber);
-         //println!("FileIndexHigh Vaules: {} and {} ", _handle_info1.nFileIndexHigh, _handle_info2.nFileIndexHigh);
-         //println!("FileIndexLow Vaules: {} and {} ", _handle_info1.nFileIndexLow, _handle_info2.nFileIndexLow);
-
-         (_h1 > 0) && (_h2 > 0)
-         //(_handle_info1.dwVolumeSerialNumber == _handle_info2.dwVolumeSerialNumber) &&
-         //(_handle_info1.nFileIndexHigh == _handle_info2.nFileIndexHigh) &&
-         //(_handle_info1.nFileIndexLow == _handle_info2.nFileIndexLow)
+            // Calling LoadLibraryA every time seems to be ok since libraries are refcounted and multiple calls won't produce multiple instances.
+            let module_handle = winapi::um::libloaderapi::LoadLibraryA(WINDOWS_APP_MODULE_NAME_CSTRING.as_ptr());
+            if module_handle == 0 as *mut _ {
+                panic!("Error loading library {}. {}", WINDOWS_APP_MODULE_NAME, WinError::error_string(GetLastError()));
+            }
+            let proc = winapi::um::libloaderapi::GetProcAddress(module_handle, COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING.as_ptr());
+            if proc == 0 as *mut _ {
+                panic!("Error calling GetProcAddress to use {}. {}", COMPARE_OBJECT_HANDLES_FUNCTION_NAME, WinError::error_string(GetLastError()));
+            }
+            let compare_object_handles: unsafe extern "stdcall" fn(HANDLE, HANDLE) -> winapi::shared::minwindef::BOOL = std::mem::transmute(proc);
+            compare_object_handles(self.h, other.h) != 0
+        }
     }
 }
 
@@ -988,6 +950,7 @@ pub struct OsIpcReceiver {
     reader: RefCell<MessageReader>,
 }
 
+#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
         self.reader.borrow().handle == other.reader.borrow().handle
@@ -1146,7 +1109,8 @@ impl OsIpcReceiver {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
+#[cfg_attr(feature = "windows-shared-memory-equality", derive(PartialEq))]
 pub struct OsIpcSender {
     handle: WinHandle,
     // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
@@ -1617,15 +1581,9 @@ impl Clone for OsIpcSharedMemory {
     }
 }
 
+#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for OsIpcSharedMemory {
     fn eq(&self, other: &OsIpcSharedMemory) -> bool {
-        // Due to the way `WinHandle.eq()` is currently implemented,
-        // this only finds equality when comparing the very same SHM structure --
-        // it doesn't recognize cloned SHM structures as equal.
-        // (Neither when cloned explicitly, nor implicitly through an IPC transfer.)
-        //
-        // It's not clear though whether the inability to test this
-        // is really a meaningful limitation...
         self.handle == other.handle
     }
 }
@@ -1739,7 +1697,8 @@ pub enum OsIpcChannel {
     Receiver(OsIpcReceiver),
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
+#[cfg_attr(feature = "windows-shared-memory-equality", derive(PartialEq))]
 pub struct OsOpaqueIpcChannel {
     handle: WinHandle,
 }

@@ -13,6 +13,7 @@ memfd = ["sc"]
 unstable = []
 async = ["futures-preview", "futures-test-preview"]
 win32-trace = []
+windows-shared-memory-equality = []
 
 [dependencies]
 bincode = "1"
