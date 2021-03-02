@@ -6,12 +6,19 @@ rust:
 
 os:
   - linux
+  - osx
 
 env:
   global:
     - RUST_BACKTRACE=1
   matrix:
     - FEATURES="unstable"
+    - FEATURES="unstable force-inprocess"
+
+matrix:
+  include:
+    - os: linux
+      env: FEATURES="unstable memfd"
 
 script:
   - cargo build --features "$FEATURES"
