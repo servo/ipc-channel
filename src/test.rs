@@ -444,6 +444,7 @@ fn shared_memory() {
 }
 
 #[test]
+#[cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
 fn shared_memory_object_equality() {
     let person = ("Patrick Walton".to_owned(), 29);
     let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
