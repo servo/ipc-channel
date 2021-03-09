@@ -14,7 +14,7 @@
 )))]
 use crate::ipc::IpcReceiver;
 use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-use crate::router::ROUTER;
+use crate::router::{ROUTER, RouterProxy};
 use crossbeam_channel::{self, Sender};
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -275,7 +275,7 @@ fn cross_process_embedded_senders_fork() {
 }
 
 #[test]
-fn router_simple() {
+fn router_simple_global() {
     // Note: All ROUTER operation need to run in a single test,
     // since the state of the router will carry across tests.
 
@@ -323,7 +323,8 @@ fn router_routing_to_new_crossbeam_receiver() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
-    let crossbeam_receiver = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx);
+    let router = RouterProxy::new();
+    let crossbeam_receiver = router.route_ipc_receiver_to_new_crossbeam_receiver(rx);
     let received_person = crossbeam_receiver.recv().unwrap();
     assert_eq!(received_person, person);
 }
@@ -336,8 +337,9 @@ fn router_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     tx1.send(person.clone()).unwrap();
 
-    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
-    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let router = RouterProxy::new();
+    let crossbeam_rx_0 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
     let received_person_0 = crossbeam_rx_0.recv().unwrap();
     let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
@@ -355,8 +357,9 @@ fn router_multithreaded_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     thread::spawn(move || tx1.send(person_for_thread).unwrap());
 
-    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
-    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let router = RouterProxy::new();
+    let crossbeam_rx_0 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
     let received_person_0 = crossbeam_rx_0.recv().unwrap();
     let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
@@ -379,7 +382,8 @@ fn router_drops_callbacks_on_sender_shutdown() {
     let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper { sender: drop_tx };
 
-    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    let router = RouterProxy::new();
+    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
     drop(tx0);
     assert_eq!(drop_rx.recv(), Ok(42));
 }
@@ -400,7 +404,8 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper { sender: drop_tx };
 
-    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    let router = RouterProxy::new();
+    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
     let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
     drop(txs);
     drop(tx0);
@@ -419,7 +424,8 @@ fn router_big_data() {
 
     let (callback_fired_sender, callback_fired_receiver) =
         crossbeam_channel::unbounded::<Vec<Person>>();
-    ROUTER.add_route(
+    let router = RouterProxy::new();
+    router.add_route(
         rx.to_opaque(),
         Box::new(move |people| callback_fired_sender.send(people.to().unwrap()).unwrap()),
     );
