@@ -9,27 +9,32 @@
 
 #[cfg(not(any(
     feature = "force-inprocess",
-    target_os = "windows",
     target_os = "android",
     target_os = "ios"
 )))]
 use crate::ipc::IpcReceiver;
 use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-use crate::router::ROUTER;
+use crate::router::{ROUTER, RouterProxy};
 use crossbeam_channel::{self, Sender};
 #[cfg(not(any(
     feature = "force-inprocess",
-    target_os = "windows",
     target_os = "android",
     target_os = "ios"
 )))]
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+use std::env;
 use std::iter;
 #[cfg(not(any(
     feature = "force-inprocess",
-    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
+use std::process::{self, Command, Stdio};
+#[cfg(not(any(
+    feature = "force-inprocess",
     target_os = "android",
     target_os = "ios"
 )))]
@@ -39,7 +44,6 @@ use std::thread;
 
 #[cfg(not(any(
     feature = "force-inprocess",
-    target_os = "windows",
     target_os = "android",
     target_os = "ios"
 )))]
@@ -47,7 +51,6 @@ use crate::ipc::IpcOneShotServer;
 
 #[cfg(not(any(
     feature = "force-inprocess",
-    target_os = "windows",
     target_os = "android",
     target_os = "ios"
 )))]
@@ -93,6 +96,34 @@ impl Wait for libc::pid_t {
             libc::waitpid(self, ptr::null_mut(), 0);
         }
     }
+}
+
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+pub fn get_channel_name_arg(which: &str) -> Option<String> {
+    for arg in env::args() {
+        let arg_str = &*format!("channel_name-{}:", which);
+        if arg.starts_with(arg_str) {
+            return Some(arg[arg_str.len()..].to_owned());
+        }
+    }
+    None
+}
+
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
+    Command::new(env::current_exe().unwrap())
+        .arg(test_name)
+        .args(server_args.iter()
+                         .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to execute server process")
 }
 
 type Person = (String, u32);
@@ -194,12 +225,35 @@ fn select() {
 
 #[cfg(not(any(
     feature = "force-inprocess",
+    target_os = "android",
+    target_os = "ios"
+)))]
+#[test]
+fn cross_process_embedded_senders_spawn() {
+    let person = ("Patrick Walton".to_owned(), 29);
+
+    let server0_name = get_channel_name_arg("server0");
+    let server2_name = get_channel_name_arg("server2");
+    if let (Some(server0_name), Some(server2_name)) = (server0_name, server2_name) {
+        let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
+        let tx0 = IpcSender::connect(server0_name).unwrap();
+        tx0.send(tx1).unwrap();
+        rx1.recv().unwrap();
+        let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
+        tx2.send(person.clone()).unwrap();
+
+        unsafe { libc::exit(0); }
+    }
+}
+
+#[cfg(not(any(
+    feature = "force-inprocess",
     target_os = "windows",
     target_os = "android",
     target_os = "ios"
 )))]
 #[test]
-fn cross_process_embedded_senders() {
+fn cross_process_embedded_senders_fork() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (server0, server0_name) = IpcOneShotServer::new().unwrap();
     let (server2, server2_name) = IpcOneShotServer::new().unwrap();
@@ -221,7 +275,7 @@ fn cross_process_embedded_senders() {
 }
 
 #[test]
-fn router_simple() {
+fn router_simple_global() {
     // Note: All ROUTER operation need to run in a single test,
     // since the state of the router will carry across tests.
 
@@ -269,7 +323,8 @@ fn router_routing_to_new_crossbeam_receiver() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
 
-    let crossbeam_receiver = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx);
+    let router = RouterProxy::new();
+    let crossbeam_receiver = router.route_ipc_receiver_to_new_crossbeam_receiver(rx);
     let received_person = crossbeam_receiver.recv().unwrap();
     assert_eq!(received_person, person);
 }
@@ -282,8 +337,9 @@ fn router_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     tx1.send(person.clone()).unwrap();
 
-    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
-    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let router = RouterProxy::new();
+    let crossbeam_rx_0 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
     let received_person_0 = crossbeam_rx_0.recv().unwrap();
     let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
@@ -301,8 +357,9 @@ fn router_multithreaded_multiplexing() {
     let (tx1, rx1) = ipc::channel().unwrap();
     thread::spawn(move || tx1.send(person_for_thread).unwrap());
 
-    let crossbeam_rx_0 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
-    let crossbeam_rx_1 = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
+    let router = RouterProxy::new();
+    let crossbeam_rx_0 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx0);
+    let crossbeam_rx_1 = router.route_ipc_receiver_to_new_crossbeam_receiver(rx1);
     let received_person_0 = crossbeam_rx_0.recv().unwrap();
     let received_person_1 = crossbeam_rx_1.recv().unwrap();
     assert_eq!(received_person_0, person);
@@ -325,7 +382,8 @@ fn router_drops_callbacks_on_sender_shutdown() {
     let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper { sender: drop_tx };
 
-    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    let router = RouterProxy::new();
+    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
     drop(tx0);
     assert_eq!(drop_rx.recv(), Ok(42));
 }
@@ -346,7 +404,8 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let (drop_tx, drop_rx) = crossbeam_channel::unbounded();
     let dropper = Dropper { sender: drop_tx };
 
-    ROUTER.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    let router = RouterProxy::new();
+    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
     let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
     drop(txs);
     drop(tx0);
@@ -365,7 +424,8 @@ fn router_big_data() {
 
     let (callback_fired_sender, callback_fired_receiver) =
         crossbeam_channel::unbounded::<Vec<Person>>();
-    ROUTER.add_route(
+    let router = RouterProxy::new();
+    router.add_route(
         rx.to_opaque(),
         Box::new(move |people| callback_fired_sender.send(people.to().unwrap()).unwrap()),
     );
@@ -381,12 +441,23 @@ fn shared_memory() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
-    assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
+    assert_eq!(received_person_and_shared_memory.0, person_and_shared_memory.0);
     assert!(person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
     assert!(received_person_and_shared_memory
         .1
         .iter()
         .all(|byte| *byte == 0xba));
+}
+
+#[test]
+#[cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
+fn shared_memory_object_equality() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person_and_shared_memory.clone()).unwrap();
+    let received_person_and_shared_memory = rx.recv().unwrap();
+    assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
 }
 
 #[test]

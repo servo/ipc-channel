@@ -7,6 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// Most of this file won't compile without `windows-shared-memory-equality` feature on Windows since `PartialEq` won't be implemented for `IpcSharedMemory`.
+#![cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
+
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use crate::platform::{OsIpcSharedMemory};
 use std::collections::HashMap;
@@ -14,11 +17,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::thread;
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+use libc;
 use crate::platform::{OsIpcSender, OsIpcOneShotServer};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use libc::{kill, SIGSTOP, SIGCONT};
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 use crate::test::{fork, Wait};
+
+// Helper to get a channel_name argument passed in; used for the
+// cross-process spawn server tests.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+use crate::test::{get_channel_name_arg, spawn_server};
 
 #[test]
 fn simple() {
@@ -209,7 +219,8 @@ fn with_n_fds(n: usize, size: usize) {
 
 // These tests only apply to platforms that need fragmentation.
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd")))]
+                                                target_os = "freebsd",
+                                                target_os = "windows")))]
 mod fragment_tests {
     use crate::platform;
     use super::with_n_fds;
@@ -656,9 +667,32 @@ fn server_connect_first() {
                (data, vec![], vec![]));
 }
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[test]
+fn cross_process_spawn() {
+    let data: &[u8] = b"1234567";
+
+    let channel_name = get_channel_name_arg("server");
+    if let Some(channel_name) = channel_name {
+        let tx = OsIpcSender::connect(channel_name).unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
+
+        unsafe { libc::exit(0); }
+    }
+
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let mut child_pid = spawn_server("cross_process_spawn", &[("server", &*name)]);
+
+    let (_, received_data, received_channels, received_shared_memory_regions) =
+        server.accept().unwrap();
+    child_pid.wait().expect("failed to wait on child");
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
+}
+
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
-fn cross_process() {
+fn cross_process_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
@@ -674,9 +708,42 @@ fn cross_process() {
                (data, vec![], vec![]));
 }
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[test]
+fn cross_process_sender_transfer_spawn() {
+    let channel_name = get_channel_name_arg("server");
+    if let Some(channel_name) = channel_name {
+        let super_tx = OsIpcSender::connect(channel_name).unwrap();
+        let (sub_tx, sub_rx) = platform::channel().unwrap();
+        let data: &[u8] = b"foo";
+        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        sub_rx.recv().unwrap();
+        let data: &[u8] = b"bar";
+        super_tx.send(data, vec![], vec![]).unwrap();
+
+        unsafe { libc::exit(0); }
+    }
+
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let mut child_pid = spawn_server("cross_process_sender_transfer_spawn", &[("server", &*name)]);
+
+    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let sub_tx = received_channels[0].to_sender();
+    let data: &[u8] = b"baz";
+    sub_tx.send(data, vec![], vec![]).unwrap();
+
+    let data: &[u8] = b"bar";
+    let (received_data, received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
+    child_pid.wait().expect("failed to wait on child");
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (data, vec![], vec![]));
+}
+
 #[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
 #[test]
-fn cross_process_sender_transfer() {
+fn cross_process_sender_transfer_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
     let child_pid = unsafe { fork(|| {
@@ -691,7 +758,7 @@ fn cross_process_sender_transfer() {
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let sub_tx = received_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
@@ -980,4 +1047,83 @@ mod sync_test {
     fn receiver_not_sync() {
         platform::OsIpcSender::test_not_sync();
     }
+}
+
+// This test panics on Windows, because the other process will panic
+// when it detects that it receives handles that are intended for another
+// process.  It's marked as ignore/known-fail on Windows for this reason.
+//
+// TODO -- this fails on OSX as well with a MACH_SEND_INVALID_RIGHT!
+// Needs investigation.  It may be a similar underlying issue, just done by
+// the kernel instead of explicitly (ports in a message that's already
+// buffered are intended for only one process).
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[cfg_attr(any(target_os = "windows", target_os = "macos"), ignore)]
+#[test]
+fn cross_process_two_step_transfer_spawn() {
+    let cookie: &[u8] = b"cookie";
+
+    let channel_name = get_channel_name_arg("server");
+    if let Some(channel_name) = channel_name {
+        // connect by name to our other process
+        let super_tx = OsIpcSender::connect(channel_name).unwrap();
+
+        // create a channel for real communication between the two processes
+        let (sub_tx, sub_rx) = platform::channel().unwrap();
+
+        // send the other process the tx side, so it can send us the channels
+        super_tx.send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+
+        // get two_rx from the other process
+        let (_, mut received_channels, _) = sub_rx.recv().unwrap();
+        assert_eq!(received_channels.len(), 1);
+        let two_rx = received_channels[0].to_receiver();
+
+        // get one_rx from two_rx's buffer
+        let (_, mut received_channels, _) = two_rx.recv().unwrap();
+        assert_eq!(received_channels.len(), 1);
+        let one_rx = received_channels[0].to_receiver();
+
+        // get a cookie from one_rx
+        let (data, _, _) = one_rx.recv().unwrap();
+        assert_eq!(&data[..], cookie);
+
+        // finally, send a cookie back
+        super_tx.send(&data, vec![], vec![]).unwrap();
+
+        // terminate
+        unsafe { libc::exit(0); }
+    }
+
+    // create channel 1
+    let (one_tx, one_rx) = platform::channel().unwrap();
+    // put data in channel 1's pipe
+    one_tx.send(cookie, vec![], vec![]).unwrap();
+
+    // create channel 2
+    let (two_tx, two_rx) = platform::channel().unwrap();
+    // put channel 1's rx end in channel 2's pipe
+    two_tx.send(&[], vec![OsIpcChannel::Receiver(one_rx)], vec![]).unwrap();
+
+    // create a one-shot server, and spawn another process
+    let (server, name) = OsIpcOneShotServer::new().unwrap();
+    let mut child_pid = spawn_server("cross_process_two_step_transfer_spawn",
+                                     &[("server", &*name)]);
+
+    // The other process will have sent us a transmit channel in received channels
+    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
+    assert_eq!(received_channels.len(), 1);
+    let sub_tx = received_channels[0].to_sender();
+
+    // Send the outer payload channel, so the server can use it to
+    // retrive the inner payload and the cookie
+    sub_tx.send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![]).unwrap();
+
+    // Then we wait for the cookie to make its way back to us
+    let (received_data, received_channels, received_shared_memory_regions) =
+        super_rx.recv().unwrap();
+    let child_exit_code = child_pid.wait().expect("failed to wait on child");
+    assert!(child_exit_code.success());
+    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
+               (cookie, vec![], vec![]));
 }

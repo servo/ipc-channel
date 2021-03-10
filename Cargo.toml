@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.14.1"
+version = "0.15.0"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT/Apache-2.0"
@@ -12,6 +12,8 @@ force-inprocess = []
 memfd = ["sc"]
 unstable = []
 async = ["futures-preview", "futures-test-preview"]
+win32-trace = []
+windows-shared-memory-equality = []
 
 [dependencies]
 bincode = "1"
@@ -32,3 +34,6 @@ sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
 crossbeam-utils = "0.7"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = {version = "0.3.7", features = ["minwindef", "ioapiset", "memoryapi", "namedpipeapi", "handleapi", "fileapi", "impl-default"]}
