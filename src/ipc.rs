@@ -870,9 +870,7 @@ fn deserialize_os_ipc_sender<'de, D>(deserializer: D)
                                 -> Result<OsIpcSender, D::Error> where D: Deserializer<'de> {
     let index: usize = Deserialize::deserialize(deserializer)?;
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
-        // FIXME(pcwalton): This could panic if the data was corrupt and the index was out of
-        // bounds. We should return an `Err` result instead.
-        Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_sender())
+        os_ipc_channels_for_deserialization.borrow_mut().get_mut(index).map(|x| x.to_sender()).ok_or(serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(index as u64), &"index for OsSender"))
     })
 }
 
@@ -896,6 +894,6 @@ fn deserialize_os_ipc_receiver<'de, D>(deserializer: D)
     OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
         // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
         // of bounds. We should return an `Err` result instead.
-        Ok(os_ipc_channels_for_deserialization.borrow_mut()[index].to_receiver())
+        os_ipc_channels_for_deserialization.borrow_mut().get_mut(index).map(|x| x.to_receiver()).ok_or(serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(index as u64), &"index for OsReceiver"))
     })
 }
