@@ -33,6 +33,11 @@ pub struct mach_vm_info_region {
 
 pub type mach_vm_info_region_t = mach_vm_info_region;
 
+extern "C" {
+    pub fn fileport_makeport(fd: std::os::raw::c_int, port: *mut fileport_t) -> std::os::raw::c_int;
+    pub fn fileport_makefd(port: fileport_t) -> std::os::raw::c_int;
+}
+
 // Code below this line is automatically generated.
 
 pub type boolean_t = ::libc::c_uint;
@@ -62,6 +67,7 @@ pub type mach_port_mscount_t = natural_t;
 pub type mach_port_msgcount_t = natural_t;
 pub type mach_port_rights_t = natural_t;
 pub type mach_port_srights_t = ::libc::c_uint;
+pub type fileport_t = mach_port_type_t;
 #[repr(C)]
 #[derive(Copy)]
 pub struct Struct_mach_port_status {

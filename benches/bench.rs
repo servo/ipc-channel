@@ -46,7 +46,7 @@ mod platform {
                         let wait_rx = wait_rx.lock().unwrap();
                         let tx = tx;
                         for _ in 0..ITERATIONS {
-                            tx.send(&data, vec![], vec![]).unwrap();
+                            tx.send(&data, vec![], vec![], vec![]).unwrap();
                             if ITERATIONS > 1 {
                                 // Prevent beginning of the next send
                                 // from overlapping with receive of last fragment,
@@ -72,7 +72,7 @@ mod platform {
         } else {
             b.iter(|| {
                 for _ in 0..ITERATIONS {
-                    tx.send(&data, vec![], vec![]).unwrap();
+                    tx.send(&data, vec![], vec![], vec![]).unwrap();
                     rx.recv().unwrap();
                 }
                 0

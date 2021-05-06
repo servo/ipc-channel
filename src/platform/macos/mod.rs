@@ -13,6 +13,8 @@ use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 use self::mach_sys::mach_port_deallocate;
+use self::mach_sys::fileport_t;
+use crate::platform::Descriptor;
 
 use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
@@ -29,6 +31,12 @@ use std::ptr;
 use std::slice;
 use std::sync::RwLock;
 use std::usize;
+
+use std::os::raw::c_int;
+
+use std::os::unix::io::AsRawFd;
+
+use crate::platform::common::fd::OwnedFd;
 
 mod mach_sys;
 
@@ -197,6 +205,31 @@ fn mach_port_extract_right(
     Err(error.into())
 }
 
+fn mach_fileport_makeport(fd: c_int) -> Result<fileport_t, KernelError> {
+    let mut port = MACH_PORT_NULL;
+    let error = unsafe {
+        mach_sys::fileport_makeport(fd, & mut port)
+    };
+    if error == KERN_SUCCESS {
+        Ok(port)
+    }
+    else {
+        Err(error.into())
+    }
+}
+
+fn mach_fileport_makefd(port: fileport_t) -> Result<c_int, KernelError> {
+    let fd = unsafe {
+        mach_sys::fileport_makefd(port)
+    };
+    if fd >= 0 {
+        Ok(fd)
+    }
+    else {
+        Err(fd.into())
+    }
+}
+
 impl OsIpcReceiver {
     fn new() -> Result<OsIpcReceiver,MachError> {
         let port = mach_port_allocate(MACH_PORT_RIGHT_RECEIVE)?;
@@ -325,12 +358,12 @@ impl OsIpcReceiver {
     }
 
     fn recv_with_blocking_mode(&self, blocking_mode: BlockingMode)
-                               -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+                               -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
                                          MachError> {
         select(self.port.get(), blocking_mode).and_then(|result| {
             match result {
-                OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
-                    Ok((data, channels, shared_memory_regions))
+                OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions, descriptors) => {
+                    Ok((data, channels, shared_memory_regions, descriptors))
                 }
                 OsIpcSelectionResult::ChannelClosed(_) => Err(MachError::from(MACH_NOTIFY_NO_SENDERS)),
             }
@@ -338,12 +371,12 @@ impl OsIpcReceiver {
     }
 
     pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MachError> {
+                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),MachError> {
         self.recv_with_blocking_mode(BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MachError> {
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),MachError> {
         self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 }
@@ -473,7 +506,8 @@ impl OsIpcSender {
     pub fn send(&self,
                 data: &[u8],
                 ports: Vec<OsIpcChannel>,
-                mut shared_memory_regions: Vec<OsIpcSharedMemory>)
+                mut shared_memory_regions: Vec<OsIpcSharedMemory>,
+                descriptors: Vec<Descriptor>)
                 -> Result<(),MachError> {
         let mut data = SendData::from(data);
         if let Some(data) = data.take_shared_memory() {
@@ -481,7 +515,7 @@ impl OsIpcSender {
         }
 
         unsafe {
-            let size = Message::size_of(&data, ports.len(), shared_memory_regions.len());
+            let size = Message::size_of(&data, ports.len(), shared_memory_regions.len(), descriptors.len());
             let message = libc::malloc(size as size_t) as *mut Message;
             (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
                 MACH_MSGH_BITS_COMPLEX;
@@ -491,7 +525,7 @@ impl OsIpcSender {
             (*message).header.msgh_reserved = 0;
             (*message).header.msgh_id = 0;
             (*message).body.msgh_descriptor_count =
-                (ports.len() + shared_memory_regions.len()) as u32;
+                (ports.len() + shared_memory_regions.len() + descriptors.len()) as u32;
 
             let mut port_descriptor_dest = message.offset(1) as *mut mach_msg_port_descriptor_t;
             for outgoing_port in &ports {
@@ -519,7 +553,28 @@ impl OsIpcSender {
                 shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
             }
 
-            let is_inline_dest = shared_memory_descriptor_dest as *mut bool;
+            // See https://chromium.googlesource.com/chromium/src/+/refs/heads/main/mojo/core/channel_mac.cc#393
+            let descriptor_count = descriptors.len();
+            let mut port_descriptor_dest = shared_memory_descriptor_dest as *mut mach_msg_port_descriptor_t;
+            for descriptor in &descriptors {
+                (*port_descriptor_dest).name = mach_fileport_makeport(descriptor.as_raw_fd())?;
+                (*port_descriptor_dest).pad1 = 0;
+                (*port_descriptor_dest).pad2 = 0;
+
+                (*port_descriptor_dest).disposition = MACH_MSG_TYPE_MOVE_SEND;
+                (*port_descriptor_dest).type_ = MACH_MSG_PORT_DESCRIPTOR;
+                port_descriptor_dest = port_descriptor_dest.offset(1);
+            }
+
+            let mut port_counts = port_descriptor_dest as *mut usize;
+            *port_counts = ports.len();
+            port_counts = port_counts.offset(1);
+            *port_counts = shared_memory_regions.len();
+            port_counts = port_counts.offset(1);
+            *port_counts = descriptor_count;
+            port_counts = port_counts.offset(1);
+
+            let is_inline_dest = port_counts as *mut bool;
             *is_inline_dest = data.is_inline();
 
             if data.is_inline() {
@@ -552,7 +607,7 @@ impl OsIpcSender {
                         *max_inline_size = inline_len;
                     }
                 }
-                return self.send(inline_data, ports, shared_memory_regions);
+                return self.send(inline_data, ports, shared_memory_regions, descriptors);
             }
             if os_result != MACH_MSG_SUCCESS {
                 return Err(MachError::from(os_result))
@@ -562,6 +617,10 @@ impl OsIpcSender {
             }
             for shared_memory_region in shared_memory_regions {
                 mem::forget(shared_memory_region);
+            }
+
+            for descriptor in descriptors {
+                mem::forget(descriptor);
             }
             Ok(())
         }
@@ -649,15 +708,15 @@ impl Drop for OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
+            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions, descriptors) => {
+                (id, data, channels, shared_memory_regions, descriptors)
             }
             OsIpcSelectionResult::ChannelClosed(id) => {
                 panic!("OsIpcSelectionResult::unwrap(): receiver ID {} was closed!", id)
@@ -730,35 +789,58 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             return Ok(OsIpcSelectionResult::ChannelClosed(local_port as u64))
         }
 
-        let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
+        let (mut ports, mut shared_memory_regions, mut descriptors) = (Vec::new(), Vec::new(), Vec::new());
         let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
         let mut descriptors_remaining = (*message).body.msgh_descriptor_count;
+        let mut raw_ports = Vec::new();
         while descriptors_remaining > 0 {
-            if (*port_descriptor).type_ != MACH_MSG_PORT_DESCRIPTOR {
-                break
+            match (*port_descriptor).type_ {
+                MACH_MSG_OOL_DESCRIPTOR => {
+                    let shared_memory_descriptor = port_descriptor as *mut mach_msg_ool_descriptor_t;
+                    shared_memory_regions.push(OsIpcSharedMemory::from_raw_parts(
+                        (*shared_memory_descriptor).address as *mut u8,
+                        (*shared_memory_descriptor).size as usize));
+                    port_descriptor = shared_memory_descriptor.offset(1) as *mut mach_msg_port_descriptor_t;
+
+                },
+                MACH_MSG_PORT_DESCRIPTOR => {
+                    raw_ports.push((*port_descriptor).name);
+                    port_descriptor = port_descriptor.offset(1);
+                },
+                _ => {
+                    panic!("Unexpected mach message type");
+                },
             }
-            ports.push(OsOpaqueIpcChannel::from_name((*port_descriptor).name));
-            port_descriptor = port_descriptor.offset(1);
+
             descriptors_remaining -= 1;
         }
 
-        let mut shared_memory_descriptor = port_descriptor as *mut mach_msg_ool_descriptor_t;
-        while descriptors_remaining > 0 {
-            debug_assert!((*shared_memory_descriptor).type_ == MACH_MSG_OOL_DESCRIPTOR);
-            shared_memory_regions.push(OsIpcSharedMemory::from_raw_parts(
-                    (*shared_memory_descriptor).address as *mut u8,
-                    (*shared_memory_descriptor).size as usize));
-            shared_memory_descriptor = shared_memory_descriptor.offset(1);
-            descriptors_remaining -= 1;
+        let mut port_counts = port_descriptor as *mut usize;
+        let port_count = *port_counts;
+        port_counts = port_counts.offset(1);
+        let shared_memory_region_count = *port_counts;
+        port_counts = port_counts.offset(1);
+        let descriptor_count = *port_counts;
+
+        assert_eq!(raw_ports.len(), port_count + descriptor_count, "Mismatch in expected and transmitted number of ports");
+        assert_eq!(shared_memory_regions.len(), shared_memory_region_count, "Mismatch in expected and transmitted number of shared memory regions");
+
+        for idx in 0 .. port_count {
+            ports.push(OsOpaqueIpcChannel::from_name(raw_ports[idx]));
         }
 
-        let has_inline_data_ptr = shared_memory_descriptor as *mut bool;
+        for idx in port_count .. (port_count + descriptor_count) {
+            let fd = mach_fileport_makefd(raw_ports[idx])?;
+            descriptors.push(OwnedFd::new(fd));
+        }
+
+        let has_inline_data_ptr = port_counts.offset(1) as *mut bool;
         let has_inline_data = *has_inline_data_ptr;
         let payload = if has_inline_data {
             let payload_size_ptr = has_inline_data_ptr.offset(1) as *mut usize;
             let payload_size = *payload_size_ptr;
             let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
-                (shared_memory_descriptor as usize);
+                (has_inline_data_ptr as usize);
             assert!(payload_size <= max_payload_size);
             let payload_ptr = payload_size_ptr.offset(1) as *mut u8;
             slice::from_raw_parts(payload_ptr, payload_size).to_vec()
@@ -774,7 +856,8 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
         Ok(OsIpcSelectionResult::DataReceived(local_port as u64,
                                              payload,
                                              ports,
-                                             shared_memory_regions))
+                                             shared_memory_regions,
+                                             descriptors))
     }
 }
 
@@ -802,9 +885,10 @@ impl OsIpcOneShotServer {
     pub fn accept(self) -> Result<(OsIpcReceiver,
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
-                                   Vec<OsIpcSharedMemory>),MachError> {
-        let (bytes, channels, shared_memory_regions) = self.receiver.recv()?;
-        Ok((self.receiver.consume(), bytes, channels, shared_memory_regions))
+                                   Vec<OsIpcSharedMemory>,
+                                   Vec<Descriptor>),MachError> {
+        let (bytes, channels, shared_memory_regions, descriptors) = self.receiver.recv()?;
+        Ok((self.receiver.consume(), bytes, channels, shared_memory_regions, descriptors))
     }
 }
 
@@ -930,10 +1014,12 @@ struct Message {
 }
 
 impl Message {
-    fn size_of(data: &SendData, port_length: usize, shared_memory_length: usize) -> usize {
+    fn size_of(data: &SendData, port_length: usize, shared_memory_length: usize, descriptors_length: usize) -> usize {
         let mut size = mem::size_of::<Message>() +
             mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
             mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
+            mem::size_of::<mach_msg_port_descriptor_t>() * descriptors_length +
+            mem::size_of::<u64>() * 3 +
             mem::size_of::<bool>();
 
         if data.is_inline() {
