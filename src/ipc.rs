@@ -14,8 +14,9 @@ use bincode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
+use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
-use std::io::Error;
+use std::io;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -39,14 +40,52 @@ thread_local! {
 #[derive(Debug)]
 pub enum IpcError {
     Bincode(bincode::Error),
-    Io(Error),
+    Io(io::Error),
     Disconnected,
+}
+
+impl fmt::Display for IpcError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            IpcError::Bincode(ref err) => write!(fmt, "bincode error: {}", err),
+            IpcError::Io(ref err) => write!(fmt, "io error: {}", err),
+            IpcError::Disconnected => write!(fmt, "disconnected"),
+        }
+    }
+}
+
+impl StdError for IpcError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match *self {
+            IpcError::Bincode(ref err) => Some(err),
+            IpcError::Io(ref err) => Some(err),
+            IpcError::Disconnected => None,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub enum TryRecvError {
     IpcError(IpcError),
     Empty,
+}
+
+impl fmt::Display for TryRecvError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            TryRecvError::IpcError(ref err) => write!(fmt, "ipc error: {}", err),
+            TryRecvError::Empty => write!(fmt, "empty"),
+        }
+    }
+}
+
+impl StdError for TryRecvError {
+    fn source(&self) -> Option<&(dyn StdError + 'static)> {
+        match *self {
+            TryRecvError::IpcError(ref err) => Some(err),
+            TryRecvError::Empty => None,
+        }
+    }
 }
 
 /// Create a connected [IpcSender] and [IpcReceiver] that
@@ -79,7 +118,7 @@ pub enum TryRecvError {
 ///
 /// [IpcSender]: struct.IpcSender.html
 /// [IpcReceiver]: struct.IpcReceiver.html
-pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
+pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>), io::Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
     let (os_sender, os_receiver) = platform::channel()?;
     let ipc_receiver = IpcReceiver {
@@ -121,7 +160,7 @@ pub fn channel<T>() -> Result<(IpcSender<T>, IpcReceiver<T>),Error>
 ///
 /// [IpcBytesReceiver]: struct.IpcBytesReceiver.html
 /// [IpcBytesSender]: struct.IpcBytesSender.html
-pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver),Error> {
+pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver), io::Error> {
     let (os_sender, os_receiver) = platform::channel()?;
     let ipc_bytes_receiver = IpcBytesReceiver {
         os_receiver: os_receiver,
@@ -290,7 +329,7 @@ impl<T> IpcSender<T> where T: Serialize {
     ///
     /// [IpcSender]: struct.IpcSender.html
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
-    pub fn connect(name: String) -> Result<IpcSender<T>,Error> {
+    pub fn connect(name: String) -> Result<IpcSender<T>, io::Error> {
         Ok(IpcSender {
             os_sender: OsIpcSender::connect(name)?,
             phantom: PhantomData,
@@ -393,7 +432,7 @@ impl IpcReceiverSet {
     ///
     /// [add]: #method.add
     /// [IpcReceiverSet]: struct.IpcReceiverSet.html
-    pub fn new() -> Result<IpcReceiverSet,Error> {
+    pub fn new() -> Result<IpcReceiverSet, io::Error> {
         Ok(IpcReceiverSet {
             os_receiver_set: OsIpcReceiverSet::new()?,
         })
@@ -401,14 +440,14 @@ impl IpcReceiverSet {
 
     /// Add and consume the [IpcReceiver] to the set of receivers to be polled.
     /// [IpcReceiver]: struct.IpcReceiver.html
-    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<u64,Error>
+    pub fn add<T>(&mut self, receiver: IpcReceiver<T>) -> Result<u64, io::Error>
                   where T: for<'de> Deserialize<'de> + Serialize {
         Ok(self.os_receiver_set.add(receiver.os_receiver)?)
     }
 
     /// Add an [OpaqueIpcReceiver] to the set of receivers to be polled.
     /// [OpaqueIpcReceiver]: struct.OpaqueIpcReceiver.html
-    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<u64,Error> {
+    pub fn add_opaque(&mut self, receiver: OpaqueIpcReceiver) -> Result<u64, io::Error> {
         Ok(self.os_receiver_set.add(receiver.os_receiver)?)
     }
 
@@ -417,7 +456,7 @@ impl IpcReceiverSet {
     /// received or a channel closed event.
     ///
     /// [IpcReceiver]: struct.IpcReceiver.html
-    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>,Error> {
+    pub fn select(&mut self) -> Result<Vec<IpcSelectionResult>, io::Error> {
         let results = self.os_receiver_set.select()?;
         Ok(results.into_iter().map(|result| {
             match result {
@@ -713,7 +752,7 @@ pub struct IpcOneShotServer<T> {
 }
 
 impl<T> IpcOneShotServer<T> where T: for<'de> Deserialize<'de> + Serialize {
-    pub fn new() -> Result<(IpcOneShotServer<T>, String),Error> {
+    pub fn new() -> Result<(IpcOneShotServer<T>, String), io::Error> {
         let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((IpcOneShotServer {
             os_server: os_server,
@@ -810,8 +849,8 @@ impl Serialize for IpcBytesSender {
 
 impl IpcBytesSender {
     #[inline]
-    pub fn send(&self, data: &[u8]) -> Result<(),Error> {
-        self.os_sender.send(data, vec![], vec![]).map_err(|e| Error::from(e))
+    pub fn send(&self, data: &[u8]) -> Result<(), io::Error> {
+        self.os_sender.send(data, vec![], vec![]).map_err(|e| io::Error::from(e))
     }
 }
 
