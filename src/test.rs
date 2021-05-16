@@ -652,3 +652,27 @@ fn test_receiver_stream() {
         _ => panic!("Stream should have 5"),
     };
 }
+
+#[test]
+fn test_transfer_descriptor() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let person_clone = person.clone();
+    let temp_file_path = std::env::temp_dir().join("ipc-channel-test.txt" );
+    let mut file = std::fs::File::create(& temp_file_path).unwrap();
+    let text = "This is a text string";
+    use std::io::Write;
+    file.write(text.as_bytes());
+    std::mem::drop(file);
+    let file = std::fs::File::open(& temp_file_path).unwrap();
+
+    let person_and_descriptor = (person, crate::platform::Descriptor::from(file));
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person_and_descriptor).unwrap();
+    let received_person_and_descriptor = rx.recv().unwrap();
+    assert_eq!(received_person_and_descriptor.0, person_clone);
+    let mut file: std::fs::File = received_person_and_descriptor.1.into();
+    use std::io::Read;
+    let mut read_text = String::new();
+    file.read_to_string(&mut read_text);
+    assert_eq!(text, read_text);
+}
