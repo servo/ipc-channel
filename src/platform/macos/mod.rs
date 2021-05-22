@@ -18,9 +18,10 @@ use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
+use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
-use std::io::{Error, ErrorKind};
+use std::io;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
@@ -961,6 +962,25 @@ pub enum KernelError {
     Unknown(kern_return_t),
 }
 
+impl fmt::Display for KernelError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            KernelError::Success => write!(fmt, "Success."),
+            KernelError::NoSpace => write!(fmt, "No room in IPC name space for another right."),
+            KernelError::InvalidName => write!(fmt, "Name doesn't denote a right in the task."),
+            KernelError::InvalidRight => write!(fmt, "Name denotes a right, but not an appropriate right."),
+            KernelError::InvalidValue => write!(fmt, "Blatant range error."),
+            KernelError::InvalidCapability => write!(fmt, "The supplied (port) capability is improper."),
+            KernelError::UrefsOverflow => write!(fmt, "Operation would overflow limit on user-references."),
+            KernelError::NotInSet => write!(fmt, "Receive right is not a member of a port set."),
+            KernelError::Unknown(code) => write!(fmt, "Unknown kernel error: {:x}", code),
+        }
+    }
+}
+
+impl StdError for KernelError {
+}
+
 impl From<kern_return_t> for KernelError {
     fn from(code: kern_return_t) -> KernelError {
         match code {
@@ -1029,9 +1049,60 @@ impl MachError {
     }
 }
 
+impl fmt::Display for MachError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MachError::Success => write!(fmt, "Success"),
+            MachError::Kernel(kernel_error) => fmt::Display::fmt(&kernel_error, fmt),
+            MachError::IpcSpace => write!(fmt, "No room in IPC name space for another capability name."),
+            MachError::VmSpace => write!(fmt,  "No room in VM address space for out-of-line memory."),
+            MachError::IpcKernel => write!(fmt, "Kernel resource shortage handling an IPC capability."),
+            MachError::VmKernel => write!(fmt, "Kernel resource shortage handling out-of-line memory."),
+            MachError::SendInProgress => write!(fmt, "Thread is waiting to send.  (Internal use only.)"),
+            MachError::SendInvalidData => write!(fmt,  "Bogus in-line data."),
+            MachError::SendInvalidDest => write!(fmt,  "Bogus destination port."),
+            MachError::SendTimedOut => write!(fmt,  "Message not sent before timeout expired."),
+            MachError::SendInvalidVoucher => write!(fmt,  "Bogus voucher port."),
+            MachError::SendInterrupted => write!(fmt, "Software interrupt."),
+            MachError::SendMsgTooSmall => write!(fmt,  "Data doesn't contain a complete message."),
+            MachError::SendInvalidReply => write!(fmt,  "Bogus reply port."),
+            MachError::SendInvalidRight => write!(fmt,  "Bogus port rights in the message body."),
+            MachError::SendInvalidNotify => write!(fmt,  "Bogus notify port argument."),
+            MachError::SendInvalidMemory => write!(fmt,  "Invalid out-of-line memory pointer."),
+            MachError::SendNoBuffer => write!(fmt,  "No message buffer is available."),
+            MachError::SendTooLarge => write!(fmt,  "Send is too large for port"),
+            MachError::SendInvalidType => write!(fmt,  "Invalid msg-type specification."),
+            MachError::SendInvalidHeader => write!(fmt,  "A field in the header had a bad value."),
+            MachError::SendInvalidTrailer => write!(fmt, "The trailer to be sent does not match kernel format."),
+            MachError::SendInvalidRtOolSize => write!(fmt,  "compatibility: no longer a returned error"),
+            MachError::RcvInProgress => write!(fmt, "Thread is waiting for receive.  (Internal use only.)"),
+            MachError::RcvInvalidName => write!(fmt,  "Bogus name for receive port/port-set."),
+            MachError::RcvTimedOut => write!(fmt,  "Didn't get a message within the timeout value."),
+            MachError::RcvTooLarge => write!(fmt, "Message buffer is not large enough for inline data."),
+            MachError::RcvInterrupted => write!(fmt,  "Software interrupt."),
+            MachError::RcvPortChanged => write!(fmt,  "compatibility: no longer a returned error"),
+            MachError::RcvInvalidNotify => write!(fmt,  "Bogus notify port argument."),
+            MachError::RcvInvalidData => write!(fmt,  "Bogus message buffer for inline data."),
+            MachError::RcvPortDied => write!(fmt,  "Port/set was sent away/died during receive."),
+            MachError::RcvInSet => write!(fmt,  "compatibility: no longer a returned error"),
+            MachError::RcvHeaderError => write!(fmt,  "Error receiving message header.  See special bits."),
+            MachError::RcvBodyError => write!(fmt,  "Error receiving message body.  See special bits."),
+            MachError::RcvInvalidType => write!(fmt, "Invalid msg-type specification in scatter list."),
+            MachError::RcvScatterSmall => write!(fmt, "Out-of-line overwrite region is not large enough"),
+            MachError::RcvInvalidTrailer => write!(fmt, "trailer type or number of trailer elements not supported"),
+            MachError::RcvInProgressTimed => write!(fmt, "Waiting for receive with timeout. (Internal use only.)"),
+            MachError::NotifyNoSenders => write!(fmt, "No senders exist for this port."),
+            MachError::Unknown(mach_error_number) => write!(fmt, "Unknown Mach error: {:x}", mach_error_number),
+        }
+    }
+}
+
+impl StdError for MachError {
+}
+
 impl From<MachError> for bincode::Error {
     fn from(mach_error: MachError) -> Self {
-        Error::from(mach_error).into()
+        io::Error::from(mach_error).into()
     }
 }
 
@@ -1093,7 +1164,7 @@ impl From<MachError> for ipc::TryRecvError {
         match error {
             MachError::NotifyNoSenders => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
             MachError::RcvTimedOut => ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
         }
     }
 }
@@ -1102,169 +1173,66 @@ impl From<MachError> for ipc::IpcError {
     fn from(error: MachError) -> Self {
         match error {
             MachError::NotifyNoSenders => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(Error::from(e)),
+            e => ipc::IpcError::Io(io::Error::from(e)),
         }
     }
 }
 
-impl From<MachError> for Error {
+impl From<MachError> for io::Error {
     /// These error descriptions are from `mach/message.h` and `mach/kern_return.h`.
-    fn from(mach_error: MachError) -> Error {
-        match mach_error {
-            MachError::Success => Error::new(ErrorKind::Other, "Success"),
-            MachError::Kernel(KernelError::Success) => Error::new(ErrorKind::Other, "Success."),
-            MachError::Kernel(KernelError::NoSpace) => {
-                Error::new(ErrorKind::Other,
-                           "No room in IPC name space for another right.")
-            }
-            MachError::Kernel(KernelError::InvalidName) => {
-                Error::new(ErrorKind::Other,
-                           "Name doesn't denote a right in the task.")
-            }
-            MachError::Kernel(KernelError::InvalidRight) => {
-                Error::new(ErrorKind::Other,
-                           "Name denotes a right, but not an appropriate right.")
-            }
-            MachError::Kernel(KernelError::InvalidValue) => {
-                Error::new(ErrorKind::Other,
-                           "Blatant range error.")
-            }
-            MachError::Kernel(KernelError::InvalidCapability) => {
-                Error::new(ErrorKind::Other,
-                           "The supplied (port) capability is improper.")
-            }
-            MachError::Kernel(KernelError::UrefsOverflow) => {
-                Error::new(ErrorKind::Other,
-                           "Operation would overflow limit on user-references.")
-            }
-            MachError::Kernel(KernelError::NotInSet) => {
-                Error::new(ErrorKind::Other,
-                           "Receive right is not a member of a port set.")
-            }
-            MachError::Kernel(KernelError::Unknown(code)) => {
-                Error::new(ErrorKind::Other,
-                           format!("Unknown kernel error: {:x}", code))
-            }
-            MachError::IpcSpace => {
-                Error::new(ErrorKind::Other,
-                           "No room in IPC name space for another capability name.")
-            }
-            MachError::VmSpace => {
-                Error::new(ErrorKind::Other,
-                           "No room in VM address space for out-of-line memory.")
-            }
-            MachError::IpcKernel => {
-                Error::new(ErrorKind::Other,
-                           "Kernel resource shortage handling an IPC capability.")
-            }
-            MachError::VmKernel => {
-                Error::new(ErrorKind::Other,
-                           "Kernel resource shortage handling out-of-line memory.")
-            }
-            MachError::SendInProgress => {
-                Error::new(ErrorKind::Interrupted,
-                           "Thread is waiting to send.  (Internal use only.)")
-            }
-            MachError::SendInvalidData => Error::new(ErrorKind::InvalidData, "Bogus in-line data."),
-            MachError::SendInvalidDest => Error::new(ErrorKind::NotFound, "Bogus destination port."),
-            MachError::SendTimedOut => {
-                Error::new(ErrorKind::TimedOut, "Message not sent before timeout expired.")
-            }
-            MachError::SendInvalidVoucher => Error::new(ErrorKind::NotFound, "Bogus voucher port."),
-            MachError::SendInterrupted => Error::new(ErrorKind::Interrupted, "Software interrupt."),
-            MachError::SendMsgTooSmall => {
-                Error::new(ErrorKind::InvalidData, "Data doesn't contain a complete message.")
-            }
-            MachError::SendInvalidReply => Error::new(ErrorKind::InvalidInput, "Bogus reply port."),
-            MachError::SendInvalidRight => {
-                Error::new(ErrorKind::InvalidInput, "Bogus port rights in the message body.")
-            }
-            MachError::SendInvalidNotify => {
-                Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
-            }
-            MachError::SendInvalidMemory => {
-                Error::new(ErrorKind::InvalidInput, "Invalid out-of-line memory pointer.")
-            }
-            MachError::SendNoBuffer => {
-                Error::new(ErrorKind::Other, "No message buffer is available.")
-            }
-            MachError::SendTooLarge => {
-                Error::new(ErrorKind::InvalidData, "Send is too large for port")
-            }
-            MachError::SendInvalidType => {
-                Error::new(ErrorKind::InvalidInput, "Invalid msg-type specification.")
-            }
-            MachError::SendInvalidHeader => {
-                Error::new(ErrorKind::InvalidInput, "A field in the header had a bad value.")
-            }
-            MachError::SendInvalidTrailer => {
-                Error::new(ErrorKind::InvalidData,
-                           "The trailer to be sent does not match kernel format.")
-            }
-            MachError::SendInvalidRtOolSize => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
-            }
-            MachError::RcvInProgress => {
-                Error::new(ErrorKind::Interrupted,
-                           "Thread is waiting for receive.  (Internal use only.)")
-            }
-            MachError::RcvInvalidName => {
-                Error::new(ErrorKind::InvalidInput, "Bogus name for receive port/port-set.")
-            }
-            MachError::RcvTimedOut => {
-                Error::new(ErrorKind::TimedOut, "Didn't get a message within the timeout value.")
-            }
-            MachError::RcvTooLarge => {
-                Error::new(ErrorKind::InvalidInput,
-                           "Message buffer is not large enough for inline data.")
-            }
-            MachError::RcvInterrupted => Error::new(ErrorKind::Interrupted, "Software interrupt."),
-            MachError::RcvPortChanged => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
-            }
-            MachError::RcvInvalidNotify => {
-                Error::new(ErrorKind::InvalidInput, "Bogus notify port argument.")
-            }
-            MachError::RcvInvalidData => {
-                Error::new(ErrorKind::InvalidInput, "Bogus message buffer for inline data.")
-            }
-            MachError::RcvPortDied => {
-                Error::new(ErrorKind::BrokenPipe, "Port/set was sent away/died during receive.")
-            }
-            MachError::RcvInSet => {
-                Error::new(ErrorKind::Other, "compatibility: no longer a returned error")
-            }
-            MachError::RcvHeaderError => {
-                Error::new(ErrorKind::Other, "Error receiving message header.  See special bits.")
-            }
-            MachError::RcvBodyError => {
-                Error::new(ErrorKind::Other, "Error receiving message body.  See special bits.")
-            }
-            MachError::RcvInvalidType => {
-                Error::new(ErrorKind::InvalidInput,
-                           "Invalid msg-type specification in scatter list.")
-            }
-            MachError::RcvScatterSmall => {
-                Error::new(ErrorKind::InvalidInput,
-                           "Out-of-line overwrite region is not large enough")
-            }
-            MachError::RcvInvalidTrailer => {
-                Error::new(ErrorKind::InvalidInput,
-                           "trailer type or number of trailer elements not supported")
-            }
-            MachError::RcvInProgressTimed => {
-                Error::new(ErrorKind::Interrupted,
-                           "Waiting for receive with timeout. (Internal use only.)")
-            }
-            MachError::NotifyNoSenders => {
-                Error::new(ErrorKind::ConnectionReset,
-                           "No senders exist for this port.")
-            }
-            MachError::Unknown(mach_error_number) => {
-                Error::new(ErrorKind::Other,
-                           format!("Unknown Mach error: {:x}", mach_error_number))
-            }
-        }
+    fn from(mach_error: MachError) -> io::Error {
+        let kind = match mach_error {
+            MachError::Success => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::Success) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::NoSpace) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::InvalidName) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::InvalidRight) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::InvalidValue) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::InvalidCapability) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::UrefsOverflow) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::NotInSet) => io::ErrorKind::Other,
+            MachError::Kernel(KernelError::Unknown(_)) => io::ErrorKind::Other,
+            MachError::IpcSpace => io::ErrorKind::Other,
+            MachError::VmSpace => io::ErrorKind::Other,
+            MachError::IpcKernel => io::ErrorKind::Other,
+            MachError::VmKernel => io::ErrorKind::Other,
+            MachError::SendInProgress => io::ErrorKind::Interrupted,
+            MachError::SendInvalidData => io::ErrorKind::InvalidData,
+            MachError::SendInvalidDest => io::ErrorKind::NotFound,
+            MachError::SendTimedOut => io::ErrorKind::TimedOut,
+            MachError::SendInvalidVoucher => io::ErrorKind::NotFound,
+            MachError::SendInterrupted => io::ErrorKind::Interrupted,
+            MachError::SendMsgTooSmall => io::ErrorKind::InvalidData,
+            MachError::SendInvalidReply => io::ErrorKind::InvalidInput,
+            MachError::SendInvalidRight => io::ErrorKind::InvalidInput,
+            MachError::SendInvalidNotify => io::ErrorKind::InvalidInput,
+            MachError::SendInvalidMemory => io::ErrorKind::InvalidInput,
+            MachError::SendNoBuffer => io::ErrorKind::Other,
+            MachError::SendTooLarge => io::ErrorKind::InvalidData,
+            MachError::SendInvalidType => io::ErrorKind::InvalidInput,
+            MachError::SendInvalidHeader => io::ErrorKind::InvalidInput,
+            MachError::SendInvalidTrailer => io::ErrorKind::InvalidData,
+            MachError::SendInvalidRtOolSize => io::ErrorKind::Other,
+            MachError::RcvInProgress => io::ErrorKind::Interrupted,
+            MachError::RcvInvalidName => io::ErrorKind::InvalidInput,
+            MachError::RcvTimedOut => io::ErrorKind::TimedOut,
+            MachError::RcvTooLarge => io::ErrorKind::InvalidInput,
+            MachError::RcvInterrupted => io::ErrorKind::Interrupted,
+            MachError::RcvPortChanged => io::ErrorKind::Other,
+            MachError::RcvInvalidNotify => io::ErrorKind::InvalidInput,
+            MachError::RcvInvalidData => io::ErrorKind::InvalidInput,
+            MachError::RcvPortDied => io::ErrorKind::BrokenPipe,
+            MachError::RcvInSet => io::ErrorKind::Other,
+            MachError::RcvHeaderError => io::ErrorKind::Other,
+            MachError::RcvBodyError => io::ErrorKind::Other,
+            MachError::RcvInvalidType => io::ErrorKind::InvalidInput,
+            MachError::RcvScatterSmall => io::ErrorKind::InvalidInput,
+            MachError::RcvInvalidTrailer => io::ErrorKind::InvalidInput,
+            MachError::RcvInProgressTimed => io::ErrorKind::Interrupted,
+            MachError::NotifyNoSenders => io::ErrorKind::ConnectionReset,
+            MachError::Unknown(_) => io::ErrorKind::Other,
+        };
+        io::Error::new(kind, mach_error)
     }
 }
 
@@ -1274,4 +1242,3 @@ extern {
     fn bootstrap_look_up(bp: mach_port_t, service_name: name_t, sp: *mut mach_port_t)
                          -> kern_return_t;
 }
-

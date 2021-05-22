@@ -18,10 +18,11 @@ use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
+use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
-use std::io::{Error, ErrorKind};
+use std::io;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, RangeFrom};
@@ -486,7 +487,7 @@ impl OsIpcReceiverSet {
                     num_events = sz;
                 },
                 Err(ref e) => {
-                    if e.kind() != ErrorKind::Interrupted {
+                    if e.kind() != io::ErrorKind::Interrupted {
                         return Err(UnixError::last());
                     }
                 }
@@ -819,7 +820,7 @@ pub enum UnixError {
 
 impl UnixError {
     fn last() -> UnixError {
-        UnixError::Errno(Error::last_os_error().raw_os_error().unwrap())
+        UnixError::Errno(io::Error::last_os_error().raw_os_error().unwrap())
     }
 
     #[allow(dead_code)]
@@ -828,18 +829,29 @@ impl UnixError {
     }
 }
 
-impl From<UnixError> for bincode::Error {
-    fn from(unix_error: UnixError) -> Self {
-        Error::from(unix_error).into()
+impl fmt::Display for UnixError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            UnixError::Errno(errno) => fmt::Display::fmt(&io::Error::from_raw_os_error(errno), fmt),
+            UnixError::ChannelClosed => write!(fmt, "All senders for this socket closed"),
+        }
     }
 }
 
-impl From<UnixError> for Error {
-    fn from(unix_error: UnixError) -> Error {
+impl StdError for UnixError {
+}
+
+impl From<UnixError> for bincode::Error {
+    fn from(unix_error: UnixError) -> Self {
+        io::Error::from(unix_error).into()
+    }
+}
+
+impl From<UnixError> for io::Error {
+    fn from(unix_error: UnixError) -> io::Error {
         match unix_error {
-            UnixError::Errno(errno) => Error::from_raw_os_error(errno),
-            UnixError::ChannelClosed => Error::new(ErrorKind::ConnectionReset,
-                                                   "All senders for this socket closed"),
+            UnixError::Errno(errno) => io::Error::from_raw_os_error(errno),
+            UnixError::ChannelClosed => io::Error::new(io::ErrorKind::ConnectionReset, unix_error),
         }
     }
 }
@@ -848,7 +860,7 @@ impl From<UnixError> for ipc::IpcError {
     fn from(error: UnixError) -> Self {
         match error {
             UnixError::ChannelClosed => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(Error::from(e)),
+            e => ipc::IpcError::Io(io::Error::from(e)),
         }
     }
 }
@@ -859,17 +871,17 @@ impl From<UnixError> for ipc::TryRecvError {
             UnixError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
             UnixError::Errno(code) if code == EAGAIN || code == EWOULDBLOCK =>
                 ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
         }
     }
 }
 
-impl From<Error> for UnixError {
-    fn from(e: Error) -> UnixError {
+impl From<io::Error> for UnixError {
+    fn from(e: io::Error) -> UnixError {
         if let Some(errno) = e.raw_os_error() {
             UnixError::Errno(errno)
         } else {
-            assert!(e.kind() == ErrorKind::ConnectionReset);
+            assert!(e.kind() == io::ErrorKind::ConnectionReset);
             UnixError::ChannelClosed
         }
     }

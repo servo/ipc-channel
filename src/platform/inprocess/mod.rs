@@ -13,7 +13,8 @@ use crate::ipc;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;
 use std::cell::{RefCell, Ref};
-use std::io::{Error, ErrorKind};
+use std::error::Error as StdError;
+use std::io;
 use std::slice;
 use std::fmt::{self, Debug, Formatter};
 use std::cmp::{PartialEq};
@@ -383,9 +384,23 @@ impl ChannelError {
     }
 }
 
+impl fmt::Display for ChannelError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ChannelError::ChannelClosedError => write!(fmt, "channel closed"),
+            ChannelError::BrokenPipeError => write!(fmt, "broken pipe"),
+            ChannelError::ChannelEmpty => write!(fmt, "channel empty"),
+            ChannelError::UnknownError => write!(fmt, "unknown error"),
+        }
+    }
+}
+
+impl StdError for ChannelError {
+}
+
 impl From<ChannelError> for bincode::Error {
     fn from(crossbeam_error: ChannelError) -> Self {
-        Error::from(crossbeam_error).into()
+        io::Error::from(crossbeam_error).into()
     }
 }
 
@@ -393,7 +408,7 @@ impl From<ChannelError> for ipc::IpcError {
     fn from(error: ChannelError) -> Self {
         match error {
             ChannelError::ChannelClosedError => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Bincode(Error::from(e).into()),
+            e => ipc::IpcError::Bincode(io::Error::from(e).into()),
         }
     }
 }
@@ -403,25 +418,25 @@ impl From<ChannelError> for ipc::TryRecvError {
         match error {
             ChannelError::ChannelClosedError => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
             ChannelError::ChannelEmpty => ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Bincode(Error::from(e).into())),
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Bincode(io::Error::from(e).into())),
         }
     }
 }
 
-impl From<ChannelError> for Error {
-    fn from(crossbeam_error: ChannelError) -> Error {
+impl From<ChannelError> for io::Error {
+    fn from(crossbeam_error: ChannelError) -> io::Error {
         match crossbeam_error {
             ChannelError::ChannelClosedError => {
-                Error::new(ErrorKind::ConnectionReset, "crossbeam-channel sender closed")
+                io::Error::new(io::ErrorKind::ConnectionReset, "crossbeam-channel sender closed")
             }
             ChannelError::ChannelEmpty => {
-                Error::new(ErrorKind::ConnectionReset, "crossbeam-channel receiver has no received messages")
+                io::Error::new(io::ErrorKind::ConnectionReset, "crossbeam-channel receiver has no received messages")
             }
             ChannelError::BrokenPipeError => {
-                Error::new(ErrorKind::BrokenPipe, "crossbeam-channel receiver closed")
+                io::Error::new(io::ErrorKind::BrokenPipe, "crossbeam-channel receiver closed")
             }
             ChannelError::UnknownError => {
-                Error::new(ErrorKind::Other, "Other crossbeam-channel error")
+                io::Error::new(io::ErrorKind::Other, "Other crossbeam-channel error")
             }
         }
     }

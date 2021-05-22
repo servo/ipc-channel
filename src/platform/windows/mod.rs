@@ -16,8 +16,10 @@ use std::cell::{Cell, RefCell};
 use std::cmp::PartialEq;
 use std::default::Default;
 use std::env;
+use std::error::Error as StdError;
 use std::ffi::CString;
-use std::io::{Error, ErrorKind};
+use std::fmt;
+use std::io;
 use std::marker::{Send, Sync, PhantomData};
 use std::mem;
 use std::ops::{Deref, DerefMut, RangeFrom};
@@ -29,7 +31,6 @@ use winapi::um::winnt::{HANDLE};
 use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
 use winapi::shared::minwindef::{LPVOID};
 use winapi;
-use std::fmt;
 
 mod aliased_cell;
 use self::aliased_cell::AliasedCell;
@@ -1785,9 +1786,22 @@ impl WinError {
     }
 }
 
+impl fmt::Display for WinError {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            WinError::WindowsResult(errnum) => write!(fmt, "windows result: {}", WinError::error_string(errnum)),
+            WinError::ChannelClosed => write!(fmt, "channel closed"),
+            WinError::NoData => write!(fmt, "no data"),
+        }
+    }
+}
+
+impl StdError for WinError {
+}
+
 impl From<WinError> for bincode::Error {
     fn from(error: WinError) -> bincode::Error {
-        Error::from(error).into()
+        io::Error::from(error).into()
     }
 }
 
@@ -1796,7 +1810,7 @@ impl From<WinError> for ipc::TryRecvError {
         match error {
             WinError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
             WinError::NoData => ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(Error::from(e))),
+            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
         }
     }
 }
@@ -1805,25 +1819,25 @@ impl From<WinError> for ipc::IpcError {
     fn from(error: WinError) -> Self {
         match error {
             WinError::ChannelClosed => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(Error::from(e)),
+            e => ipc::IpcError::Io(io::Error::from(e)),
         }
     }
 }
 
-impl From<WinError> for Error {
-    fn from(error: WinError) -> Error {
+impl From<WinError> for io::Error {
+    fn from(error: WinError) -> io::Error {
         match error {
             WinError::ChannelClosed => {
                 // This is the error code we originally got from the Windows API
                 // to signal the "channel closed" (no sender) condition --
                 // so hand it back to the Windows API to create an appropriate `Error` value.
-                Error::from_raw_os_error(winapi::shared::winerror::ERROR_BROKEN_PIPE as i32)
+                io::Error::from_raw_os_error(winapi::shared::winerror::ERROR_BROKEN_PIPE as i32)
             },
             WinError::NoData => {
-                Error::new(ErrorKind::WouldBlock, "Win channel has no data available")
+                io::Error::new(io::ErrorKind::WouldBlock, "Win channel has no data available")
             },
             WinError::WindowsResult(err) => {
-                Error::from_raw_os_error(err as i32)
+                io::Error::from_raw_os_error(err as i32)
             },
         }
     }
