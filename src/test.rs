@@ -661,7 +661,7 @@ fn test_transfer_descriptor() {
     let mut file = std::fs::File::create(& temp_file_path).unwrap();
     let text = "This is a text string";
     use std::io::Write;
-    file.write(text.as_bytes());
+    file.write(text.as_bytes()).unwrap();
     std::mem::drop(file);
     let file = std::fs::File::open(& temp_file_path).unwrap();
 
@@ -673,6 +673,6 @@ fn test_transfer_descriptor() {
     let mut file: std::fs::File = received_person_and_descriptor.1.into();
     use std::io::Read;
     let mut read_text = String::new();
-    file.read_to_string(&mut read_text);
+    file.read_to_string(&mut read_text).unwrap();
     assert_eq!(text, read_text);
 }
