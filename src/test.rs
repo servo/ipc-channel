@@ -665,7 +665,7 @@ fn test_transfer_descriptor() {
     std::mem::drop(file);
     let file = std::fs::File::open(& temp_file_path).unwrap();
 
-    let person_and_descriptor = (person, crate::platform::Descriptor::from(file));
+    let person_and_descriptor = (person, crate::descriptor::OwnedDescriptor::from(file));
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_descriptor).unwrap();
     let received_person_and_descriptor = rx.recv().unwrap();

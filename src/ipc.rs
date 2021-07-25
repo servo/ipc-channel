@@ -9,7 +9,7 @@
 
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel};
-use crate::platform::Descriptor;
+use crate::descriptor::OwnedDescriptor;
 
 use bincode;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -31,7 +31,7 @@ thread_local! {
         RefCell<Vec<Option<OsIpcSharedMemory>>> = RefCell::new(Vec::new())
 }
 thread_local! {
-    static OS_IPC_DESCRIPTORS_FOR_DESERIALIZATION: RefCell<Vec<Descriptor>> = RefCell::new(Vec::new())
+    static OS_IPC_DESCRIPTORS_FOR_DESERIALIZATION: RefCell<Vec<OwnedDescriptor>> = RefCell::new(Vec::new())
 }
 thread_local! {
     static OS_IPC_CHANNELS_FOR_SERIALIZATION: RefCell<Vec<OsIpcChannel>> = RefCell::new(Vec::new())
@@ -41,7 +41,7 @@ thread_local! {
         RefCell::new(Vec::new())
 }
 thread_local! {
-    static OS_IPC_DESCRIPTORS_FOR_SERIALIZATION: RefCell<Vec<Descriptor>> = RefCell::new(Vec::new())
+    static OS_IPC_DESCRIPTORS_FOR_SERIALIZATION: RefCell<Vec<OwnedDescriptor>> = RefCell::new(Vec::new())
 }
 
 #[derive(Debug)]
@@ -621,7 +621,7 @@ pub struct OpaqueIpcMessage {
     data: Vec<u8>,
     os_ipc_channels: Vec<OsOpaqueIpcChannel>,
     os_ipc_shared_memory_regions: Vec<Option<OsIpcSharedMemory>>,
-    os_ipc_descriptors: Vec<Descriptor>,
+    os_ipc_descriptors: Vec<OwnedDescriptor>,
 }
 
 impl Debug for OpaqueIpcMessage {
@@ -637,7 +637,7 @@ impl OpaqueIpcMessage {
     fn new(data: Vec<u8>,
            os_ipc_channels: Vec<OsOpaqueIpcChannel>,
            os_ipc_shared_memory_regions: Vec<OsIpcSharedMemory>,
-           os_ipc_descriptors: Vec<Descriptor>)
+           os_ipc_descriptors: Vec<OwnedDescriptor>)
            -> OpaqueIpcMessage {
         OpaqueIpcMessage {
             data: data,
@@ -924,7 +924,7 @@ fn deserialize_os_ipc_receiver<'de, D>(deserializer: D)
 }
 
 
-impl Serialize for Descriptor {
+impl Serialize for OwnedDescriptor {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
         let index = OS_IPC_DESCRIPTORS_FOR_SERIALIZATION.with(|os_ipc_descriptors_for_serialization| {
             let mut os_ipc_descriptors_for_serialization =
@@ -937,12 +937,12 @@ impl Serialize for Descriptor {
     }
 }
 
-impl<'de> Deserialize<'de> for Descriptor {
+impl<'de> Deserialize<'de> for OwnedDescriptor {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
         let index: usize = Deserialize::deserialize(deserializer)?;
 
         OS_IPC_DESCRIPTORS_FOR_DESERIALIZATION.with(|os_ipc_descriptors_for_deserialization| {
-            os_ipc_descriptors_for_deserialization.borrow_mut().get_mut(index).map(|x| x.consume()).ok_or(serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(index as u64), &"index for Descriptor"))
+            os_ipc_descriptors_for_deserialization.borrow_mut().get_mut(index).map(|x| x.consume()).ok_or(serde::de::Error::invalid_value(serde::de::Unexpected::Unsigned(index as u64), &"index for OwnedDescriptor"))
         })
     }
 }

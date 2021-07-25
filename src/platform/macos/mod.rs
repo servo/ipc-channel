@@ -14,7 +14,7 @@ use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
 use self::mach_sys::mach_port_deallocate;
 use self::mach_sys::fileport_t;
-use crate::platform::Descriptor;
+use crate::descriptor::OwnedDescriptor;
 
 use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
@@ -35,8 +35,6 @@ use std::usize;
 use std::os::raw::c_int;
 
 use std::os::unix::io::AsRawFd;
-
-use crate::platform::common::fd::OwnedFd;
 
 mod mach_sys;
 
@@ -358,7 +356,7 @@ impl OsIpcReceiver {
     }
 
     fn recv_with_blocking_mode(&self, blocking_mode: BlockingMode)
-                               -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
+                               -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),
                                          MachError> {
         select(self.port.get(), blocking_mode).and_then(|result| {
             match result {
@@ -371,12 +369,12 @@ impl OsIpcReceiver {
     }
 
     pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),MachError> {
+                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),MachError> {
         self.recv_with_blocking_mode(BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),MachError> {
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),MachError> {
         self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 }
@@ -507,7 +505,7 @@ impl OsIpcSender {
                 data: &[u8],
                 ports: Vec<OsIpcChannel>,
                 mut shared_memory_regions: Vec<OsIpcSharedMemory>,
-                descriptors: Vec<Descriptor>)
+                descriptors: Vec<OwnedDescriptor>)
                 -> Result<(),MachError> {
         let mut data = SendData::from(data);
         if let Some(data) = data.take_shared_memory() {
@@ -708,12 +706,12 @@ impl Drop for OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions, descriptors) => {
                 (id, data, channels, shared_memory_regions, descriptors)
@@ -831,7 +829,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
 
         for idx in port_count .. (port_count + descriptor_count) {
             let fd = mach_fileport_makefd(raw_ports[idx])?;
-            descriptors.push(OwnedFd::new(fd));
+            descriptors.push(OwnedDescriptor::new(fd));
         }
 
         let has_inline_data_ptr = port_counts.offset(1) as *mut bool;
@@ -886,7 +884,7 @@ impl OsIpcOneShotServer {
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>,
-                                   Vec<Descriptor>),MachError> {
+                                   Vec<OwnedDescriptor>),MachError> {
         let (bytes, channels, shared_memory_regions, descriptors) = self.receiver.recv()?;
         Ok((self.receiver.consume(), bytes, channels, shared_memory_regions, descriptors))
     }

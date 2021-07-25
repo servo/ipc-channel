@@ -7,8 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::descriptor::OwnedDescriptor;
 use crate::ipc;
-use crate::platform::Descriptor;
 use bincode;
 use fnv::FnvHasher;
 use libc::{EAGAIN, EWOULDBLOCK};
@@ -142,12 +142,12 @@ impl OsIpcReceiver {
     }
 
     pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),UnixError> {
+                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),UnixError> {
         recv(self.fd.get(), BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),UnixError> {
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),UnixError> {
         recv(self.fd.get(), BlockingMode::Nonblocking)
     }
 }
@@ -237,7 +237,7 @@ impl OsIpcSender {
                 data: &[u8],
                 channels: Vec<OsIpcChannel>,
                 shared_memory_regions: Vec<OsIpcSharedMemory>,
-                descriptors: Vec<Descriptor>)
+                descriptors: Vec<OwnedDescriptor>)
                 -> Result<(),UnixError> {
 
         let header = Header {
@@ -547,12 +547,12 @@ impl OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions, descriptors) => {
                 (id, data, channels, shared_memory_regions, descriptors)
@@ -643,7 +643,7 @@ impl OsIpcOneShotServer {
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>,
-                                   Vec<Descriptor>),UnixError> {
+                                   Vec<OwnedDescriptor>),UnixError> {
         unsafe {
             let sockaddr: *mut sockaddr = ptr::null_mut();
             let sockaddr_len: *mut socklen_t = ptr::null_mut();
@@ -919,7 +919,7 @@ enum BlockingMode {
 }
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
-        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),UnixError> {
+        -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),UnixError> {
 
     let (mut channels, mut shared_memory_regions, mut descriptors) = (Vec::new(), Vec::new(), Vec::new());
 
@@ -967,7 +967,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
         }
 
         for index in (header.channel_fd_num + header.shared_memory_fd_num) .. (header.channel_fd_num + header.shared_memory_fd_num + header.descriptor_num) {
-            descriptors.push(Descriptor::new(*cmsg_fds.offset(index as isize)));
+            descriptors.push(OwnedDescriptor::new(*cmsg_fds.offset(index as isize)));
         }
     }
 

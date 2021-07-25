@@ -86,6 +86,7 @@ extern crate winapi;
 pub mod ipc;
 pub mod platform;
 pub mod router;
+pub mod descriptor;
 
 #[cfg(test)]
 mod test;

@@ -14,6 +14,7 @@ use crate::ipc;
 use libc::intptr_t;
 use std::cell::{Cell, RefCell};
 use std::cmp::PartialEq;
+use std::default::Default;
 use std::env;
 use std::error::Error as StdError;
 use std::ffi::CString;
@@ -22,22 +23,19 @@ use std::io;
 use std::marker::{Send, Sync, PhantomData};
 use std::mem;
 use std::ops::{Deref, DerefMut, RangeFrom};
+use std::os::windows::io::IntoRawHandle;
 use std::ptr;
 use std::slice;
 use std::thread;
 use uuid::Uuid;
+use winapi::um::winnt::{HANDLE};
+use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
 use winapi::shared::minwindef::{LPVOID};
 use winapi;
 
-
-use winapi::um::winnt::{HANDLE};
-use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
-
 mod aliased_cell;
-pub mod handle;
 use self::aliased_cell::AliasedCell;
-use crate::platform::Descriptor;
-use self::handle::{WinHandle, dup_handle, dup_handle_to_process, move_handle_to_process};
+use crate::descriptor::OwnedDescriptor;
 
 lazy_static! {
     static ref CURRENT_PROCESS_ID: winapi::shared::ntdef::ULONG = unsafe { winapi::um::processthreadsapi::GetCurrentProcessId() };
@@ -259,6 +257,135 @@ fn make_pipe_id() -> Uuid {
 
 fn make_pipe_name(pipe_id: &Uuid) -> CString {
     CString::new(format!("\\\\.\\pipe\\rust-ipc-{}", pipe_id.to_string())).unwrap()
+}
+
+/// Duplicate a given handle from this process to the target one, passing the
+/// given flags to DuplicateHandle.
+///
+/// Unlike win32 DuplicateHandle, this will preserve INVALID_HANDLE_VALUE (which is
+/// also the pseudohandle for the current process).
+fn dup_handle_to_process_with_flags(handle: &WinHandle, other_process: &WinHandle, flags: winapi::shared::minwindef::DWORD)
+                                           -> Result<WinHandle, WinError>
+{
+    if !handle.is_valid() {
+        return Ok(WinHandle::invalid());
+    }
+
+    unsafe {
+        let mut new_handle: HANDLE = INVALID_HANDLE_VALUE;
+        let ok = winapi::um::handleapi::DuplicateHandle(CURRENT_PROCESS_HANDLE.as_raw(), handle.as_raw(),
+                                           other_process.as_raw(), &mut new_handle,
+                                           0, winapi::shared::minwindef::FALSE, flags);
+        if ok == winapi::shared::minwindef::FALSE {
+            Err(WinError::last("DuplicateHandle"))
+        } else {
+            Ok(WinHandle::new(new_handle))
+        }
+    }
+}
+
+/// Duplicate a handle in the current process.
+fn dup_handle(handle: &WinHandle) -> Result<WinHandle,WinError> {
+    dup_handle_to_process(handle, &WinHandle::new(CURRENT_PROCESS_HANDLE.as_raw()))
+}
+
+/// Duplicate a handle to the target process.
+fn dup_handle_to_process(handle: &WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
+    dup_handle_to_process_with_flags(handle, other_process, winapi::um::winnt::DUPLICATE_SAME_ACCESS)
+}
+
+/// Duplicate a handle to the target process, closing the source handle.
+fn move_handle_to_process(handle: WinHandle, other_process: &WinHandle) -> Result<WinHandle,WinError> {
+    let result = dup_handle_to_process_with_flags(&handle, other_process,
+                                                  winapi::um::winnt::DUPLICATE_CLOSE_SOURCE | winapi::um::winnt::DUPLICATE_SAME_ACCESS);
+    // Since the handle was moved to another process, the original is no longer valid;
+    // so we probably shouldn't try to close it explicitly?
+    mem::forget(handle);
+    result
+}
+
+#[derive(Debug)]
+struct WinHandle {
+    h: HANDLE
+}
+
+unsafe impl Send for WinHandle { }
+unsafe impl Sync for WinHandle { }
+
+impl Drop for WinHandle {
+    fn drop(&mut self) {
+        unsafe {
+            if self.is_valid() {
+                let result = winapi::um::handleapi::CloseHandle(self.h);
+                assert!(thread::panicking() || result != 0);
+            }
+        }
+    }
+}
+
+impl Default for WinHandle {
+    fn default() -> WinHandle {
+        WinHandle { h: INVALID_HANDLE_VALUE }
+    }
+}
+
+impl From<OwnedDescriptor> for WinHandle {
+    fn from(descriptor: OwnedDescriptor) -> WinHandle {
+        WinHandle::new(descriptor.into_raw_handle())
+    }
+}
+
+const WINDOWS_APP_MODULE_NAME: &'static str = "api-ms-win-core-handle-l1-1-0";
+const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &'static str = "CompareObjectHandles";
+
+lazy_static! {
+    static ref WINDOWS_APP_MODULE_NAME_CSTRING: CString = CString::new(WINDOWS_APP_MODULE_NAME).unwrap();
+    static ref COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING: CString = CString::new(COMPARE_OBJECT_HANDLES_FUNCTION_NAME).unwrap();
+}
+
+#[cfg(feature = "windows-shared-memory-equality")]
+impl PartialEq for WinHandle {
+    fn eq(&self, other: &WinHandle) -> bool {
+        unsafe {
+            // Calling LoadLibraryA every time seems to be ok since libraries are refcounted and multiple calls won't produce multiple instances.
+            let module_handle = winapi::um::libloaderapi::LoadLibraryA(WINDOWS_APP_MODULE_NAME_CSTRING.as_ptr());
+            if module_handle.is_null() {
+                panic!("Error loading library {}. {}", WINDOWS_APP_MODULE_NAME, WinError::error_string(GetLastError()));
+            }
+            let proc = winapi::um::libloaderapi::GetProcAddress(module_handle, COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING.as_ptr());
+            if proc.is_null() {
+                panic!("Error calling GetProcAddress to use {}. {}", COMPARE_OBJECT_HANDLES_FUNCTION_NAME, WinError::error_string(GetLastError()));
+            }
+            let compare_object_handles: unsafe extern "stdcall" fn(HANDLE, HANDLE) -> winapi::shared::minwindef::BOOL = std::mem::transmute(proc);
+            compare_object_handles(self.h, other.h) != 0
+        }
+    }
+}
+
+impl WinHandle {
+    fn new(h: HANDLE) -> WinHandle {
+        WinHandle { h: h }
+    }
+
+    fn invalid() -> WinHandle {
+        WinHandle { h: INVALID_HANDLE_VALUE }
+    }
+
+    fn is_valid(&self) -> bool {
+        self.h != INVALID_HANDLE_VALUE
+    }
+
+    fn as_raw(&self) -> HANDLE {
+        self.h
+    }
+
+    fn take_raw(&mut self) -> HANDLE {
+        mem::replace(&mut self.h, INVALID_HANDLE_VALUE)
+    }
+
+    fn take(&mut self) -> WinHandle {
+        WinHandle::new(self.take_raw())
+    }
 }
 
 /// Helper struct for all data being aliased by the kernel during async reads.
@@ -642,7 +769,7 @@ impl MessageReader {
         }
     }
 
-    fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>)>,
+    fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>)>,
                                         WinError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
         if self.r#async.is_some() {
@@ -655,7 +782,7 @@ impl MessageReader {
             let mut channels: Vec<OsOpaqueIpcChannel> = vec![];
             let mut shmems: Vec<OsIpcSharedMemory> = vec![];
             let mut big_data = None;
-            let mut descriptors: Vec<Descriptor> = vec![];
+            let mut descriptors: Vec<OwnedDescriptor> = vec![];
 
             if let Some(oob) = message.oob_data() {
                 win32_trace!("[$ {:?}] msg with total {} bytes, {} channels, {} shmems, big data handle {:?}",
@@ -673,7 +800,7 @@ impl MessageReader {
                 }
 
                 for handle in oob.descriptor_handles {
-                    descriptors.push(WinHandle::new(handle as HANDLE));
+                    descriptors.push(OwnedDescriptor::new(handle as HANDLE));
                 }
 
                 if oob.big_data_receiver_handle.is_some() {
@@ -897,7 +1024,7 @@ impl OsIpcReceiver {
     // the implementation in select() is used.  It does much the same thing, but across multiple
     // channels.
     fn receive_message(&self, mut blocking_mode: BlockingMode)
-                       -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),WinError> {
+                       -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),WinError> {
         let mut reader = self.reader.borrow_mut();
         assert!(reader.entry_id.is_none(), "receive_message is only valid before this OsIpcReceiver was added to a Set");
 
@@ -928,13 +1055,13 @@ impl OsIpcReceiver {
     }
 
     pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),WinError> {
+                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),WinError> {
         win32_trace!("recv");
         self.receive_message(BlockingMode::Blocking)
     }
 
     pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),WinError> {
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),WinError> {
         win32_trace!("try_recv");
         self.receive_message(BlockingMode::Nonblocking)
     }
@@ -1109,7 +1236,7 @@ impl OsIpcSender {
                 data: &[u8],
                 ports: Vec<OsIpcChannel>,
                 shared_memory_regions: Vec<OsIpcSharedMemory>,
-                descriptors: Vec<Descriptor>)
+                descriptors: Vec<OwnedDescriptor>)
                 -> Result<(),WinError>
     {
         // We limit the max size we can send here; we can fix this
@@ -1150,7 +1277,7 @@ impl OsIpcSender {
         }
 
         for descriptor in descriptors {
-            let mut raw_remote_handle = move_handle_to_process(descriptor, &server_h)?;
+            let mut raw_remote_handle = move_handle_to_process(descriptor.into(), &server_h)?;
             oob.descriptor_handles.push(raw_remote_handle.take_raw() as intptr_t);
         }
 
@@ -1220,7 +1347,7 @@ impl OsIpcSender {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),
     ChannelClosed(u64),
 }
 
@@ -1442,7 +1569,7 @@ impl OsIpcReceiverSet {
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<Descriptor>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions, descriptors) => {
                 (id, data, channels, shared_memory_regions, descriptors)
@@ -1583,7 +1710,7 @@ impl OsIpcOneShotServer {
                                    Vec<u8>,
                                    Vec<OsOpaqueIpcChannel>,
                                    Vec<OsIpcSharedMemory>,
-                                   Vec<Descriptor>),WinError> {
+                                   Vec<OwnedDescriptor>),WinError> {
         let receiver = self.receiver;
         receiver.accept()?;
         let (data, channels, shmems, descriptors) = receiver.recv()?;

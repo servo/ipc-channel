@@ -9,12 +9,6 @@
 
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
                                                 target_os = "openbsd",
-                                                target_os = "freebsd",
-                                                target_os = "macos")))]
-mod common;
-
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "openbsd",
                                                 target_os = "freebsd")))]
 mod unix;
 #[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
@@ -22,7 +16,6 @@ mod unix;
                                                 target_os = "freebsd")))]
 mod os {
     pub use super::unix::*;
-    pub type Descriptor = super::common::fd::OwnedFd;
 }
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
@@ -30,7 +23,6 @@ mod macos;
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
 mod os {
     pub use super::macos::*;
-    pub type Descriptor = super::common::fd::OwnedFd;
 }
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
@@ -38,7 +30,6 @@ mod windows;
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
 mod os {
     pub use super::windows::*;
-    pub type Descriptor = super::windows::handle::WinHandle;
 }
 
 #[cfg(any(
@@ -57,7 +48,6 @@ mod os {
 pub use self::os::{OsIpcChannel, OsIpcOneShotServer, OsIpcReceiver, OsIpcReceiverSet};
 pub use self::os::{OsIpcSelectionResult, OsIpcSender, OsIpcSharedMemory};
 pub use self::os::{OsOpaqueIpcChannel, channel};
-pub use self::os::{Descriptor};
 
 #[cfg(test)]
 mod test;

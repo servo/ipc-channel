@@ -21,6 +21,7 @@ use std::cmp::{PartialEq};
 use std::ops::{Deref, RangeFrom};
 use std::usize;
 use uuid::Uuid;
+use crate::descriptor::OwnedDescriptor;
 
 #[derive(Clone)]
 struct ServerRecord {
@@ -52,7 +53,7 @@ lazy_static! {
     static ref ONE_SHOT_SERVERS: Mutex<HashMap<String,ServerRecord>> = Mutex::new(HashMap::new());
 }
 
-struct ChannelMessage(Vec<u8>, Vec<OsIpcChannel>, Vec<OsIpcSharedMemory>);
+struct ChannelMessage(Vec<u8>, Vec<OsIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>);
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), ChannelError> {
     let (base_sender, base_receiver) = crossbeam_channel::unbounded::<ChannelMessage>();
@@ -85,12 +86,12 @@ impl OsIpcReceiver {
 
     pub fn recv(
         &self
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>), ChannelError> {
         let r = self.receiver.borrow();
         let r = r.as_ref().unwrap();
         match r.recv() {
-            Ok(ChannelMessage(d, c, s)) => {
-                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
+            Ok(ChannelMessage(d, c, s, fd)) => {
+                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s, fd))
             }
             Err(_) => Err(ChannelError::ChannelClosedError),
         }
@@ -98,12 +99,12 @@ impl OsIpcReceiver {
 
     pub fn try_recv(
         &self
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>), ChannelError> {
         let r = self.receiver.borrow();
         let r = r.as_ref().unwrap();
         match r.try_recv() {
-            Ok(ChannelMessage(d, c, s)) => {
-                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
+            Ok(ChannelMessage(d, c, s, fd)) => {
+                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s, fd))
             },
             Err(e) => {
                 match e {
@@ -149,10 +150,11 @@ impl OsIpcSender {
         data: &[u8],
         ports: Vec<OsIpcChannel>,
         shared_memory_regions: Vec<OsIpcSharedMemory>,
+        descriptors: Vec<OwnedDescriptor>,
     ) -> Result<(), ChannelError> {
         Ok(self.sender
             .borrow()
-            .send(ChannelMessage(data.to_vec(), ports, shared_memory_regions)).map_err(|_| ChannelError::BrokenPipeError)?)
+            .send(ChannelMessage(data.to_vec(), ports, shared_memory_regions, descriptors)).map_err(|_| ChannelError::BrokenPipeError)?)
     }
 }
 
@@ -198,9 +200,9 @@ impl OsIpcReceiverSet {
             let res = select.select();
             let r_index = res.index();
             let r_id = self.receiver_ids[r_index];
-            if let Ok(ChannelMessage(data, channels, shmems)) = res.recv(&borrows[r_index as usize]) {
+            if let Ok(ChannelMessage(data, channels, shmems, descriptors)) = res.recv(&borrows[r_index as usize]) {
                 let channels = channels.into_iter().map(OsOpaqueIpcChannel::new).collect();
-                return Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems)])
+                return Ok(vec![OsIpcSelectionResult::DataReceived(r_id, data, channels, shmems, descriptors)])
             } else {
                 Remove(r_index, r_id)
             }
@@ -212,15 +214,15 @@ impl OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
+    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>, Vec<OwnedDescriptor>) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
+            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions, descriptors) => {
+                (id, data, channels, shared_memory_regions, descriptors)
             }
             OsIpcSelectionResult::ChannelClosed(id) => {
                 panic!("OsIpcSelectionResult::unwrap(): receiver ID {} was closed!", id)
@@ -255,6 +257,7 @@ impl OsIpcOneShotServer {
             Vec<u8>,
             Vec<OsOpaqueIpcChannel>,
             Vec<OsIpcSharedMemory>,
+            Vec<OwnedDescriptor>,
         ),
         ChannelError,
     > {
@@ -266,8 +269,8 @@ impl OsIpcOneShotServer {
             .clone();
         record.accept();
         ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
-        let (data, channels, shmems) = self.receiver.recv()?;
-        Ok((self.receiver, data, channels, shmems))
+        let (data, channels, shmems, descriptors) = self.receiver.recv()?;
+        Ok((self.receiver, data, channels, shmems, descriptors))
     }
 }
 
