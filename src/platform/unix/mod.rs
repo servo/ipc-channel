@@ -216,7 +216,7 @@ impl OsIpcSender {
     ///
     /// This one is smaller than regular fragments, because it carries the message (size) header.
     fn first_fragment_size(sendbuf_size: usize) -> usize {
-        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>())
+        (Self::fragment_size(sendbuf_size) - mem::size_of::<Header>())
             & (!8usize + 1) // Ensure optimal alignment.
     }
 
@@ -240,7 +240,7 @@ impl OsIpcSender {
                 descriptors: Vec<OwnedDescriptor>)
                 -> Result<(),UnixError> {
 
-        let header = Header {
+        let mut header = Header {
             total_size: data.len(),
             channel_fd_num: channels.len(),
             shared_memory_fd_num: shared_memory_regions.len(),
@@ -380,6 +380,7 @@ impl OsIpcSender {
         let (dedicated_tx, dedicated_rx) = channel()?;
         // Extract FD handle without consuming the Receiver, so the FD doesn't get closed.
         fds.push(dedicated_rx.fd.get());
+        header.channel_fd_num += 1;
 
         // Split up the packet into fragments.
         let mut byte_position = 0;
