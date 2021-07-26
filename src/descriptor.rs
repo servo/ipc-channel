@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::default::Default;
-use std::ffi::CString;
 use std::fs::File;
 use std::io;
 use std::mem;
@@ -128,8 +127,8 @@ const WINDOWS_APP_MODULE_NAME: &'static str = "api-ms-win-core-handle-l1-1-0";
 const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &'static str = "CompareObjectHandles";
 
 lazy_static! {
-    static ref WINDOWS_APP_MODULE_NAME_CSTRING: CString = CString::new(WINDOWS_APP_MODULE_NAME).unwrap();
-    static ref COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING: CString = CString::new(COMPARE_OBJECT_HANDLES_FUNCTION_NAME).unwrap();
+    static ref WINDOWS_APP_MODULE_NAME_CSTRING: std::ffi::CString = std::ffi::CString::new(WINDOWS_APP_MODULE_NAME).unwrap();
+    static ref COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING: std::ffi::CString = std::ffi::CString::new(COMPARE_OBJECT_HANDLES_FUNCTION_NAME).unwrap();
 }
 
 #[cfg(feature = "windows-shared-memory-equality")]
@@ -139,13 +138,13 @@ impl PartialEq for OwnedDescriptor {
             // Calling LoadLibraryA every time seems to be ok since libraries are refcounted and multiple calls won't produce multiple instances.
             let module_handle = winapi::um::libloaderapi::LoadLibraryA(WINDOWS_APP_MODULE_NAME_CSTRING.as_ptr());
             if module_handle.is_null() {
-                panic!("Error loading library {}. {}", WINDOWS_APP_MODULE_NAME, WinError::error_string(GetLastError()));
+                panic!("Error loading library {}. {}", WINDOWS_APP_MODULE_NAME, std::io::Error::last_os_error());
             }
             let proc = winapi::um::libloaderapi::GetProcAddress(module_handle, COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING.as_ptr());
             if proc.is_null() {
-                panic!("Error calling GetProcAddress to use {}. {}", COMPARE_OBJECT_HANDLES_FUNCTION_NAME, WinError::error_string(GetLastError()));
+                panic!("Error calling GetProcAddress to use {}. {}", COMPARE_OBJECT_HANDLES_FUNCTION_NAME, std::io::Error::last_os_error());
             }
-            let compare_object_handles: unsafe extern "stdcall" fn(HANDLE, HANDLE) -> winapi::shared::minwindef::BOOL = std::mem::transmute(proc);
+            let compare_object_handles: unsafe extern "stdcall" fn(RawDescriptor, RawDescriptor) -> winapi::shared::minwindef::BOOL = std::mem::transmute(proc);
             compare_object_handles(*self.0.borrow(), *other.0.borrow()) != 0
         }
     }
