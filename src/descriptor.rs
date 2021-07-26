@@ -123,6 +123,16 @@ impl From<File> for OwnedDescriptor {
     }
 }
 
+#[cfg(windows)]
+impl PartialEq for OwnedDescriptor {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe {
+            winapi::um::handleapi::CompareObjectHandles(*self.0.borrow(), *other.0.borrow())
+                != winapi::shared::minwindef::FALSE
+        }
+    }
+}
+
 #[cfg(unix)]
 impl IntoRawFd for OwnedDescriptor {
     fn into_raw_fd(self) -> RawDescriptor {
