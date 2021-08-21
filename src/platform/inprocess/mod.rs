@@ -185,7 +185,7 @@ impl OsIpcReceiverSet {
 
         struct Remove(usize, u64);
 
-        // FIXME: Remove early returns and explictly drop `borrows` when lifetimes are non-lexical
+        // FIXME: Remove early returns and explicitly drop `borrows` when lifetimes are non-lexical
         let Remove(r_index, r_id) = {
             let borrows: Vec<_> = self.receivers.iter().map(|r| {
                 Ref::map(r.receiver.borrow(), |o| o.as_ref().unwrap())

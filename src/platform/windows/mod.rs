@@ -180,7 +180,7 @@ impl<'data> Message<'data> {
 /// make sure that the message was originally sent to it, and was not sitting
 /// in another channel's buffer when that channel got transferred to another
 /// process.  On Windows, we duplicate handles on the sender side to a specific
-/// reciever.  If the wrong receiver gets it, those handles are not valid.
+/// receiver.  If the wrong receiver gets it, those handles are not valid.
 ///
 /// TODO(vlad): We could attempt to recover from the above situation by
 /// duplicating from the intended target process to ourselves (the receiver).
@@ -722,7 +722,7 @@ impl MessageReader {
     /// since it's still aliased by the kernel.
     /// (And there is nothing new to pick up anyway.)
     /// It will only become available again
-    /// when `fetch_async_result()` returns sucessfully upon retry.
+    /// when `fetch_async_result()` returns successfully upon retry.
     /// (Or the async read is aborted with `cancel_io()`.)
     fn fetch_async_result(&mut self, blocking_mode: BlockingMode) -> Result<(), WinError> {
         unsafe {

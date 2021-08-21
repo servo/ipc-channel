@@ -978,7 +978,7 @@ fn try_recv_large_delayed() {
                 time_per_run = start.elapsed();
             }
             // This assumes time_per_run stays below one second.
-            // Unless something weird happens, we shoud be safely within this margin...
+            // Unless something weird happens, we should be safe within this margin...
             iterations_per_ms = iterations * 1_000_000 / time_per_run.subsec_nanos() as u64;
         }
 
@@ -1116,7 +1116,7 @@ fn cross_process_two_step_transfer_spawn() {
     let sub_tx = received_channels[0].to_sender();
 
     // Send the outer payload channel, so the server can use it to
-    // retrive the inner payload and the cookie
+    // retrieve the inner payload and the cookie
     sub_tx.send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![]).unwrap();
 
     // Then we wait for the cookie to make its way back to us
