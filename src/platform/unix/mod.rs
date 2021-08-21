@@ -257,6 +257,9 @@ impl OsIpcSender {
                 let cmsg_length = mem::size_of_val(fds);
                 let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
                     let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
+                    if cmsg_buffer == ptr::null_mut() {
+                        return Err(UnixError::last())
+                    }
                     (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length) as MsgControlLen;
                     (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
                     (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
@@ -919,7 +922,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
                 iov_len: main_data_buffer.len(),
             },
         ];
-        let mut cmsg = UnixCmsg::new(&mut iovec);
+        let mut cmsg = UnixCmsg::new(&mut iovec)?;
 
         let bytes_read = cmsg.recv(fd, blocking_mode)?;
         main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
@@ -1043,13 +1046,16 @@ impl Drop for UnixCmsg {
 }
 
 impl UnixCmsg {
-    unsafe fn new(iovec: &mut [iovec]) -> UnixCmsg {
+    unsafe fn new(iovec: &mut [iovec]) -> Result<UnixCmsg, UnixError> {
         let cmsg_length = CMSG_SPACE(MAX_FDS_IN_CMSG as usize * mem::size_of::<c_int>());
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
-        UnixCmsg {
+        if cmsg_buffer == ptr::null_mut() {
+            return Err(UnixError::last())
+        }
+        Ok(UnixCmsg {
             cmsg_buffer: cmsg_buffer,
             msghdr: new_msghdr(iovec, cmsg_buffer, cmsg_length as MsgControlLen)
-        }
+        })
     }
 
     unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
