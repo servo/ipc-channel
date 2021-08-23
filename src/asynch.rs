@@ -27,6 +27,7 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::Mutex;
 use std::thread;
+use lazy_static::lazy_static;
 
 /// A stream built from an IPC channel.
 pub struct IpcStream<T>(UnboundedReceiver<OpaqueIpcMessage>, PhantomData<T>);

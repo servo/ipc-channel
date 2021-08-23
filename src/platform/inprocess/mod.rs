@@ -21,6 +21,7 @@ use std::cmp::{PartialEq};
 use std::ops::{Deref, RangeFrom};
 use std::usize;
 use uuid::Uuid;
+use lazy_static::lazy_static;
 
 #[derive(Clone)]
 struct ServerRecord {
