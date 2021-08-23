@@ -17,13 +17,13 @@ windows-shared-memory-equality = []
 
 [dependencies]
 bincode = "1"
-crossbeam-channel = "0.4"
+crossbeam-channel = "0.5"
 fnv = "1.0.3"
 futures-preview = { version = "0.3.0-alpha.17", optional = true }
 futures-test-preview = { version = "0.3.0-alpha.17", optional = true }
 lazy_static = "1"
 libc = "0.2.12"
-rand = "0.7"
+rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
 tempfile = "3"
 uuid = { version = "0.8", features = ["v4"] }
@@ -33,7 +33,7 @@ mio = "0.6.11"
 sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
-crossbeam-utils = "0.7"
+crossbeam-utils = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = {version = "0.3.7", features = ["minwindef", "ioapiset", "memoryapi", "namedpipeapi", "handleapi", "fileapi", "impl-default"]}
