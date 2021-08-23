@@ -224,6 +224,7 @@ fn with_n_fds(n: usize, size: usize) {
 mod fragment_tests {
     use crate::platform;
     use super::with_n_fds;
+    use lazy_static::lazy_static;
 
     lazy_static! {
         static ref FRAGMENT_SIZE: usize = {

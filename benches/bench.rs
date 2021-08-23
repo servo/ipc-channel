@@ -1,7 +1,6 @@
 #![feature(test)]
-
-extern crate ipc_channel;
 extern crate test;
+
 
 /// Allows doing multiple inner iterations per bench.iter() run.
 ///
@@ -14,12 +13,8 @@ extern crate test;
 const ITERATIONS: usize = 1;
 
 mod platform {
-    extern crate crossbeam_utils;
-
     use crate::ITERATIONS;
     use ipc_channel::platform;
-
-    use crate::test;
     use std::sync::{mpsc, Mutex};
 
     #[bench]
@@ -182,8 +177,6 @@ mod ipc {
     use crate::ITERATIONS;
     use ipc_channel::ipc;
 
-    use crate::test;
-
     #[bench]
     fn transfer_empty(b: &mut test::Bencher) {
         let (tx, rx) = ipc::channel().unwrap();
@@ -268,9 +261,7 @@ mod ipc {
     mod receiver_set {
         use crate::ITERATIONS;
         use ipc_channel::ipc::{self, IpcReceiverSet};
-
-        use crate::test;
-
+        
         // Benchmark selecting over a set of `n` receivers,
         // with `to_send` of them actually having pending data.
         fn bench_send_on_m_of_n(b: &mut test::Bencher, to_send: usize, n: usize) {

@@ -36,16 +36,6 @@
 //! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
 //! [memfd_create]: http://man7.org/linux/man-pages/man2/memfd_create.2.html
 
-use bincode;
-
-
-#[macro_use]
-extern crate lazy_static;
-
-
-
-
-
 
 #[cfg(any(
     feature = "force-inprocess",
@@ -53,27 +43,25 @@ extern crate lazy_static;
     target_os = "android",
     target_os = "ios"
 ))]
-extern crate uuid;
+use uuid;
 #[cfg(all(
     feature = "memfd",
     not(feature = "force-inprocess"),
     target_os = "linux"
 ))]
-#[macro_use]
-extern crate sc;
+
 
 #[cfg(feature = "async")]
-extern crate futures;
+use futures;
 
 #[cfg(all(feature = "async", test))]
-extern crate futures_test;
+use futures_test;
 
 #[cfg(feature = "async")]
 pub mod asynch;
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
-extern crate winapi;
-
+use winapi;
 
 pub mod ipc;
 pub mod platform;

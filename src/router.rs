@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread;
+use lazy_static::lazy_static;
 
 use crate::ipc::OpaqueIpcReceiver;
 use crate::ipc::{
