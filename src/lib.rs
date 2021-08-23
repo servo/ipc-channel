@@ -36,25 +36,17 @@
 //! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
 //! [memfd_create]: http://man7.org/linux/man-pages/man2/memfd_create.2.html
 
-extern crate bincode;
-extern crate crossbeam_channel;
+use bincode;
+
 
 #[macro_use]
 extern crate lazy_static;
-#[cfg(all(
-    not(feature = "force-inprocess"),
-    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
-))]
-extern crate fnv;
-extern crate libc;
-#[cfg(all(
-    not(feature = "force-inprocess"),
-    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
-))]
-extern crate mio;
-extern crate rand;
-extern crate serde;
-extern crate tempfile;
+
+
+
+
+
+
 #[cfg(any(
     feature = "force-inprocess",
     target_os = "windows",
