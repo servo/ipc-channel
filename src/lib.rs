@@ -36,26 +36,19 @@
 //! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
 //! [memfd_create]: http://man7.org/linux/man-pages/man2/memfd_create.2.html
 
-
 #[cfg(any(
     feature = "force-inprocess",
     target_os = "windows",
     target_os = "android",
     target_os = "ios"
 ))]
-use uuid;
 #[cfg(all(
     feature = "memfd",
     not(feature = "force-inprocess"),
     target_os = "linux"
 ))]
-
-
 #[cfg(feature = "async")]
 use futures;
-
-#[cfg(all(feature = "async", test))]
-use futures_test;
 
 #[cfg(feature = "async")]
 pub mod asynch;
