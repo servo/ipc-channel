@@ -45,7 +45,7 @@ pub enum IpcError {
 }
 
 impl fmt::Display for IpcError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             IpcError::Bincode(ref err) => write!(fmt, "bincode error: {}", err),
             IpcError::Io(ref err) => write!(fmt, "io error: {}", err),
@@ -71,7 +71,7 @@ pub enum TryRecvError {
 }
 
 impl fmt::Display for TryRecvError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             TryRecvError::IpcError(ref err) => write!(fmt, "ipc error: {}", err),
             TryRecvError::Empty => write!(fmt, "empty"),
@@ -342,11 +342,8 @@ impl<T> IpcSender<T> where T: Serialize {
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                     |os_ipc_shared_memory_regions_for_serialization| {
-                let old_os_ipc_channels =
-                    mem::replace(&mut *os_ipc_channels_for_serialization.borrow_mut(), Vec::new());
-                let old_os_ipc_shared_memory_regions =
-                    mem::replace(&mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
-                                 Vec::new());
+                let old_os_ipc_channels = mem::take(&mut *os_ipc_channels_for_serialization.borrow_mut());
+                let old_os_ipc_shared_memory_regions = mem::take(&mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut());
                 let os_ipc_shared_memory_regions;
                 let os_ipc_channels;
                 {
@@ -609,7 +606,7 @@ pub struct OpaqueIpcMessage {
 }
 
 impl Debug for OpaqueIpcMessage {
-    fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         match String::from_utf8(self.data.clone()) {
             Ok(string) => string.chars().take(256).collect::<String>().fmt(formatter),
             Err(..) => self.data[0..min(self.data.len(), 256)].fmt(formatter),
@@ -850,7 +847,7 @@ impl Serialize for IpcBytesSender {
 impl IpcBytesSender {
     #[inline]
     pub fn send(&self, data: &[u8]) -> Result<(), io::Error> {
-        self.os_sender.send(data, vec![], vec![]).map_err(|e| io::Error::from(e))
+        self.os_sender.send(data, vec![], vec![]).map_err(io::Error::from)
     }
 }
 

@@ -35,6 +35,7 @@ use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
 use tempfile::{Builder, TempDir};
+use lazy_static::lazy_static;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -296,7 +297,7 @@ impl OsIpcSender {
             } else {
                 Err(UnixError::last())
             }
-        };
+        }
 
         fn send_followup_fragment(sender_fd: c_int, data_buffer: &[u8]) -> Result<(),UnixError> {
             let result = unsafe {
@@ -606,8 +607,8 @@ impl OsIpcOneShotServer {
             let temp_dir = Builder::new().tempdir().unwrap();
             let socket_path = temp_dir.path().join("socket");
             let path_string = socket_path.to_str().unwrap();
-
-            let (sockaddr, len) = new_sockaddr_un(CString::new(path_string).unwrap().as_ptr());
+            let path = CString::new(path_string).unwrap();
+            let (sockaddr, len) = new_sockaddr_un(path.as_ptr());
             if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) != 0 {
                 return Err(UnixError::last());
             }
@@ -693,9 +694,9 @@ impl BackingStore {
 
     pub unsafe fn map_file(&self, length: Option<size_t>) -> (*mut u8, size_t) {
         let length = length.unwrap_or_else(|| {
-            let mut st = mem::uninitialized();
-            assert!(libc::fstat(self.fd, &mut st) == 0);
-            st.st_size as size_t
+            let st = mem::MaybeUninit::uninit().as_mut_ptr();
+            assert!(libc::fstat(self.fd, st) == 0);
+            (*st).st_size as size_t
         });
         if length == 0 {
             // This will cause `mmap` to fail, so handle it explicitly.
@@ -707,7 +708,7 @@ impl BackingStore {
                                  MAP_SHARED,
                                  self.fd,
                                  0);
-        assert!(address != ptr::null_mut());
+        assert!(!address.is_null());
         assert!(address != MAP_FAILED);
         (address as *mut u8, length)
     }
@@ -759,7 +760,7 @@ impl PartialEq for OsIpcSharedMemory {
 }
 
 impl Debug for OsIpcSharedMemory {
-    fn fmt(&self, formatter: &mut Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), fmt::Error> {
         (**self).fmt(formatter)
     }
 }
@@ -830,7 +831,7 @@ impl UnixError {
 }
 
 impl fmt::Display for UnixError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             UnixError::Errno(errno) => fmt::Display::fmt(&io::Error::from_raw_os_error(errno), fmt),
             UnixError::ChannelClosed => write!(fmt, "All senders for this socket closed"),
@@ -932,7 +933,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode)
             (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
         };
         for index in 0..channel_length {
-            let fd = *cmsg_fds.offset(index as isize);
+            let fd = *cmsg_fds.add(index);
             if is_socket(fd) {
                 channels.push(OsOpaqueIpcChannel::from_fd(fd));
                 continue
@@ -1084,11 +1085,11 @@ impl UnixCmsg {
 
 fn is_socket(fd: c_int) -> bool {
     unsafe {
-        let mut st = mem::uninitialized();
-        if libc::fstat(fd, &mut st) != 0 {
+        let st = mem::MaybeUninit::uninit().as_mut_ptr();
+        if libc::fstat(fd, st) != 0 {
             return false
         }
-        S_ISSOCK(st.st_mode as mode_t)
+        S_ISSOCK((*st).st_mode as mode_t)
     }
 }
 
@@ -1106,8 +1107,8 @@ fn CMSG_LEN(length: size_t) -> size_t {
 
 #[allow(non_snake_case)]
 unsafe fn CMSG_DATA(cmsg: *mut cmsghdr) -> *mut c_void {
-    (cmsg as *mut libc::c_uchar).offset(CMSG_ALIGN(
-            mem::size_of::<cmsghdr>()) as isize) as *mut c_void
+    (cmsg as *mut libc::c_uchar).add(CMSG_ALIGN(
+    mem::size_of::<cmsghdr>())) as *mut c_void
 }
 
 #[allow(non_snake_case)]
