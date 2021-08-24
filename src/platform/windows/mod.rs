@@ -31,6 +31,7 @@ use winapi::um::winnt::{HANDLE};
 use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
 use winapi::shared::minwindef::{LPVOID};
 use winapi;
+use lazy_static::lazy_static;
 
 mod aliased_cell;
 use self::aliased_cell::AliasedCell;

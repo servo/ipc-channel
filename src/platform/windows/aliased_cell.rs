@@ -20,7 +20,7 @@ impl Drop for DropBomb {
         if thread::panicking() {
             eprintln!("{}", message);
         } else {
-            panic!(message);
+            panic!("{}", message);
         }
     }
 }
