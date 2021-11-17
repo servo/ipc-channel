@@ -55,6 +55,7 @@ use crate::ipc::IpcOneShotServer;
     target_os = "ios"
 )))]
 use std::io::Error;
+use std::time::{Duration, Instant};
 
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -506,6 +507,33 @@ fn try_recv() {
     }
     drop(tx);
     match rx.try_recv() {
+        Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
+        v => panic!("Expected disconnected err: {:?}", v),
+    }
+}
+
+#[test]
+fn try_recv_timeout() {
+    let person = ("Jacob Kiesel".to_owned(), 25);
+    let (tx, rx) = ipc::channel().unwrap();
+    let timeout = Duration::from_millis(250);
+    let start_recv = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= timeout),
+        v => panic!("Expected empty channel err: {:?}", v),
+    }
+    tx.send(person.clone()).unwrap();
+    let start_recv = Instant::now();
+    let received_person = rx.try_recv_timeout(timeout).unwrap();
+    assert!(start_recv.elapsed() < timeout);
+    assert_eq!(person, received_person);
+    let start_recv = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= timeout),
+        v => panic!("Expected empty channel err: {:?}", v),
+    }
+    drop(tx);
+    match rx.try_recv_timeout(timeout) {
         Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
         v => panic!("Expected disconnected err: {:?}", v),
     }
