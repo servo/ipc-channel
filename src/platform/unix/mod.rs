@@ -30,7 +30,7 @@ use std::ptr;
 use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
@@ -147,6 +147,11 @@ impl OsIpcReceiver {
     pub fn try_recv(&self)
                     -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
         recv(self.fd.get(), BlockingMode::Nonblocking)
+    }
+
+    pub fn try_recv_timeout(&self, duration: Duration)
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
+        recv(self.fd.get(), BlockingMode::Timeout(duration))
     }
 }
 
@@ -891,6 +896,7 @@ impl From<io::Error> for UnixError {
 enum BlockingMode {
     Blocking,
     Nonblocking,
+    Timeout(Duration),
 }
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
@@ -1054,10 +1060,23 @@ impl UnixCmsg {
 
     unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
                    -> Result<usize, UnixError> {
-        if let BlockingMode::Nonblocking = blocking_mode {
-            if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
-                return Err(UnixError::last())
+        match blocking_mode {
+            BlockingMode::Nonblocking => {
+                if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
+                    return Err(UnixError::last())
+                }
+            },
+            BlockingMode::Timeout(duration) => {
+                let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
+                let fd = &mut [libc::pollfd {fd, events, revents: 0}];
+                let result = libc::poll(fd.as_mut_ptr(), fd.len() as libc::c_ulong, duration.as_millis() as libc::c_int);
+                if result == 0 {
+                    return Err(UnixError::Errno(EAGAIN));
+                } else if result < 0 {
+                    return Err(UnixError::last());
+                };
             }
+            BlockingMode::Blocking => {},
         }
 
         let result = recvmsg(fd, &mut self.msghdr, RECVMSG_FLAGS);
