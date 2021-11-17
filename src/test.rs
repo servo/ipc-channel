@@ -516,10 +516,10 @@ fn try_recv() {
 fn try_recv_timeout() {
     let person = ("Jacob Kiesel".to_owned(), 25);
     let (tx, rx) = ipc::channel().unwrap();
-    let timeout = Duration::from_millis(250);
+    let timeout = Duration::from_millis(1000);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= timeout),
+        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= Duration::from_millis(500)),
         v => panic!("Expected empty channel err: {:?}", v),
     }
     tx.send(person.clone()).unwrap();
@@ -529,7 +529,7 @@ fn try_recv_timeout() {
     assert_eq!(person, received_person);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= timeout),
+        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= Duration::from_millis(500)),
         v => panic!("Expected empty channel err: {:?}", v),
     }
     drop(tx);
