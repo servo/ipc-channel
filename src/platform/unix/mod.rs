@@ -612,7 +612,8 @@ impl OsIpcOneShotServer {
             let socket_path = temp_dir.path().join("socket");
             let path_string = socket_path.to_str().unwrap();
 
-            let (sockaddr, len) = new_sockaddr_un(CString::new(path_string).unwrap().as_ptr());
+            let path_c_string = CString::new(path_string).unwrap();
+            let (sockaddr, len) = new_sockaddr_un(path_c_string.as_ptr());
             if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) != 0 {
                 return Err(UnixError::last());
             }
