@@ -266,7 +266,10 @@ impl<T> IpcReceiver<T> where T: for<'de> Deserialize<'de> + Serialize {
 
     /// Blocks for up to the specified duration attempting to receive a message.
     ///
-    /// This may block for longer than the specified duration if the channel is busy.
+    /// This may block for longer than the specified duration if the channel is busy. If your timeout
+    /// exceeds the duration that your operating system can represent in milliseconds, this may
+    /// block forever. At the time of writing, the smallest duration that may trigger this behavior
+    /// is over 24 days.
     pub fn try_recv_timeout(&self, duration: Duration) -> Result<T, TryRecvError> {
         let (data, os_ipc_channels, os_ipc_shared_memory_regions) =
             self.os_receiver.try_recv_timeout(duration)?;
