@@ -18,6 +18,7 @@ use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
@@ -1070,7 +1071,11 @@ impl UnixCmsg {
             BlockingMode::Timeout(duration) => {
                 let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
                 let fd = &mut [libc::pollfd {fd, events, revents: 0}];
-                let result = libc::poll(fd.as_mut_ptr(), fd.len() as libc::c_ulong, duration.as_millis() as libc::c_int);
+                let result = libc::poll(
+                    fd.as_mut_ptr(),
+                    fd.len() as libc::c_ulong,
+                    duration.as_millis().try_into().unwrap_or(-1)
+                );
                 if result == 0 {
                     return Err(UnixError::Errno(EAGAIN));
                 } else if result < 0 {
