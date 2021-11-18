@@ -25,6 +25,7 @@ use std::marker::{Send, Sync, PhantomData};
 use std::mem;
 use std::ops::{Deref, DerefMut, RangeFrom};
 use std::ptr;
+use std::ptr::null_mut;
 use std::slice;
 use std::thread;
 use std::time::Duration;
@@ -389,7 +390,7 @@ struct AsyncData {
     /// This must be on the heap, in order for its memory location --
     /// which is registered in the kernel during an async read --
     /// to remain stable even when the enclosing structure is passed around.
-    ov: NoDebug<Box<winapi::um::minwinbase::OVERLAPPED>>,
+    ov: NoDebug<Box<Overlapped>>,
 
     /// Buffer for the kernel to store the results of the async read operation.
     ///
@@ -398,6 +399,40 @@ struct AsyncData {
     /// If part of the vector is already filled, that is left in place;
     /// the new data will only be written to the unused space.
     buf: Vec<u8>,
+}
+
+#[repr(transparent)]
+struct Overlapped(winapi::um::minwinbase::OVERLAPPED);
+
+impl Drop for Overlapped {
+    fn drop(&mut self) {
+        unsafe {
+            if self.0.hEvent != null_mut() && self.0.hEvent != INVALID_HANDLE_VALUE {
+                let result = winapi::um::handleapi::CloseHandle(self.0.hEvent);
+                assert!(thread::panicking() || result != 0);
+            }
+        }
+    }
+}
+
+impl Overlapped {
+    fn new(ov: winapi::um::minwinbase::OVERLAPPED) -> Self {
+        Self(ov)
+    }
+}
+
+impl Deref for Overlapped {
+    type Target = winapi::um::minwinbase::OVERLAPPED;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Overlapped {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 /// Main object keeping track of a receive handle and its associated state.
@@ -514,7 +549,7 @@ impl MessageReader {
     fn issue_async_cancel(&mut self) {
         unsafe {
             let status = winapi::um::ioapiset::CancelIoEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
-                                              &mut **self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut());
+                                              &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut());
 
             if status == FALSE {
                 // A cancel operation is not expected to fail.
@@ -598,7 +633,7 @@ impl MessageReader {
                     // Create a manually reset event. The documentation for GetOverlappedResultEx
                     // states you must do this in the remarks section.
                     overlapped.hEvent = CreateEventA(ptr::null_mut(), TRUE, FALSE, ptr::null_mut());
-                    overlapped
+                    Overlapped::new(overlapped)
                 })),
                 buf: mem::replace(&mut self.read_buf, vec![]),
             }));
@@ -609,7 +644,7 @@ impl MessageReader {
                                    remaining_buf.as_mut_ptr() as LPVOID,
                                    remaining_buf.len() as u32,
                                    ptr::null_mut(),
-                                    &mut **async_data.ov.deref_mut())
+                                    &mut ***async_data.ov.deref_mut())
             };
 
             // Reset the vector to only expose the already filled part.
@@ -742,7 +777,7 @@ impl MessageReader {
                 BlockingMode::Timeout(duration) => duration.as_millis().try_into().unwrap_or(winapi::um::winbase::INFINITE),
             };
             let ok = winapi::um::ioapiset::GetOverlappedResultEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
-                                                   &mut **self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut(),
+                                                   &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut(),
                                                    &mut nbytes,
                                                    timeout,
                                                    FALSE);
