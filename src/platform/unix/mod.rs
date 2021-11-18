@@ -1070,7 +1070,7 @@ impl UnixCmsg {
             },
             BlockingMode::Timeout(duration) => {
                 let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
-                let fd = &mut [libc::pollfd {fd, events, revents: 0}];
+                let mut fd = [libc::pollfd {fd, events, revents: 0}];
                 let result = libc::poll(
                     fd.as_mut_ptr(),
                     fd.len() as libc::c_ulong,
