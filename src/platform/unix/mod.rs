@@ -18,6 +18,7 @@ use libc::{setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t, sa_
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
@@ -30,7 +31,7 @@ use std::ptr;
 use std::slice;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::UNIX_EPOCH;
+use std::time::{Duration, UNIX_EPOCH};
 use std::thread;
 use mio::unix::EventedFd;
 use mio::{Poll, Token, Events, Ready, PollOpt};
@@ -147,6 +148,11 @@ impl OsIpcReceiver {
     pub fn try_recv(&self)
                     -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
         recv(self.fd.get(), BlockingMode::Nonblocking)
+    }
+
+    pub fn try_recv_timeout(&self, duration: Duration)
+                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),UnixError> {
+        recv(self.fd.get(), BlockingMode::Timeout(duration))
     }
 }
 
@@ -607,7 +613,8 @@ impl OsIpcOneShotServer {
             let socket_path = temp_dir.path().join("socket");
             let path_string = socket_path.to_str().unwrap();
 
-            let (sockaddr, len) = new_sockaddr_un(CString::new(path_string).unwrap().as_ptr());
+            let path_c_string = CString::new(path_string).unwrap();
+            let (sockaddr, len) = new_sockaddr_un(path_c_string.as_ptr());
             if libc::bind(fd, &sockaddr as *const _ as *const sockaddr, len as socklen_t) != 0 {
                 return Err(UnixError::last());
             }
@@ -891,6 +898,7 @@ impl From<io::Error> for UnixError {
 enum BlockingMode {
     Blocking,
     Nonblocking,
+    Timeout(Duration),
 }
 
 fn recv(fd: c_int, blocking_mode: BlockingMode)
@@ -1054,10 +1062,27 @@ impl UnixCmsg {
 
     unsafe fn recv(&mut self, fd: c_int, blocking_mode: BlockingMode)
                    -> Result<usize, UnixError> {
-        if let BlockingMode::Nonblocking = blocking_mode {
-            if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
-                return Err(UnixError::last())
+        match blocking_mode {
+            BlockingMode::Nonblocking => {
+                if libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK) < 0 {
+                    return Err(UnixError::last())
+                }
+            },
+            BlockingMode::Timeout(duration) => {
+                let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
+                let mut fd = [libc::pollfd {fd, events, revents: 0}];
+                let result = libc::poll(
+                    fd.as_mut_ptr(),
+                    fd.len() as libc::c_ulong,
+                    duration.as_millis().try_into().unwrap_or(-1)
+                );
+                if result == 0 {
+                    return Err(UnixError::Errno(EAGAIN));
+                } else if result < 0 {
+                    return Err(UnixError::last());
+                };
             }
+            BlockingMode::Blocking => {},
         }
 
         let result = recvmsg(fd, &mut self.msghdr, RECVMSG_FLAGS);

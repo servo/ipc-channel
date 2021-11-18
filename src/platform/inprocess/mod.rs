@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use bincode;
-use crossbeam_channel::{self, Receiver, Select, Sender, TryRecvError};
+use crossbeam_channel::{self, Receiver, RecvTimeoutError, Select, Sender, TryRecvError};
 use crate::ipc;
 use std::sync::{Arc, Mutex};
 use std::collections::hash_map::HashMap;
@@ -19,6 +19,7 @@ use std::slice;
 use std::fmt::{self, Debug, Formatter};
 use std::cmp::{PartialEq};
 use std::ops::{Deref, RangeFrom};
+use std::time::Duration;
 use std::usize;
 use uuid::Uuid;
 
@@ -109,6 +110,25 @@ impl OsIpcReceiver {
                 match e {
                     TryRecvError::Empty => Err(ChannelError::ChannelEmpty),
                     TryRecvError::Disconnected => Err(ChannelError::ChannelClosedError),
+                }
+            }
+        }
+    }
+
+    pub fn try_recv_timeout(
+        &self,
+        duration: Duration,
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+        let r = self.receiver.borrow();
+        let r = r.as_ref().unwrap();
+        match r.recv_timeout(duration) {
+            Ok(ChannelMessage(d, c, s)) => {
+                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
+            },
+            Err(e) => {
+                match e {
+                    RecvTimeoutError::Timeout => Err(ChannelError::ChannelEmpty),
+                    RecvTimeoutError::Disconnected => Err(ChannelError::ChannelClosedError),
                 }
             }
         }
