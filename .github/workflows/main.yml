@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [auto]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux-ci:
+    name: Linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features: ["unstable", "unstable force-inprocess", "unstable memfd"]
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+
+      - name: Cargo build
+        run: cargo build --features "${{ matrix.features }}"
+
+      - name: Cargo test
+        run: cargo test --features "${{ matrix.features }}"
+        env:
+          RUST_BACKTRACE: 1
+
+  mac-ci:
+    name: macOS
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        features: ["unstable", "unstable force-inprocess"]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+
+      - name: Cargo build
+        run: cargo build --features "${{ matrix.features }}"
+
+      - name: Cargo test
+        run: cargo test --features "${{ matrix.features }}"
+        env:
+          RUST_BACKTRACE: 1
+
+  windows-ci:
+    name: Windows
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        features: ["unstable", "unstable force-inprocess", "unstable windows-shared-memory-equality"]
+        target: ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install nightly toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: nightly
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Cargo build
+        run: cargo build --features "${{ matrix.features }}" --target ${{ matrix.target }}
+
+      - name: Cargo test
+        run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.target }}
+        env:
+          RUST_BACKTRACE: 1
+
+  build_result:
+    name: homu build finished
+    runs-on: ubuntu-latest
+    needs:
+      - "linux-ci"
+      - "mac-ci"
+      - "windows-ci"
+
+    steps:
+      - name: Mark the job as successful
+        run: exit 0
+        if: success()
+      - name: Mark the job as unsuccessful
+        run: exit 1
+        if: "!success()"
+
