@@ -90,7 +90,7 @@ impl StdError for TryRecvError {
 }
 
 /// Create a connected [IpcSender] and [IpcReceiver] that
-/// transfer messages of a given type privided by type `T`
+/// transfer messages of a given type provided by type `T`
 /// or inferred by the types of messages sent by the sender.
 ///
 /// Messages sent by the sender will be available to the
@@ -204,7 +204,7 @@ pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver), io::Error> 
 /// loop {
 ///     match rx.try_recv() {
 ///         Ok(res) => {
-///             // Do something interesting wth your result
+///             // Do something interesting with your result
 ///             println!("Received data...");
 ///             break;
 ///         },
@@ -353,7 +353,7 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
-    /// Send data accross the channel to the receiver.
+    /// Send data across the channel to the receiver.
     pub fn send(&self, data: T) -> Result<(), bincode::Error> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {

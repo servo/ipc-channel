@@ -184,7 +184,7 @@ impl<'data> Message<'data> {
 /// make sure that the message was originally sent to it, and was not sitting
 /// in another channel's buffer when that channel got transferred to another
 /// process.  On Windows, we duplicate handles on the sender side to a specific
-/// reciever.  If the wrong receiver gets it, those handles are not valid.
+/// receiver.  If the wrong receiver gets it, those handles are not valid.
 ///
 /// TODO(vlad): We could attempt to recover from the above situation by
 /// duplicating from the intended target process to ourselves (the receiver).
