@@ -11,7 +11,7 @@ edition = "2018"
 force-inprocess = []
 memfd = ["sc"]
 unstable = []
-async = ["futures-preview", "futures-test-preview"]
+async = ["futures", "futures-test"]
 win32-trace = []
 windows-shared-memory-equality = []
 
