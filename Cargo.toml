@@ -11,7 +11,7 @@ edition = "2018"
 force-inprocess = []
 memfd = ["sc"]
 unstable = []
-async = ["futures-preview", "futures-test-preview"]
+async = ["futures", "futures-test"]
 win32-trace = []
 windows-shared-memory-equality = []
 
@@ -19,8 +19,8 @@ windows-shared-memory-equality = []
 bincode = "1"
 crossbeam-channel = "0.4"
 fnv = "1.0.3"
-futures-preview = { version = "0.3.0-alpha.17", optional = true }
-futures-test-preview = { version = "0.3.0-alpha.17", optional = true }
+futures = { version = "0.3", optional = true }
+futures-test = { version = "0.3", optional = true }
 lazy_static = "1"
 libc = "0.2.12"
 rand = "0.7"
