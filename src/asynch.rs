@@ -112,3 +112,12 @@ where
         }
     }
 }
+
+impl<T> FusedStream for IpcStream<T> 
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    fn is_terminated(&self) -> bool {
+        self.0.is_terminated()
+    }
+}
