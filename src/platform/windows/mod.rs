@@ -32,7 +32,7 @@ use std::time::Duration;
 use uuid::Uuid;
 use winapi::um::winnt::{HANDLE};
 use winapi::um::handleapi::{INVALID_HANDLE_VALUE};
-use winapi::shared::minwindef::{TRUE, FALSE, LPVOID};
+use winapi::shared::minwindef::{TRUE, FALSE, LPVOID, ULONG};
 use winapi;
 use winapi::um::synchapi::CreateEventA;
 
@@ -1163,6 +1163,18 @@ impl OsIpcReceiver {
     /// This is used for receiving data from the out-of-band big data buffer.
     fn recv_raw(self, size: usize) -> Result<Vec<u8>, WinError> {
         self.reader.into_inner().read_raw_sized(size)
+    }
+
+    pub fn get_sender_process_id(&self) -> Result<ULONG, WinError> {
+        unsafe {
+            let reader_borrow = self.reader.borrow();
+            let handle = &reader_borrow.handle;
+            let mut process_id = 0;
+            if GetNamedPipeClientProcessId(handle.as_raw(), &mut process_id) == FALSE {
+                return Err(WinError::last("GetNamedPipeClientProcessId"));
+            }
+            Ok(process_id)
+        }
     }
 }
 
