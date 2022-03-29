@@ -782,6 +782,34 @@ impl<T> IpcOneShotServer<T> where T: for<'de> Deserialize<'de> + Serialize {
         }, name))
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn new_named(pipe_name: &str) -> Result<IpcOneShotServer<T>, io::Error> {
+        let os_server = OsIpcOneShotServer::new_named(pipe_name)?;
+        Ok(IpcOneShotServer {
+            os_server,
+            phantom: PhantomData,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn new_named_with_security(pipe_name: &str, security_attributes: &mut winapi::um::minwinbase::SECURITY_ATTRIBUTES) -> Result<IpcOneShotServer<T>, io::Error> {
+        let os_server = OsIpcOneShotServer::new_named_with_security(pipe_name, security_attributes)?;
+        Ok(IpcOneShotServer {
+            os_server,
+            phantom: PhantomData,
+        })
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn new_with_security(security_attributes: &mut winapi::um::minwinbase::SECURITY_ATTRIBUTES) -> Result<(IpcOneShotServer<T>, String), io::Error> {
+        let (os_server, name) = OsIpcOneShotServer::new_with_security(security_attributes)?;
+        Ok((IpcOneShotServer {
+            os_server,
+            phantom: PhantomData,
+        }, name))
+    }
+
+
     pub fn accept(self) -> Result<(IpcReceiver<T>,T), bincode::Error> {
         let (os_receiver, data, os_channels, os_shared_memory_regions) =
             self.os_server.accept()?;
