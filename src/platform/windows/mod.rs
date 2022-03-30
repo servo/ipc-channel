@@ -1238,7 +1238,7 @@ impl OsIpcSender {
     }
 
     /// Connect to a pipe server.
-    fn connect_named(pipe_name: &CString) -> Result<OsIpcSender,WinError> {
+    pub(crate) fn connect_named(pipe_name: &CString) -> Result<OsIpcSender,WinError> {
         unsafe {
             let handle =
                 winapi::um::fileapi::CreateFileA(pipe_name.as_ptr(),

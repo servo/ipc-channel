@@ -358,6 +358,17 @@ impl<T> IpcSender<T> where T: Serialize {
         })
     }
 
+    #[cfg(target_os = "windows")]
+    pub fn connect_named(name: String) -> Result<IpcSender<T>, io::Error> {
+        use std::ffi::CString;
+        let pipe_name = CString::new(format!("\\\\.\\pipe\\{}", name))
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+        Ok(IpcSender {
+            os_sender: OsIpcSender::connect_named(&pipe_name)?,
+            phantom: PhantomData,
+        })
+    }
+
     /// Send data across the channel to the receiver.
     pub fn send(&self, data: T) -> Result<(), bincode::Error> {
         let mut bytes = Vec::with_capacity(4096);
