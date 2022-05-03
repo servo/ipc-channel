@@ -268,17 +268,15 @@ fn dup_handle_to_process_with_flags(handle: &WinHandle, other_process: &WinHandl
         return Ok(WinHandle::invalid());
     }
 
-    unsafe {
         let mut new_handle: HANDLE = INVALID_HANDLE_VALUE;
-        let ok = winapi::um::handleapi::DuplicateHandle(CURRENT_PROCESS_HANDLE.as_raw(), handle.as_raw(),
+        let ok = unsafe { winapi::um::handleapi::DuplicateHandle(CURRENT_PROCESS_HANDLE.as_raw(), handle.as_raw(),
                                            other_process.as_raw(), &mut new_handle,
-                                           0, FALSE, flags);
+                                           0, FALSE, flags) };
         if ok == FALSE {
             Err(WinError::last("DuplicateHandle"))
         } else {
             Ok(WinHandle::new(new_handle))
         }
-    }
 }
 
 /// Duplicate a handle in the current process.
@@ -547,9 +545,8 @@ impl MessageReader {
     /// In that case, the `async` data is released immediately;
     /// and the caller should not attempt waiting for completion.
     fn issue_async_cancel(&mut self) {
-        unsafe {
-            let status = winapi::um::ioapiset::CancelIoEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
-                                              &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut());
+            let status = unsafe { winapi::um::ioapiset::CancelIoEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
+                                              &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut()) };
 
             if status == FALSE {
                 // A cancel operation is not expected to fail.
@@ -568,11 +565,10 @@ impl MessageReader {
                 // and the caller should not attempt to wait for completion.
                 assert!(GetLastError() == winapi::shared::winerror::ERROR_NOT_FOUND);
 
-                let async_data = self.r#async.take().unwrap().into_inner();
+                let async_data = unsafe { self.r#async.take().unwrap().into_inner() };
                 self.handle = async_data.handle;
                 self.read_buf = async_data.buf;
             }
-        }
     }
 
     fn cancel_io(&mut self) {
@@ -768,7 +764,6 @@ impl MessageReader {
     /// when `fetch_async_result()` returns successfully upon retry.
     /// (Or the async read is aborted with `cancel_io()`.)
     fn fetch_async_result(&mut self, blocking_mode: BlockingMode) -> Result<(), WinError> {
-        unsafe {
             // Get the overlapped result, blocking if we need to.
             let mut nbytes: u32 = 0;
             let timeout = match blocking_mode {
@@ -776,12 +771,12 @@ impl MessageReader {
                 BlockingMode::Nonblocking => 0,
                 BlockingMode::Timeout(duration) => duration.as_millis().try_into().unwrap_or(winapi::um::winbase::INFINITE),
             };
-            let ok = winapi::um::ioapiset::GetOverlappedResultEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
+            let ok = unsafe { winapi::um::ioapiset::GetOverlappedResultEx(self.r#async.as_ref().unwrap().alias().handle.as_raw(),
                                                    &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut(),
                                                    &mut nbytes,
                                                    timeout,
-                                                   FALSE);
-            winapi::um::synchapi::ResetEvent(self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut().hEvent);
+                                                   FALSE) };
+            unsafe { winapi::um::synchapi::ResetEvent(self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut().hEvent) };
             let io_result = if ok == FALSE {
                 let err = GetLastError();
                 if blocking_mode != BlockingMode::Blocking && err == winapi::shared::winerror::ERROR_IO_INCOMPLETE {
@@ -803,8 +798,7 @@ impl MessageReader {
 
             // Notify that the read completed, which will update the
             // read pointers
-            self.notify_completion(io_result)
-        }
+            unsafe { self.notify_completion(io_result) }
     }
 
     fn get_message(&mut self) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>,
@@ -870,18 +864,16 @@ impl MessageReader {
     }
 
     fn add_to_iocp(&mut self, iocp: &WinHandle, entry_id: u64) -> Result<(),WinError> {
-        unsafe {
             assert!(self.entry_id.is_none());
 
             let completion_key = self.handle.as_raw() as winapi::shared::basetsd::ULONG_PTR;
-            let ret = winapi::um::ioapiset::CreateIoCompletionPort(self.handle.as_raw(),
+            let ret = unsafe { winapi::um::ioapiset::CreateIoCompletionPort(self.handle.as_raw(),
                                                        iocp.as_raw(),
                                                        completion_key,
-                                                       0);
+                                                       0) };
             if ret.is_null() {
                 return Err(WinError::last("CreateIoCompletionPort"));
             }
-        }
 
         self.entry_id = Some(entry_id);
 
@@ -1018,9 +1010,8 @@ impl OsIpcReceiver {
     }
 
     fn new_named(pipe_name: &CString) -> Result<OsIpcReceiver,WinError> {
-        unsafe {
             // create the pipe server
-            let handle =
+            let handle = unsafe {
                 winapi::um::winbase::CreateNamedPipeA(pipe_name.as_ptr(),
                                            winapi::um::winbase::PIPE_ACCESS_INBOUND | winapi::um::winbase::FILE_FLAG_OVERLAPPED,
                                            winapi::um::winbase::PIPE_TYPE_BYTE | winapi::um::winbase::PIPE_READMODE_BYTE | winapi::um::winbase::PIPE_REJECT_REMOTE_CLIENTS,
@@ -1029,7 +1020,7 @@ impl OsIpcReceiver {
                                            // out/in buffer sizes
                                            0, PIPE_BUFFER_SIZE as u32,
                                            0, // default timeout for WaitNamedPipe (0 == 50ms as default)
-                                           ptr::null_mut());
+                                           ptr::null_mut()) };
             if handle == INVALID_HANDLE_VALUE {
                 return Err(WinError::last("CreateNamedPipeA"));
             }
@@ -1037,7 +1028,6 @@ impl OsIpcReceiver {
             Ok(OsIpcReceiver {
                 reader: RefCell::new(MessageReader::new(WinHandle::new(handle))),
             })
-        }
     }
 
     fn prepare_for_transfer(&self) -> Result<bool,WinError> {
@@ -1108,13 +1098,12 @@ impl OsIpcReceiver {
     ///
     /// Only used for one-shot servers.
     fn accept(&self) -> Result<(),WinError> {
-        unsafe {
             let reader_borrow = self.reader.borrow();
             let handle = &reader_borrow.handle;
             // Boxing this to get a stable address is not strictly necesssary here,
             // since we are not moving the local variable around -- but better safe than sorry...
-            let mut ov = AliasedCell::new(Box::new(mem::zeroed::<winapi::um::minwinbase::OVERLAPPED>()));
-            let ok = winapi::um::namedpipeapi::ConnectNamedPipe(handle.as_raw(), ov.alias_mut().deref_mut());
+            let mut ov = unsafe { AliasedCell::new(Box::new(mem::zeroed::<winapi::um::minwinbase::OVERLAPPED>())) };
+            let ok = unsafe { winapi::um::namedpipeapi::ConnectNamedPipe(handle.as_raw(), ov.alias_mut().deref_mut()) };
 
             // we should always get FALSE with async IO
             assert_eq!(ok, FALSE);
@@ -1138,7 +1127,7 @@ impl OsIpcReceiver {
                 // the connect is pending; wait for it to complete
                 winapi::shared::winerror::ERROR_IO_PENDING => {
                     let mut nbytes: u32 = 0;
-                    let ok = winapi::um::ioapiset::GetOverlappedResult(handle.as_raw(), ov.alias_mut().deref_mut(), &mut nbytes, TRUE);
+                    let ok = unsafe { winapi::um::ioapiset::GetOverlappedResult(handle.as_raw(), ov.alias_mut().deref_mut(), &mut nbytes, TRUE) };
                     if ok == FALSE {
                         return Err(WinError::last("GetOverlappedResult[ConnectNamedPipe]"));
                     }
@@ -1152,9 +1141,8 @@ impl OsIpcReceiver {
                 },
             };
 
-            ov.into_inner();
+            unsafe { ov.into_inner() };
             result
-        }
     }
 
     /// Does a single explicitly-sized recv from the handle,
@@ -1202,15 +1190,14 @@ impl OsIpcSender {
 
     /// Connect to a pipe server.
     fn connect_named(pipe_name: &CString) -> Result<OsIpcSender,WinError> {
-        unsafe {
-            let handle =
+            let handle = unsafe {
                 winapi::um::fileapi::CreateFileA(pipe_name.as_ptr(),
                                       winapi::um::winnt::GENERIC_WRITE,
                                       0,
                                       ptr::null_mut(), // lpSecurityAttributes
                                        winapi::um::fileapi::OPEN_EXISTING,
                                        winapi::um::winnt::FILE_ATTRIBUTE_NORMAL,
-                                      ptr::null_mut());
+                                      ptr::null_mut()) };
             if handle == INVALID_HANDLE_VALUE {
                 return Err(WinError::last("CreateFileA"));
             }
@@ -1218,35 +1205,30 @@ impl OsIpcSender {
             win32_trace!("[c {:?}] connect_to_server success", handle);
 
             Ok(OsIpcSender::from_handle(WinHandle::new(handle)))
-        }
     }
 
     fn get_pipe_server_process_id(&self) -> Result<winapi::shared::ntdef::ULONG,WinError> {
-        unsafe {
             let mut server_pid: winapi::shared::ntdef::ULONG = 0;
-            if winapi::um::winbase::GetNamedPipeServerProcessId(self.handle.as_raw(), &mut server_pid) == FALSE {
+            if unsafe { winapi::um::winbase::GetNamedPipeServerProcessId(self.handle.as_raw(), &mut server_pid) } == FALSE {
                 return Err(WinError::last("GetNamedPipeServerProcessId"));
             }
             Ok(server_pid)
-        }
     }
 
     fn get_pipe_server_process_handle_and_pid(&self) -> Result<(WinHandle, winapi::shared::ntdef::ULONG),WinError> {
-        unsafe {
             let server_pid = self.get_pipe_server_process_id()?;
             if server_pid == *CURRENT_PROCESS_ID {
                 return Ok((WinHandle::new(CURRENT_PROCESS_HANDLE.as_raw()), server_pid));
             }
 
-            let raw_handle = winapi::um::processthreadsapi::OpenProcess(winapi::um::winnt::PROCESS_DUP_HANDLE,
+            let raw_handle = unsafe { winapi::um::processthreadsapi::OpenProcess(winapi::um::winnt::PROCESS_DUP_HANDLE,
                                                    FALSE,
-                                                   server_pid as winapi::shared::minwindef::DWORD);
+                                                   server_pid as winapi::shared::minwindef::DWORD) };
             if raw_handle.is_null() {
                 return Err(WinError::last("OpenProcess"));
             }
 
             Ok((WinHandle::new(raw_handle), server_pid))
-        }
     }
 
     fn needs_fragmentation(data_len: usize, oob: &OutOfBandMessage) -> bool {
@@ -1423,11 +1405,10 @@ impl Drop for OsIpcReceiverSet {
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet,WinError> {
-        unsafe {
-            let iocp = winapi::um::ioapiset::CreateIoCompletionPort(INVALID_HANDLE_VALUE,
+            let iocp = unsafe { winapi::um::ioapiset::CreateIoCompletionPort(INVALID_HANDLE_VALUE,
                                                         ptr::null_mut(),
                                                         0 as winapi::shared::basetsd::ULONG_PTR,
-                                                        0);
+                                                        0) };
             if iocp.is_null() {
                 return Err(WinError::last("CreateIoCompletionPort"));
             }
@@ -1438,7 +1419,6 @@ impl OsIpcReceiverSet {
                 readers: vec![],
                 closed_readers: vec![],
             })
-        }
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,WinError> {
@@ -1485,16 +1465,15 @@ impl OsIpcReceiverSet {
     /// and the caller should add it back to the list of active readers
     /// after kicking off a new read operation on it.
     fn fetch_iocp_result(&mut self) -> Result<(MessageReader, Result<(), WinError>), WinError> {
-        unsafe {
             let mut nbytes: u32 = 0;
             let mut completion_key = INVALID_HANDLE_VALUE as winapi::shared::basetsd::ULONG_PTR;
             let mut ov_ptr: *mut winapi::um::minwinbase::OVERLAPPED = ptr::null_mut();
             // XXX use GetQueuedCompletionStatusEx to dequeue multiple CP at once!
-            let ok = winapi::um::ioapiset::GetQueuedCompletionStatus(self.iocp.as_raw(),
+            let ok = unsafe { winapi::um::ioapiset::GetQueuedCompletionStatus(self.iocp.as_raw(),
                                                          &mut nbytes,
                                                          &mut completion_key,
                                                          &mut ov_ptr,
-                                                         winapi::um::winbase::INFINITE);
+                                                         winapi::um::winbase::INFINITE) };
             win32_trace!("[# {:?}] GetQueuedCS -> ok:{} nbytes:{} key:{:?}", self.iocp.as_raw(), ok, nbytes, completion_key);
             let io_result = if ok == FALSE {
                 let err = WinError::last("GetQueuedCompletionStatus");
@@ -1518,7 +1497,7 @@ impl OsIpcReceiverSet {
             // Find the matching receiver
             let (reader_index, _) = self.readers.iter().enumerate()
                                     .find(|&(_, ref reader)| {
-                                        let raw_handle = reader.r#async.as_ref().unwrap().alias().handle.as_raw();
+                                        let raw_handle = unsafe { reader.r#async.as_ref().unwrap().alias().handle.as_raw() };
                                         raw_handle as winapi::shared::basetsd::ULONG_PTR == completion_key
                                     })
                                     .expect("Windows IPC ReceiverSet got notification for a receiver it doesn't know about");
@@ -1530,10 +1509,9 @@ impl OsIpcReceiverSet {
             win32_trace!("[# {:?}] result for receiver {:?}", self.iocp.as_raw(), reader.get_raw_handle());
 
             // tell it about the completed IO op
-            let result = reader.notify_completion(io_result);
+            let result = unsafe { reader.notify_completion(io_result) };
 
             Ok((reader, result))
-        }
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,WinError> {
@@ -1659,22 +1637,20 @@ impl Deref for OsIpcSharedMemory {
 
 impl OsIpcSharedMemory {
     fn new(length: usize) -> Result<OsIpcSharedMemory,WinError> {
-        unsafe {
             assert!(length < u32::max_value() as usize);
             let (lhigh, llow) = (length.checked_shr(32).unwrap_or(0) as u32,
                                  (length & 0xffffffff) as u32);
-            let handle =
+            let handle = unsafe {
                 winapi::um::winbase::CreateFileMappingA(INVALID_HANDLE_VALUE,
                                              ptr::null_mut(),
                                              winapi::um::winnt::PAGE_READWRITE | winapi::um::winnt::SEC_COMMIT,
                                              lhigh, llow,
-                                             ptr::null_mut());
+                                             ptr::null_mut()) };
             if handle == INVALID_HANDLE_VALUE {
                 return Err(WinError::last("CreateFileMapping"));
             }
 
             OsIpcSharedMemory::from_handle(WinHandle::new(handle), length)
-        }
     }
 
     // There is no easy way to query the size of the mapping -- you
@@ -1684,10 +1660,9 @@ impl OsIpcSharedMemory {
     // This function takes ownership of the handle, and will close it
     // when finished.
     fn from_handle(handle: WinHandle, length: usize) -> Result<OsIpcSharedMemory,WinError> {
-        unsafe {
-            let address = winapi::um::memoryapi::MapViewOfFile(handle.as_raw(),
+            let address = unsafe { winapi::um::memoryapi::MapViewOfFile(handle.as_raw(),
                                                   winapi::um::memoryapi::FILE_MAP_ALL_ACCESS,
-                                                  0, 0, 0);
+                                                  0, 0, 0) };
             if address.is_null() {
                 return Err(WinError::last("MapViewOfFile"));
             }
@@ -1697,27 +1672,22 @@ impl OsIpcSharedMemory {
                 ptr: address as *mut u8,
                 length: length
             })
-        }
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
-        unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(length).unwrap();
-            for element in slice::from_raw_parts_mut(mem.ptr, mem.length) {
+            for element in unsafe { slice::from_raw_parts_mut(mem.ptr, mem.length) }{
                 *element = byte;
             }
             mem
-        }
     }
 
     pub fn from_bytes(bytes: &[u8]) -> OsIpcSharedMemory {
-        unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(bytes.len()).unwrap();
-            ptr::copy_nonoverlapping(bytes.as_ptr(), mem.ptr, bytes.len());
+            unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), mem.ptr, bytes.len()) };
             mem
-        }
     }
 }
 
@@ -1801,18 +1771,17 @@ impl WinError {
         let lang_id = 0x0800 as winapi::shared::minwindef::DWORD;
         let mut buf = [0 as winapi::um::winnt::WCHAR; 2048];
 
-        unsafe {
-            let res = winapi::um::winbase::FormatMessageW(winapi::um::winbase::FORMAT_MESSAGE_FROM_SYSTEM |
+            let res = unsafe{ winapi::um::winbase::FormatMessageW(winapi::um::winbase::FORMAT_MESSAGE_FROM_SYSTEM |
                                                winapi::um::winbase::FORMAT_MESSAGE_IGNORE_INSERTS,
                                                ptr::null_mut(),
                                                errnum as winapi::shared::minwindef::DWORD,
                                                lang_id,
                                                buf.as_mut_ptr(),
                                                buf.len() as winapi::shared::minwindef::DWORD,
-                                               ptr::null_mut()) as usize;
+                                               ptr::null_mut()) as usize };
             if res == 0 {
                 // Sometimes FormatMessageW can fail e.g. system doesn't like lang_id,
-                let fm_err = winapi::um::errhandlingapi::GetLastError();
+                let fm_err = unsafe { winapi::um::errhandlingapi::GetLastError() };
                 return format!("OS Error {} (FormatMessageW() returned error {})",
                                errnum, fm_err);
             }
@@ -1825,7 +1794,6 @@ impl WinError {
                 Err(..) => format!("OS Error {} (FormatMessageW() returned \
                                     invalid UTF-16)", errnum),
             }
-        }
     }
 
     fn from_system(err: u32, _f: &str) -> WinError {
