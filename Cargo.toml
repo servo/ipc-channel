@@ -17,7 +17,7 @@ windows-shared-memory-equality = []
 
 [dependencies]
 bincode = "1"
-crossbeam-channel = "0.4"
+crossbeam-channel = "0.5"
 fnv = "1.0.3"
 futures = { version = "0.3", optional = true }
 futures-test = { version = "0.3", optional = true }
