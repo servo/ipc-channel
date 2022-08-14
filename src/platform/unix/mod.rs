@@ -305,7 +305,7 @@ impl OsIpcSender {
             } else {
                 Err(UnixError::last())
             }
-        };
+        }
 
         fn send_followup_fragment(sender_fd: c_int, data_buffer: &[u8]) -> Result<(),UnixError> {
             let result = unsafe {
@@ -703,9 +703,9 @@ impl BackingStore {
 
     pub unsafe fn map_file(&self, length: Option<size_t>) -> (*mut u8, size_t) {
         let length = length.unwrap_or_else(|| {
-            let mut st = mem::uninitialized();
-            assert!(libc::fstat(self.fd, &mut st) == 0);
-            st.st_size as size_t
+            let mut st = mem::MaybeUninit::uninit();
+            assert!(libc::fstat(self.fd, st.as_mut_ptr()) == 0);
+            st.assume_init().st_size as size_t
         });
         if length == 0 {
             // This will cause `mmap` to fail, so handle it explicitly.
@@ -1115,11 +1115,11 @@ impl UnixCmsg {
 
 fn is_socket(fd: c_int) -> bool {
     unsafe {
-        let mut st = mem::uninitialized();
-        if libc::fstat(fd, &mut st) != 0 {
+        let mut st = mem::MaybeUninit::uninit();
+        if libc::fstat(fd, st.as_mut_ptr()) != 0 {
             return false
         }
-        S_ISSOCK(st.st_mode as mode_t)
+        S_ISSOCK(st.assume_init().st_mode as mode_t)
     }
 }
 
@@ -1168,4 +1168,3 @@ struct linger {
     l_onoff: c_int,
     l_linger: c_int,
 }
-
