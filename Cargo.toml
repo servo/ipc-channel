@@ -3,7 +3,7 @@ name = "ipc-channel"
 version = "0.16.0"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
 edition = "2018"
 
@@ -36,4 +36,4 @@ sc = { version = "0.2.2", optional = true }
 crossbeam-utils = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = {version = "0.3.7", features = ["minwindef", "ioapiset", "memoryapi", "namedpipeapi", "handleapi", "fileapi", "impl-default", "synchapi"]}
+winapi = { version = "0.3.7", features = ["minwindef", "ioapiset", "memoryapi", "namedpipeapi", "handleapi", "fileapi", "impl-default", "synchapi"] }
