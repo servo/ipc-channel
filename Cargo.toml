@@ -5,7 +5,7 @@ description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
-edition = "2018"
+edition = "2021"
 
 [features]
 force-inprocess = []
@@ -13,7 +13,7 @@ memfd = ["sc"]
 unstable = []
 async = ["futures", "futures-test"]
 win32-trace = []
-windows-shared-memory-equality = []
+windows-shared-memory-equality = ["windows/Win32_System_LibraryLoader"]
 
 [dependencies]
 bincode = "1"
@@ -36,4 +36,13 @@ sc = { version = "0.2.2", optional = true }
 crossbeam-utils = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3.7", features = ["minwindef", "ioapiset", "memoryapi", "namedpipeapi", "handleapi", "fileapi", "impl-default", "synchapi"] }
+windows = { version = "0.40.0", features = [
+    "Win32_Foundation",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_Memory",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+] }

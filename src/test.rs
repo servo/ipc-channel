@@ -30,13 +30,15 @@ use std::iter;
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "android",
-    target_os = "ios"
+    target_os = "ios",
+    all(target_os = "windows", not(feature = "windows-shared-memory-equality"))
 )))]
 use std::process::{self, Command, Stdio};
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "android",
-    target_os = "ios"
+    target_os = "ios",
+    target_os = "windows",
 )))]
 use std::ptr;
 use std::sync::Arc;
@@ -45,14 +47,16 @@ use std::thread;
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "android",
-    target_os = "ios"
+    target_os = "ios",
+    target_os = "windows"
 )))]
 use crate::ipc::IpcOneShotServer;
 
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "android",
-    target_os = "ios"
+    target_os = "ios",
+    target_os = "windows",
 )))]
 use std::io::Error;
 use std::time::{Duration, Instant};
@@ -114,7 +118,7 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios", all(target_os = "windows", not(feature = "windows-shared-memory-equality")))))]
 pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
     Command::new(env::current_exe().unwrap())
         .arg(test_name)
