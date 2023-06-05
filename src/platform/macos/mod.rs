@@ -490,6 +490,7 @@ impl OsIpcSender {
         unsafe {
             let size = Message::size_of(&data, ports.len(), shared_memory_regions.len());
             let message = libc::malloc(size as size_t) as *mut Message;
+            println!("{:p}", message);
             (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
                 MACH_MSGH_BITS_COMPLEX;
             (*message).header.msgh_size = size as u32;
@@ -500,34 +501,38 @@ impl OsIpcSender {
             (*message).body.msgh_descriptor_count =
                 (ports.len() + shared_memory_regions.len()) as u32;
 
-            let mut port_descriptor_dest = message.offset(1) as *mut mach_msg_port_descriptor_t;
+            let mut port_descriptor_dest = (message as *mut PaddedMessage).offset(1) as *mut PaddedPortDescriptor;
+            println!("{:p}", port_descriptor_dest);
             for outgoing_port in &ports {
-                (*port_descriptor_dest).name = outgoing_port.port();
-                (*port_descriptor_dest).pad1 = 0;
+                (*port_descriptor_dest).descriptor.name = outgoing_port.port();
+                (*port_descriptor_dest).descriptor.pad1 = 0;
 
-                (*port_descriptor_dest).disposition = match *outgoing_port {
+                (*port_descriptor_dest).descriptor.disposition = match *outgoing_port {
                     OsIpcChannel::Sender(_) => MACH_MSG_TYPE_MOVE_SEND,
                     OsIpcChannel::Receiver(_) => MACH_MSG_TYPE_MOVE_RECEIVE,
                 };
 
-                (*port_descriptor_dest).type_ = MACH_MSG_PORT_DESCRIPTOR;
+                (*port_descriptor_dest).descriptor.type_ = MACH_MSG_PORT_DESCRIPTOR;
                 port_descriptor_dest = port_descriptor_dest.offset(1);
             }
 
             let mut shared_memory_descriptor_dest =
-                port_descriptor_dest as *mut mach_msg_ool_descriptor_t;
+                port_descriptor_dest as *mut PaddedOOLDescriptor;
+            println!("{:p}", shared_memory_descriptor_dest);
             for shared_memory_region in &shared_memory_regions {
-                (*shared_memory_descriptor_dest).address =
+                (*shared_memory_descriptor_dest).descriptor.address =
                     shared_memory_region.as_ptr() as *const c_void as *mut c_void;
-                (*shared_memory_descriptor_dest).size = shared_memory_region.len() as u32;
-                (*shared_memory_descriptor_dest).deallocate = 1;
-                (*shared_memory_descriptor_dest).copy = MACH_MSG_VIRTUAL_COPY as u8;
-                (*shared_memory_descriptor_dest).type_ = MACH_MSG_OOL_DESCRIPTOR;
+                (*shared_memory_descriptor_dest).descriptor.size = shared_memory_region.len() as u32;
+                (*shared_memory_descriptor_dest).descriptor.deallocate = 1;
+                (*shared_memory_descriptor_dest).descriptor.copy = MACH_MSG_VIRTUAL_COPY as u8;
+                (*shared_memory_descriptor_dest).descriptor.type_ = MACH_MSG_OOL_DESCRIPTOR;
+                (*shared_memory_descriptor_dest).padding = [0; mach_msg_ool_descriptor_t::padding()];
                 shared_memory_descriptor_dest = shared_memory_descriptor_dest.offset(1);
             }
 
-            let is_inline_dest = shared_memory_descriptor_dest as *mut bool;
-            *is_inline_dest = data.is_inline();
+            let is_inline_dest = shared_memory_descriptor_dest as *mut usize;
+            println!("{:p}", is_inline_dest);
+            *is_inline_dest = data.is_inline() as usize;
 
             if data.is_inline() {
                 // Zero out the last word for paranoia's sake.
@@ -536,6 +541,7 @@ impl OsIpcSender {
                 let data = data.inline_data();
                 let data_size = data.len();
                 let data_size_dest = is_inline_dest.offset(1) as *mut usize;
+                println!("{:p}", data_size_dest);
                 *data_size_dest = data_size;
 
                 let data_dest = data_size_dest.offset(1) as *mut u8;
@@ -738,35 +744,36 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             os_result => return Err(MachError::from(os_result)),
         }
 
+        let padded_message = message as *mut PaddedMessage;
         let local_port = (*message).header.msgh_local_port;
         if (*message).header.msgh_id == MACH_NOTIFY_NO_SENDERS {
             return Ok(OsIpcSelectionResult::ChannelClosed(local_port as u64))
         }
 
         let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
-        let mut port_descriptor = message.offset(1) as *mut mach_msg_port_descriptor_t;
+        let mut port_descriptor = (message as *mut PaddedMessage).offset(1) as *mut PaddedPortDescriptor;
         let mut descriptors_remaining = (*message).body.msgh_descriptor_count;
         while descriptors_remaining > 0 {
-            if (*port_descriptor).type_ != MACH_MSG_PORT_DESCRIPTOR {
+            if (*port_descriptor).descriptor.type_ != MACH_MSG_PORT_DESCRIPTOR {
                 break
             }
-            ports.push(OsOpaqueIpcChannel::from_name((*port_descriptor).name));
+            ports.push(OsOpaqueIpcChannel::from_name((*port_descriptor).descriptor.name));
             port_descriptor = port_descriptor.offset(1);
             descriptors_remaining -= 1;
         }
 
-        let mut shared_memory_descriptor = port_descriptor as *mut mach_msg_ool_descriptor_t;
+        let mut shared_memory_descriptor = port_descriptor as *mut PaddedOOLDescriptor;
         while descriptors_remaining > 0 {
-            debug_assert!((*shared_memory_descriptor).type_ == MACH_MSG_OOL_DESCRIPTOR);
+            debug_assert!((*shared_memory_descriptor).descriptor.type_ == MACH_MSG_OOL_DESCRIPTOR);
             shared_memory_regions.push(OsIpcSharedMemory::from_raw_parts(
-                    (*shared_memory_descriptor).address as *mut u8,
-                    (*shared_memory_descriptor).size as usize));
+                    (*shared_memory_descriptor).descriptor.address as *mut u8,
+                    (*shared_memory_descriptor).descriptor.size as usize));
             shared_memory_descriptor = shared_memory_descriptor.offset(1);
             descriptors_remaining -= 1;
         }
 
-        let has_inline_data_ptr = shared_memory_descriptor as *mut bool;
-        let has_inline_data = *has_inline_data_ptr;
+        let has_inline_data_ptr = shared_memory_descriptor as *mut usize;
+        let has_inline_data = *has_inline_data_ptr != 0;
         let payload = if has_inline_data {
             let payload_size_ptr = has_inline_data_ptr.offset(1) as *mut usize;
             let payload_size = *payload_size_ptr;
@@ -942,12 +949,51 @@ struct Message {
     body: mach_msg_body_t,
 }
 
+#[repr(C)]
+struct PaddedMessage {
+    message: Message,
+    padding: [u8; Message::padding()],
+}
+
+#[repr(C)]
+struct PaddedPortDescriptor {
+    descriptor: mach_msg_port_descriptor_t,
+    padding: [u8; mach_msg_port_descriptor_t::padding()],
+}
+
+#[repr(C)]
+struct PaddedOOLDescriptor {
+    descriptor: mach_msg_ool_descriptor_t,
+    padding: [u8; mach_msg_ool_descriptor_t::padding()],
+}
+
+impl mach_msg_port_descriptor_t {
+    const fn padding() -> usize {
+        //mem::size_of::<Self>() % 8
+        mem::align_of::<Self>()
+    }
+}
+
+impl mach_msg_ool_descriptor_t {
+    const fn padding() -> usize {
+        //mem::size_of::<Self>() % 8
+        mem::align_of::<Self>()
+
+    }
+}
+
 impl Message {
+    const fn padding() -> usize {
+        //mem::size_of::<Self>() % 8
+        mem::align_of::<Self>()
+    }
+
     fn size_of(data: &SendData, port_length: usize, shared_memory_length: usize) -> usize {
-        let mut size = mem::size_of::<Message>() +
-            mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
-            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            mem::size_of::<bool>();
+        println!("padding: {}, {}, {}", Self::padding(), mach_msg_port_descriptor_t::padding(), mach_msg_ool_descriptor_t::padding());
+        let mut size = mem::size_of::<PaddedMessage>() +
+            mem::size_of::<PaddedPortDescriptor>() * port_length +
+            mem::size_of::<PaddedOOLDescriptor>() * shared_memory_length +
+            mem::size_of::<usize>();
 
         if data.is_inline() {
             size += mem::size_of::<usize>() + data.inline_data().len();
