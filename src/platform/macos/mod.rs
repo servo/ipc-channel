@@ -802,7 +802,7 @@ pub struct OsIpcOneShotServer {
 
 impl Drop for OsIpcOneShotServer {
     fn drop(&mut self) {
-        drop(OsIpcReceiver::unregister_global_name(mem::replace(&mut self.name, String::new())));
+        let _ = OsIpcReceiver::unregister_global_name(mem::replace(&mut self.name, String::new()));
     }
 }
 
