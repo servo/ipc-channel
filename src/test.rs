@@ -388,7 +388,7 @@ fn router_drops_callbacks_on_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    router.add_route(rx0.to_opaque(), Box::new(move |_| { let _ = dropper; }));
     drop(tx0);
     assert_eq!(drop_rx.recv(), Ok(42));
 }
@@ -410,7 +410,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(rx0.to_opaque(), Box::new(move |_| drop(&dropper)));
+    router.add_route(rx0.to_opaque(), Box::new(move |_| { let _ = dropper; }));
     let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
     drop(txs);
     drop(tx0);

@@ -1058,7 +1058,7 @@ mod sync_test {
 // the kernel instead of explicitly (ports in a message that's already
 // buffered are intended for only one process).
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-#[cfg_attr(any(target_os = "windows", target_os = "macos"), ignore)]
+#[cfg_attr(any(target_os = "windows"), ignore)]
 #[test]
 fn cross_process_two_step_transfer_spawn() {
     let cookie: &[u8] = b"cookie";
