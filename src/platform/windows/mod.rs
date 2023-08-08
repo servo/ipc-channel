@@ -16,7 +16,7 @@ use std::{
     cmp::PartialEq,
     convert::TryInto,
     env,
-    ffi::{c_void, CString},
+    ffi::CString,
     fmt, io,
     marker::{PhantomData, Send, Sync},
     mem,
@@ -41,7 +41,7 @@ use windows::{
         System::{
             Memory::{
                 CreateFileMappingA, MapViewOfFile, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
-                PAGE_READWRITE, SEC_COMMIT,
+                MEMORYMAPPEDVIEW_HANDLE, PAGE_READWRITE, SEC_COMMIT,
             },
             Pipes::{
                 ConnectNamedPipe, CreateNamedPipeA, GetNamedPipeServerProcessId,
@@ -49,9 +49,8 @@ use windows::{
             },
             Threading::{
                 CreateEventA, GetCurrentProcess, GetCurrentProcessId, OpenProcess, ResetEvent,
-                PROCESS_DUP_HANDLE,
+                INFINITE, PROCESS_DUP_HANDLE,
             },
-            WindowsProgramming::INFINITE,
             IO::{
                 CancelIoEx, CreateIoCompletionPort, GetOverlappedResult, GetOverlappedResultEx,
                 GetQueuedCompletionStatus, OVERLAPPED,
@@ -609,7 +608,9 @@ impl MessageReader {
         unsafe {
             let status = CancelIoEx(
                 self.r#async.as_ref().unwrap().alias().handle.as_raw(),
-                self.r#async.as_ref().map(|a| &a.alias().ov.as_ref().0),
+                self.r#async
+                    .as_ref()
+                    .map(|a| std::ptr::addr_of!(a.alias().ov.0.deref().0)),
             );
 
             if status == false {
@@ -703,7 +704,8 @@ impl MessageReader {
                 let remaining_buf = &mut async_data.buf[buf_len..];
                 ReadFile(
                     async_data.handle.as_raw(),
-                    Some(remaining_buf),
+                    Some(remaining_buf.as_mut_ptr() as _),
+                    remaining_buf.len() as u32,
                     None,
                     Some(&mut ***async_data.ov.deref_mut()),
                 )
@@ -1334,7 +1336,7 @@ impl OsIpcSender {
         unsafe {
             let handle = CreateFileA(
                 PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-                FILE_GENERIC_WRITE,
+                FILE_GENERIC_WRITE.0,
                 FILE_SHARE_MODE(0),
                 None, // lpSecurityAttributes
                 OPEN_EXISTING,
@@ -1825,7 +1827,7 @@ impl OsIpcSelectionResult {
 #[derive(Debug)]
 pub struct OsIpcSharedMemory {
     handle: WinHandle,
-    ptr: *mut u8,
+    view_handle: MEMORYMAPPEDVIEW_HANDLE,
     length: usize,
 }
 
@@ -1835,7 +1837,7 @@ unsafe impl Sync for OsIpcSharedMemory {}
 impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
         unsafe {
-            let result = UnmapViewOfFile(self.ptr as *const c_void);
+            let result = UnmapViewOfFile(self.view_handle);
             assert!(result.as_bool() || thread::panicking());
         }
     }
@@ -1859,8 +1861,8 @@ impl Deref for OsIpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        assert!(!self.ptr.is_null() && self.handle.is_valid());
-        unsafe { slice::from_raw_parts(self.ptr, self.length) }
+        assert!(!self.view_handle.is_invalid() && self.handle.is_valid());
+        unsafe { slice::from_raw_parts(self.view_handle.0 as _, self.length) }
     }
 }
 
@@ -1893,14 +1895,11 @@ impl OsIpcSharedMemory {
     // when finished.
     fn from_handle(handle: WinHandle, length: usize) -> Result<OsIpcSharedMemory, WinError> {
         unsafe {
-            let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0);
-            if address.is_null() {
-                return Err(WinError::from_win32());
-            }
+            let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0)?;
 
             Ok(OsIpcSharedMemory {
                 handle: handle,
-                ptr: address as *mut u8,
+                view_handle: address,
                 length: length,
             })
         }
@@ -1910,7 +1909,7 @@ impl OsIpcSharedMemory {
         unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(length).unwrap();
-            for element in slice::from_raw_parts_mut(mem.ptr, mem.length) {
+            for element in slice::from_raw_parts_mut(mem.view_handle.0 as _, mem.length) {
                 *element = byte;
             }
             mem
@@ -1921,7 +1920,7 @@ impl OsIpcSharedMemory {
         unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(bytes.len()).unwrap();
-            ptr::copy_nonoverlapping(bytes.as_ptr(), mem.ptr, bytes.len());
+            ptr::copy_nonoverlapping(bytes.as_ptr(), mem.view_handle.0 as _, bytes.len());
             mem
         }
     }
