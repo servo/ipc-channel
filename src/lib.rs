@@ -80,7 +80,7 @@ extern crate futures_test;
 pub mod asynch;
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
-extern crate winapi;
+extern crate windows;
 
 
 pub mod ipc;

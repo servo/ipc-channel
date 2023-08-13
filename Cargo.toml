@@ -5,7 +5,7 @@ description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
-edition = "2018"
+edition = "2021"
 
 [features]
 force-inprocess = []
@@ -13,7 +13,7 @@ memfd = ["sc"]
 unstable = []
 async = ["futures", "futures-test"]
 win32-trace = []
-windows-shared-memory-equality = []
+windows-shared-memory-equality = ["windows/Win32_System_LibraryLoader"]
 
 [dependencies]
 bincode = "1"
@@ -25,7 +25,7 @@ lazy_static = "1"
 libc = "0.2.12"
 rand = "0.7"
 serde = { version = "1.0", features = ["rc"] }
-tempfile = "3"
+tempfile = "3.4"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
@@ -35,16 +35,15 @@ sc = { version = "0.2.2", optional = true }
 [dev-dependencies]
 crossbeam-utils = "0.8"
 
-[target.'cfg(target_os = "windows")'.dependencies.winapi]
-version = "0.3.7"
+[target.'cfg(target_os = "windows")'.dependencies.windows]
+version = "0.48.0"
 features = [
-  "minwindef",
-  "ioapiset",
-  "memoryapi",
-  "namedpipeapi",
-  "handleapi",
-  "fileapi",
-  "impl-default",
-  "synchapi",
-  "errhandlingapi"
+    "Win32_Foundation",
+    "Win32_System_WindowsProgramming",
+    "Win32_System_Threading",
+    "Win32_System_Pipes",
+    "Win32_System_Memory",
+    "Win32_System_IO",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
 ]
