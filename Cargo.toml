@@ -23,7 +23,7 @@ futures = { version = "0.3", optional = true }
 futures-test = { version = "0.3", optional = true }
 lazy_static = "1"
 libc = "0.2.12"
-rand = "0.7"
+rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
 tempfile = "3.4"
 uuid = { version = "1", features = ["v4"] }
