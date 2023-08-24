@@ -1,6 +1,6 @@
 # ipc-channel
 
-📚 [Documentation](https://doc.servo.org/ipc_channel/index.html) 📚
+📚 [Documentation](https://docs.rs/ipc-channel) 📚
 
 ## Overview
 
