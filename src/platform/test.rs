@@ -8,22 +8,35 @@
 // except according to those terms.
 
 // Most of this file won't compile without `windows-shared-memory-equality` feature on Windows since `PartialEq` won't be implemented for `IpcSharedMemory`.
-#![cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
+#![cfg(any(
+    not(target_os = "windows"),
+    all(target_os = "windows", feature = "windows-shared-memory-equality")
+))]
 
+use crate::platform::OsIpcSharedMemory;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
-use crate::platform::{OsIpcSharedMemory};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use std::thread;
+use std::time::{Duration, Instant};
 
+use crate::platform::{OsIpcOneShotServer, OsIpcSender};
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
+use crate::test::{fork, Wait};
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use libc;
-use crate::platform::{OsIpcSender, OsIpcOneShotServer};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use libc::{kill, SIGSTOP, SIGCONT};
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
-use crate::test::{fork, Wait};
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
+use libc::{kill, SIGCONT, SIGSTOP};
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
@@ -36,8 +49,14 @@ fn simple() {
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
     let (received_data, received_channels, received_shared_memory) = rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory),
-               (data, Vec::new(), Vec::new()));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory
+        ),
+        (data, Vec::new(), Vec::new())
+    );
 }
 
 #[test]
@@ -45,15 +64,22 @@ fn sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    super_tx
+        .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
+        .unwrap();
     let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[test]
@@ -61,15 +87,22 @@ fn receiver_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let data: &[u8] = b"foo";
-    super_tx.send(data, vec![OsIpcChannel::Receiver(sub_rx)], vec![]).unwrap();
+    super_tx
+        .send(data, vec![OsIpcChannel::Receiver(sub_rx)], vec![])
+        .unwrap();
     let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_rx = received_channels.pop().unwrap().to_receiver();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[test]
@@ -78,9 +111,13 @@ fn multisender_transfer() {
     let (sub0_tx, sub0_rx) = platform::channel().unwrap();
     let (sub1_tx, sub1_rx) = platform::channel().unwrap();
     let data: &[u8] = b"asdfasdf";
-    super_tx.send(data,
-                  vec![OsIpcChannel::Sender(sub0_tx), OsIpcChannel::Sender(sub1_tx)],
-                  vec![]).unwrap();
+    super_tx
+        .send(
+            data,
+            vec![OsIpcChannel::Sender(sub0_tx), OsIpcChannel::Sender(sub1_tx)],
+            vec![],
+        )
+        .unwrap();
     let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 2);
 
@@ -88,15 +125,27 @@ fn multisender_transfer() {
     sub0_tx.send(data, vec![], vec![]).unwrap();
     let (received_data, received_subchannels, received_shared_memory_regions) =
         sub0_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_subchannels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_subchannels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 
     let sub1_tx = received_channels.remove(0).to_sender();
     sub1_tx.send(data, vec![], vec![]).unwrap();
     let (received_data, received_subchannels, received_shared_memory_regions) =
         sub1_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_subchannels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_subchannels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[test]
@@ -105,10 +154,15 @@ fn medium_data() {
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (&data[..], vec![], vec![]));
+    let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (&data[..], vec![], vec![])
+    );
 }
 
 #[test]
@@ -117,31 +171,43 @@ fn medium_data_with_sender_transfer() {
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
-    super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+    super_tx
+        .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
+        .unwrap();
     let (_, mut received_channels, _) = super_rx.recv().unwrap();
     assert_eq!(received_channels.len(), 1);
     let sub_tx = received_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 fn check_big_data(size: u32) {
     let (tx, rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = (0.. size).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
-    let (received_data, received_channels, received_shared_memory_regions) =
-        rx.recv().unwrap();
-    let data: Vec<u8> = (0.. size).map(|i| (i % 251) as u8).collect();
+    let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
+    let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(received_data.len(), data.len());
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (&data[..], vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (&data[..], vec![], vec![])
+    );
     thread.join().unwrap();
 }
 
@@ -164,13 +230,15 @@ fn big_data_with_sender_transfer() {
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
-        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        super_tx
+            .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
+            .unwrap();
     });
     let (received_data, mut received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
-    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(received_data.len(), data.len());
     assert_eq!(&received_data[..], &data[..]);
@@ -181,18 +249,24 @@ fn big_data_with_sender_transfer() {
     let data: &[u8] = &data[..];
     let sub_tx = received_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        sub_rx.recv().unwrap();
+    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
     assert_eq!(received_data.len(), data.len());
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (&data[..], vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (&data[..], vec![], vec![])
+    );
     thread.join().unwrap();
 }
 
 fn with_n_fds(n: usize, size: usize) {
-    let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n).map(|_| platform::channel().unwrap())
-                                                    .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
-                                                    .unzip();
+    let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..n)
+        .map(|_| platform::channel().unwrap())
+        .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
+        .unzip();
     let (super_tx, super_rx) = platform::channel().unwrap();
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
@@ -212,23 +286,28 @@ fn with_n_fds(n: usize, size: usize) {
         let (received_data, received_channels, received_shared_memory_regions) =
             sub_rx.recv().unwrap();
         assert_eq!(received_data.len(), data.len());
-        assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-                   (&data[..], vec![], vec![]));
+        assert_eq!(
+            (
+                &received_data[..],
+                received_channels,
+                received_shared_memory_regions
+            ),
+            (&data[..], vec![], vec![])
+        );
     }
 }
 
 // These tests only apply to platforms that need fragmentation.
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "freebsd",
-                                                target_os = "windows")))]
+#[cfg(all(
+    not(feature = "force-inprocess"),
+    any(target_os = "linux", target_os = "freebsd", target_os = "windows")
+))]
 mod fragment_tests {
-    use crate::platform;
     use super::with_n_fds;
+    use crate::platform;
 
     lazy_static! {
-        static ref FRAGMENT_SIZE: usize = {
-            platform::OsIpcSender::get_max_fragment_size()
-        };
+        static ref FRAGMENT_SIZE: usize = { platform::OsIpcSender::get_max_fragment_size() };
     }
 
     #[test]
@@ -297,15 +376,16 @@ fn fd_only() {
 }
 
 macro_rules! create_big_data_with_n_fds {
-    ($name:ident, $n:expr) => (
+    ($name:ident, $n:expr) => {
         #[test]
         fn $name() {
-            let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..$n).map(|_| platform::channel().unwrap())
-                                                            .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
-                                                            .unzip();
+            let (sender_fds, receivers): (Vec<_>, Vec<_>) = (0..$n)
+                .map(|_| platform::channel().unwrap())
+                .map(|(tx, rx)| (OsIpcChannel::Sender(tx), rx))
+                .unzip();
             let (super_tx, super_rx) = platform::channel().unwrap();
             let thread = thread::spawn(move || {
-                let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+                let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
                 let data: &[u8] = &data[..];
                 super_tx.send(data, sender_fds, vec![]).unwrap();
             });
@@ -313,7 +393,7 @@ macro_rules! create_big_data_with_n_fds {
                 super_rx.recv().unwrap();
             thread.join().unwrap();
 
-            let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+            let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
             assert_eq!(received_data.len(), data.len());
             assert_eq!(&received_data[..], &data[..]);
@@ -322,17 +402,24 @@ macro_rules! create_big_data_with_n_fds {
 
             let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
-            for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
+            for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter())
+            {
                 let sub_tx = sender_fd.to_sender();
                 sub_tx.send(data, vec![], vec![]).unwrap();
                 let (received_data, received_channels, received_shared_memory_regions) =
                     sub_rx.recv().unwrap();
                 assert_eq!(received_data.len(), data.len());
-                assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-                           (&data[..], vec![], vec![]));
+                assert_eq!(
+                    (
+                        &received_data[..],
+                        received_channels,
+                        received_shared_memory_regions
+                    ),
+                    (&data[..], vec![], vec![])
+                );
             }
         }
-    )
+    };
 }
 
 create_big_data_with_n_fds!(big_data_with_0_fds, 0);
@@ -349,26 +436,35 @@ fn concurrent_senders() {
 
     let (tx, rx) = platform::channel().unwrap();
 
-    let threads: Vec<_> = (0..num_senders).map(|i| {
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | i << 4).collect();
-            let data: &[u8] = &data[..];
-            tx.send(data, vec![], vec![]).unwrap();
+    let threads: Vec<_> = (0..num_senders)
+        .map(|i| {
+            let tx = tx.clone();
+            thread::spawn(move || {
+                let data: Vec<u8> = (0..1024 * 1024).map(|j| (j % 13) as u8 | i << 4).collect();
+                let data: &[u8] = &data[..];
+                tx.send(data, vec![], vec![]).unwrap();
+            })
         })
-    }).collect();
+        .collect();
 
     let mut received_vals: Vec<u8> = vec![];
     for _ in 0..num_senders {
-        let (received_data, received_channels, received_shared_memory_regions) =
-            rx.recv().unwrap();
+        let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
         let val = received_data[0] >> 4;
         received_vals.push(val);
-        let data: Vec<u8> = (0.. 1024 * 1024).map(|j| (j % 13) as u8 | val << 4).collect();
+        let data: Vec<u8> = (0..1024 * 1024)
+            .map(|j| (j % 13) as u8 | val << 4)
+            .collect();
         let data: &[u8] = &data[..];
         assert_eq!(received_data.len(), data.len());
-        assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-                   (&data[..], vec![], vec![]));
+        assert_eq!(
+            (
+                &received_data[..],
+                received_channels,
+                received_shared_memory_regions
+            ),
+            (&data[..], vec![], vec![])
+        );
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -389,14 +485,24 @@ fn receiver_set() {
 
     let data: &[u8] = b"1234567";
     tx0.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
+    let (received_id, received_data, _, _) = rx_set
+        .select()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
     assert_eq!(received_id, rx0_id);
     assert_eq!(received_data, data);
 
     tx1.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
+    let (received_id, received_data, _, _) = rx_set
+        .select()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
     assert_eq!(received_id, rx1_id);
     assert_eq!(received_data, data);
 
@@ -420,7 +526,12 @@ fn receiver_set() {
 }
 
 #[test]
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
 fn receiver_set_eintr() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let child_pid = unsafe {
@@ -430,7 +541,8 @@ fn receiver_set_eintr() {
             let rx_id = rx_set.add(rx0).unwrap();
             // Let the parent know we're ready
             let tx1 = OsIpcSender::connect(name).unwrap();
-            tx1.send(b" Ready! ", vec![OsIpcChannel::Sender(tx0)], vec![]).unwrap();
+            tx1.send(b" Ready! ", vec![OsIpcChannel::Sender(tx0)], vec![])
+                .unwrap();
             // Send the result of the select back to the parent
             let result = rx_set.select().unwrap();
             let mut result_iter = result.into_iter();
@@ -465,8 +577,13 @@ fn receiver_set_empty() {
 
     let data: &[u8] = b"";
     tx.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) =
-        rx_set.select().unwrap().into_iter().next().unwrap().unwrap();
+    let (received_id, received_data, _, _) = rx_set
+        .select()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
     assert_eq!(received_id, rx_id);
     assert!(received_data.is_empty());
 }
@@ -481,7 +598,9 @@ fn receiver_set_close_before_adding() {
         platform::OsIpcSelectionResult::ChannelClosed(received_id) => {
             assert_eq!(received_id, rx_id);
         },
-        _ => { panic!("Unexpected result!"); },
+        _ => {
+            panic!("Unexpected result!");
+        },
     }
 }
 
@@ -496,7 +615,9 @@ fn receiver_set_close_after_adding() {
         platform::OsIpcSelectionResult::ChannelClosed(received_id) => {
             assert_eq!(received_id, rx_id);
         },
-        _ => { panic!("Unexpected result!"); },
+        _ => {
+            panic!("Unexpected result!");
+        },
     }
 }
 
@@ -509,7 +630,9 @@ fn receiver_set_medium_data() {
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let data0: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8).collect();
-    let data1: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8 | 0x80).collect();
+    let data1: Vec<u8> = (0..65536)
+        .map(|offset| (offset % 127) as u8 | 0x80)
+        .collect();
 
     tx0.send(&*data0, vec![], vec![]).unwrap();
     tx1.send(&*data1, vec![], vec![]).unwrap();
@@ -540,8 +663,12 @@ fn receiver_set_big_data() {
     let rx0_id = rx_set.add(rx0).unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
-    let data0: Vec<u8> = (0.. 1024 * 1024).map(|offset| (offset % 127) as u8).collect();
-    let data1: Vec<u8> = (0.. 1024 * 1024).map(|offset| (offset % 127) as u8 | 0x80).collect();
+    let data0: Vec<u8> = (0..1024 * 1024)
+        .map(|offset| (offset % 127) as u8)
+        .collect();
+    let data1: Vec<u8> = (0..1024 * 1024)
+        .map(|offset| (offset % 127) as u8 | 0x80)
+        .collect();
     let (reference_data0, reference_data1) = (data0.clone(), data1.clone());
 
     let thread0 = thread::spawn(move || {
@@ -586,33 +713,34 @@ fn receiver_set_concurrent() {
     let mut rx_set = OsIpcReceiverSet::new().unwrap();
 
     let (threads, mut receiver_records): (Vec<_>, HashMap<_, _>) = (0..num_channels)
-                                                                   .map(|chan_index| {
-        let (tx, rx) = platform::channel().unwrap();
-        let rx_id = rx_set.add(rx).unwrap();
+        .map(|chan_index| {
+            let (tx, rx) = platform::channel().unwrap();
+            let rx_id = rx_set.add(rx).unwrap();
 
-        let data: Vec<u8> = (0..max_msg_size)
-                            .map(|offset| (offset % 13) as u8 | (chan_index as u8) << 4)
-                            .collect();
-        let reference_data = data.clone();
+            let data: Vec<u8> = (0..max_msg_size)
+                .map(|offset| (offset % 13) as u8 | (chan_index as u8) << 4)
+                .collect();
+            let reference_data = data.clone();
 
-        let thread = thread::spawn(move || {
-            for msg_index in 0..messages_per_channel {
-                let msg_size = (msg_index * 99991 + chan_index * 90001) % max_msg_size;
-                // The `macos` back-end won't receive exact size unless it's a multiple of 4...
-                // (See https://github.com/servo/ipc-channel/pull/79 etc. )
-                let msg_size = msg_size & !3;
-                tx.send(&data[0..msg_size], vec![], vec![]).unwrap();
-            }
-        });
-        (thread, (rx_id, (reference_data, chan_index, 0usize)))
-    }).unzip();
+            let thread = thread::spawn(move || {
+                for msg_index in 0..messages_per_channel {
+                    let msg_size = (msg_index * 99991 + chan_index * 90001) % max_msg_size;
+                    // The `macos` back-end won't receive exact size unless it's a multiple of 4...
+                    // (See https://github.com/servo/ipc-channel/pull/79 etc. )
+                    let msg_size = msg_size & !3;
+                    tx.send(&data[0..msg_size], vec![], vec![]).unwrap();
+                }
+            });
+            (thread, (rx_id, (reference_data, chan_index, 0usize)))
+        })
+        .unzip();
 
     while !receiver_records.is_empty() {
         for result in rx_set.select().unwrap().into_iter() {
             match result {
                 platform::OsIpcSelectionResult::DataReceived(rx_id, data, _, _) => {
-                    let &mut (ref reference_data, chan_index, ref mut msg_index)
-                             = receiver_records.get_mut(&rx_id).unwrap();
+                    let &mut (ref reference_data, chan_index, ref mut msg_index) =
+                        receiver_records.get_mut(&rx_id).unwrap();
                     let msg_size = (*msg_index * 99991 + chan_index * 90001) % max_msg_size;
                     let msg_size = msg_size & !3;
                     assert_eq!(data.len(), msg_size);
@@ -645,8 +773,14 @@ fn server_accept_first() {
 
     let (_, received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[test]
@@ -663,8 +797,14 @@ fn server_connect_first() {
     let (_, mut received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
     received_data.truncate(7);
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -677,7 +817,9 @@ fn cross_process_spawn() {
         let tx = OsIpcSender::connect(channel_name).unwrap();
         tx.send(data, vec![], vec![]).unwrap();
 
-        unsafe { libc::exit(0); }
+        unsafe {
+            libc::exit(0);
+        }
     }
 
     let (server, name) = OsIpcOneShotServer::new().unwrap();
@@ -686,26 +828,45 @@ fn cross_process_spawn() {
     let (_, received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
 #[test]
 fn cross_process_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let data: &[u8] = b"1234567";
 
-    let child_pid = unsafe { fork(|| {
-        let tx = OsIpcSender::connect(name).unwrap();
-        tx.send(data, vec![], vec![]).unwrap();
-    })};
+    let child_pid = unsafe {
+        fork(|| {
+            let tx = OsIpcSender::connect(name).unwrap();
+            tx.send(data, vec![], vec![]).unwrap();
+        })
+    };
 
     let (_, received_data, received_channels, received_shared_memory_regions) =
         server.accept().unwrap();
     child_pid.wait();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -716,12 +877,16 @@ fn cross_process_sender_transfer_spawn() {
         let super_tx = OsIpcSender::connect(channel_name).unwrap();
         let (sub_tx, sub_rx) = platform::channel().unwrap();
         let data: &[u8] = b"foo";
-        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        super_tx
+            .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
+            .unwrap();
         sub_rx.recv().unwrap();
         let data: &[u8] = b"bar";
         super_tx.send(data, vec![], vec![]).unwrap();
 
-        unsafe { libc::exit(0); }
+        unsafe {
+            libc::exit(0);
+        }
     }
 
     let (server, name) = OsIpcOneShotServer::new().unwrap();
@@ -737,24 +902,39 @@ fn cross_process_sender_transfer_spawn() {
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
 #[test]
 fn cross_process_sender_transfer_fork() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
 
-    let child_pid = unsafe { fork(|| {
-        let super_tx = OsIpcSender::connect(name).unwrap();
-        let (sub_tx, sub_rx) = platform::channel().unwrap();
-        let data: &[u8] = b"foo";
-        super_tx.send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
-        sub_rx.recv().unwrap();
-        let data: &[u8] = b"bar";
-        super_tx.send(data, vec![], vec![]).unwrap();
-    })};
+    let child_pid = unsafe {
+        fork(|| {
+            let super_tx = OsIpcSender::connect(name).unwrap();
+            let (sub_tx, sub_rx) = platform::channel().unwrap();
+            let data: &[u8] = b"foo";
+            super_tx
+                .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
+                .unwrap();
+            sub_rx.recv().unwrap();
+            let data: &[u8] = b"bar";
+            super_tx.send(data, vec![], vec![]).unwrap();
+        })
+    };
 
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
     assert_eq!(received_channels.len(), 1);
@@ -766,8 +946,14 @@ fn cross_process_sender_transfer_fork() {
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
     child_pid.wait();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (data, vec![], vec![])
+    );
 }
 
 #[test]
@@ -872,8 +1058,14 @@ fn try_recv() {
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
     let (received_data, received_channels, received_shared_memory) = rx.try_recv().unwrap();
-    assert_eq!((&received_data[..], received_channels, received_shared_memory),
-               (data, Vec::new(), Vec::new()));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory
+        ),
+        (data, Vec::new(), Vec::new())
+    );
     assert!(rx.try_recv().is_err());
 }
 
@@ -930,7 +1122,7 @@ fn try_recv_large() {
     assert!(rx.try_recv().is_err());
 
     let thread = thread::spawn(move || {
-        let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+        let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
@@ -943,10 +1135,16 @@ fn try_recv_large() {
     thread.join().unwrap();
     let (received_data, received_channels, received_shared_memory) = result.unwrap();
 
-    let data: Vec<u8> = (0.. 1024 * 1024).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    assert_eq!((&received_data[..], received_channels, received_shared_memory),
-               (data, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory
+        ),
+        (data, vec![], vec![])
+    );
     assert!(rx.try_recv().is_err());
 }
 
@@ -988,16 +1186,18 @@ fn try_recv_large_delayed() {
     let (tx, rx) = platform::channel().unwrap();
     assert!(rx.try_recv().is_err());
 
-    let threads: Vec<_> = (0..num_senders).map(|i| {
-        let tx = tx.clone();
-        let delay = delay.clone();
-        thread::spawn(move || {
-            let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | i << 4).collect();
-            let data: &[u8] = &data[..];
-            delay(thread_delay);
-            tx.send(data, vec![], vec![]).unwrap();
+    let threads: Vec<_> = (0..num_senders)
+        .map(|i| {
+            let tx = tx.clone();
+            let delay = delay.clone();
+            thread::spawn(move || {
+                let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | i << 4).collect();
+                let data: &[u8] = &data[..];
+                delay(thread_delay);
+                tx.send(data, vec![], vec![]).unwrap();
+            })
         })
-    }).collect();
+        .collect();
 
     let mut received_vals: Vec<u8> = vec![];
     for _ in 0..num_senders {
@@ -1013,8 +1213,14 @@ fn try_recv_large_delayed() {
         let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | val << 4).collect();
         let data: &[u8] = &data[..];
         assert_eq!(received_data.len(), data.len());
-        assert_eq!((&received_data[..], received_channels, received_shared_memory),
-                   (data, vec![], vec![]));
+        assert_eq!(
+            (
+                &received_data[..],
+                received_channels,
+                received_shared_memory
+            ),
+            (data, vec![], vec![])
+        );
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -1072,7 +1278,9 @@ fn cross_process_two_step_transfer_spawn() {
         let (sub_tx, sub_rx) = platform::channel().unwrap();
 
         // send the other process the tx side, so it can send us the channels
-        super_tx.send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![]).unwrap();
+        super_tx
+            .send(&[], vec![OsIpcChannel::Sender(sub_tx)], vec![])
+            .unwrap();
 
         // get two_rx from the other process
         let (_, mut received_channels, _) = sub_rx.recv().unwrap();
@@ -1092,7 +1300,9 @@ fn cross_process_two_step_transfer_spawn() {
         super_tx.send(&data, vec![], vec![]).unwrap();
 
         // terminate
-        unsafe { libc::exit(0); }
+        unsafe {
+            libc::exit(0);
+        }
     }
 
     // create channel 1
@@ -1103,12 +1313,16 @@ fn cross_process_two_step_transfer_spawn() {
     // create channel 2
     let (two_tx, two_rx) = platform::channel().unwrap();
     // put channel 1's rx end in channel 2's pipe
-    two_tx.send(&[], vec![OsIpcChannel::Receiver(one_rx)], vec![]).unwrap();
+    two_tx
+        .send(&[], vec![OsIpcChannel::Receiver(one_rx)], vec![])
+        .unwrap();
 
     // create a one-shot server, and spawn another process
     let (server, name) = OsIpcOneShotServer::new().unwrap();
-    let mut child_pid = spawn_server("cross_process_two_step_transfer_spawn",
-                                     &[("server", &*name)]);
+    let mut child_pid = spawn_server(
+        "cross_process_two_step_transfer_spawn",
+        &[("server", &*name)],
+    );
 
     // The other process will have sent us a transmit channel in received channels
     let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
@@ -1117,13 +1331,21 @@ fn cross_process_two_step_transfer_spawn() {
 
     // Send the outer payload channel, so the server can use it to
     // retrieve the inner payload and the cookie
-    sub_tx.send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![]).unwrap();
+    sub_tx
+        .send(&[], vec![OsIpcChannel::Receiver(two_rx)], vec![])
+        .unwrap();
 
     // Then we wait for the cookie to make its way back to us
     let (received_data, received_channels, received_shared_memory_regions) =
         super_rx.recv().unwrap();
     let child_exit_code = child_pid.wait().expect("failed to wait on child");
     assert!(child_exit_code.success());
-    assert_eq!((&received_data[..], received_channels, received_shared_memory_regions),
-               (cookie, vec![], vec![]));
+    assert_eq!(
+        (
+            &received_data[..],
+            received_channels,
+            received_shared_memory_regions
+        ),
+        (cookie, vec![], vec![])
+    );
 }

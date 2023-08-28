@@ -16,14 +16,18 @@ jobs:
       matrix:
         features: ["unstable", "unstable force-inprocess", "unstable memfd"]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+          components: rustfmt, clippy
+
+      - name: rustfmt
+        run: cargo fmt --features "${{ matrix.features }}" 
+
+      - name: clippy
+        run: cargo clippy --features "${{ matrix.features }}"
 
       - name: Cargo build
         run: cargo build --features "${{ matrix.features }}"
@@ -41,14 +45,10 @@ jobs:
         features: ["unstable", "unstable force-inprocess"]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: nightly
-          override: true
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Cargo build
         run: cargo build --features "${{ matrix.features }}"
@@ -67,15 +67,12 @@ jobs:
         target: ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
 
       - name: Install nightly toolchain
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@nightly
         with:
-          profile: minimal
-          toolchain: nightly
-          override: true
-          target: ${{ matrix.target }}
+          targets: ${{ matrix.target }}
 
       - name: Cargo build
         run: cargo build --features "${{ matrix.features }}" --target ${{ matrix.target }}

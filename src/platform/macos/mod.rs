@@ -7,12 +7,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc;
+use self::mach_sys::mach_port_deallocate;
 use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg_return_t};
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
-use self::mach_sys::mach_port_deallocate;
+use crate::ipc;
 
 use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
@@ -119,7 +119,7 @@ const VM_INHERIT_SHARE: vm_inherit_t = 0;
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
-pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver),MachError> {
+pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), MachError> {
     let receiver = OsIpcReceiver::new()?;
     let sender = receiver.sender()?;
     receiver.request_no_senders_notification()?;
@@ -142,9 +142,7 @@ impl Drop for OsIpcReceiver {
 
 fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, KernelError> {
     let mut port: mach_port_t = 0;
-    let os_result = unsafe {
-        mach_sys::mach_port_allocate(mach_task_self(), right, &mut port)
-    };
+    let os_result = unsafe { mach_sys::mach_port_allocate(mach_task_self(), right, &mut port) };
     if os_result == KERN_SUCCESS {
         return Ok(port);
     }
@@ -152,9 +150,7 @@ fn mach_port_allocate(right: mach_port_right_t) -> Result<mach_port_t, KernelErr
 }
 
 fn mach_port_mod_addref(port: mach_port_t, right: mach_port_right_t) -> Result<(), KernelError> {
-    let err = unsafe {
-        mach_sys::mach_port_mod_refs(mach_task_self(), port, right, 1)
-    };
+    let err = unsafe { mach_sys::mach_port_mod_refs(mach_task_self(), port, right, 1) };
     if err == KERN_SUCCESS {
         return Ok(());
     }
@@ -162,9 +158,7 @@ fn mach_port_mod_addref(port: mach_port_t, right: mach_port_right_t) -> Result<(
 }
 
 fn mach_port_mod_release(port: mach_port_t, right: mach_port_right_t) -> Result<(), KernelError> {
-    let err = unsafe {
-        mach_sys::mach_port_mod_refs(mach_task_self(), port, right, -1)
-    };
+    let err = unsafe { mach_sys::mach_port_mod_refs(mach_task_self(), port, right, -1) };
     if err == KERN_SUCCESS {
         return Ok(());
     }
@@ -172,9 +166,7 @@ fn mach_port_mod_release(port: mach_port_t, right: mach_port_right_t) -> Result<
 }
 
 fn mach_port_move_member(port: mach_port_t, set: mach_port_t) -> Result<(), KernelError> {
-    let error = unsafe {
-        mach_sys::mach_port_move_member(mach_task_self(), port, set)
-    };
+    let error = unsafe { mach_sys::mach_port_move_member(mach_task_self(), port, set) };
     if error == KERN_SUCCESS {
         return Ok(());
     }
@@ -183,15 +175,17 @@ fn mach_port_move_member(port: mach_port_t, set: mach_port_t) -> Result<(), Kern
 
 fn mach_port_extract_right(
     port: mach_port_t,
-    message_type: mach_msg_type_name_t
+    message_type: mach_msg_type_name_t,
 ) -> Result<(mach_port_t, mach_msg_type_name_t), KernelError> {
     let (mut right, mut acquired_right) = (0, 0);
     let error = unsafe {
-        mach_sys::mach_port_extract_right(mach_task_self(),
-                                          port,
-                                          message_type,
-                                          &mut right,
-                                          &mut acquired_right)
+        mach_sys::mach_port_extract_right(
+            mach_task_self(),
+            port,
+            message_type,
+            &mut right,
+            &mut acquired_right,
+        )
     };
     if error == KERN_SUCCESS {
         return Ok((right, acquired_right));
@@ -200,17 +194,19 @@ fn mach_port_extract_right(
 }
 
 impl OsIpcReceiver {
-    fn new() -> Result<OsIpcReceiver,MachError> {
+    fn new() -> Result<OsIpcReceiver, MachError> {
         let port = mach_port_allocate(MACH_PORT_RIGHT_RECEIVE)?;
         let limits = mach_port_limits_t {
             mpl_qlimit: MACH_PORT_QLIMIT_MAX,
         };
         let os_result = unsafe {
-            mach_sys::mach_port_set_attributes(mach_task_self(),
-                                               port,
-                                               MACH_PORT_LIMITS_INFO,
-                                               mem::transmute(&limits),
-                                               1)
+            mach_sys::mach_port_set_attributes(
+                mach_task_self(),
+                port,
+                MACH_PORT_LIMITS_INFO,
+                mem::transmute(&limits),
+                1,
+            )
         };
         if os_result == KERN_SUCCESS {
             Ok(OsIpcReceiver::from_name(port))
@@ -241,29 +237,32 @@ impl OsIpcReceiver {
         OsIpcReceiver::from_name(self.consume_port())
     }
 
-    fn sender(&self) -> Result<OsIpcSender,MachError> {
+    fn sender(&self) -> Result<OsIpcSender, MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
-        let (right, acquired_right) = mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
+        let (right, acquired_right) =
+            mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
         debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
         Ok(OsIpcSender::from_name(right))
     }
 
-    fn register_bootstrap_name(&self) -> Result<String,MachError> {
+    fn register_bootstrap_name(&self) -> Result<String, MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
             let mut bootstrap_port = 0;
-            let os_result = mach_sys::task_get_special_port(mach_task_self(),
-                                                            TASK_BOOTSTRAP_PORT,
-                                                            &mut bootstrap_port);
+            let os_result = mach_sys::task_get_special_port(
+                mach_task_self(),
+                TASK_BOOTSTRAP_PORT,
+                &mut bootstrap_port,
+            );
             if os_result != KERN_SUCCESS {
-                return Err(KernelError::from(os_result).into())
+                return Err(KernelError::from(os_result).into());
             }
 
-
             // FIXME(pcwalton): Does this leak?
-            let (right, acquired_right) = mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
+            let (right, acquired_right) =
+                mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
 
             let mut os_result;
@@ -273,32 +272,31 @@ impl OsIpcReceiver {
                 let c_name = CString::new(name.clone()).unwrap();
                 os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), right, 0);
                 if os_result == BOOTSTRAP_NAME_IN_USE {
-                    continue
+                    continue;
                 }
                 if os_result != BOOTSTRAP_SUCCESS {
-                    return Err(MachError::from(os_result))
+                    return Err(MachError::from(os_result));
                 }
-                break
+                break;
             }
             Ok(name)
         }
     }
 
-    fn unregister_global_name(name: String) -> Result<(),MachError> {
+    fn unregister_global_name(name: String) -> Result<(), MachError> {
         unsafe {
             let mut bootstrap_port = 0;
-            let os_result = mach_sys::task_get_special_port(mach_task_self(),
-                                                            TASK_BOOTSTRAP_PORT,
-                                                            &mut bootstrap_port);
+            let os_result = mach_sys::task_get_special_port(
+                mach_task_self(),
+                TASK_BOOTSTRAP_PORT,
+                &mut bootstrap_port,
+            );
             if os_result != KERN_SUCCESS {
-                return Err(KernelError::from(os_result).into())
+                return Err(KernelError::from(os_result).into());
             }
 
             let c_name = CString::new(name).unwrap();
-            let os_result = bootstrap_register2(bootstrap_port,
-                                                c_name.as_ptr(),
-                                                MACH_PORT_NULL,
-                                                0);
+            let os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), MACH_PORT_NULL, 0);
             if os_result == BOOTSTRAP_SUCCESS {
                 Ok(())
             } else {
@@ -307,50 +305,54 @@ impl OsIpcReceiver {
         }
     }
 
-    fn request_no_senders_notification(&self) -> Result<(),MachError> {
+    fn request_no_senders_notification(&self) -> Result<(), MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
-            let os_result =
-                mach_sys::mach_port_request_notification(mach_task_self(),
-                                                         port,
-                                                         MACH_NOTIFY_NO_SENDERS,
-                                                         0,
-                                                         port,
-                                                         MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
-                                                         &mut 0);
+            let os_result = mach_sys::mach_port_request_notification(
+                mach_task_self(),
+                port,
+                MACH_NOTIFY_NO_SENDERS,
+                0,
+                port,
+                MACH_MSG_TYPE_MAKE_SEND_ONCE as u32,
+                &mut 0,
+            );
             if os_result != KERN_SUCCESS {
-                return Err(KernelError::from(os_result).into())
+                return Err(KernelError::from(os_result).into());
             }
         }
         Ok(())
     }
 
-    fn recv_with_blocking_mode(&self, blocking_mode: BlockingMode)
-                               -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
-                                         MachError> {
-        select(self.port.get(), blocking_mode).and_then(|result| {
-            match result {
-                OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
-                    Ok((data, channels, shared_memory_regions))
-                }
-                OsIpcSelectionResult::ChannelClosed(_) => Err(MachError::from(MACH_NOTIFY_NO_SENDERS)),
-            }
+    fn recv_with_blocking_mode(
+        &self,
+        blocking_mode: BlockingMode,
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
+        select(self.port.get(), blocking_mode).and_then(|result| match result {
+            OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
+                Ok((data, channels, shared_memory_regions))
+            },
+            OsIpcSelectionResult::ChannelClosed(_) => Err(MachError::from(MACH_NOTIFY_NO_SENDERS)),
         })
     }
 
-    pub fn recv(&self)
-                -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MachError> {
+    pub fn recv(
+        &self,
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
         self.recv_with_blocking_mode(BlockingMode::Blocking)
     }
 
-    pub fn try_recv(&self)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MachError> {
+    pub fn try_recv(
+        &self,
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
         self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 
-    pub fn try_recv_timeout(&self, duration: Duration)
-                    -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),MachError> {
+    pub fn try_recv_timeout(
+        &self,
+        duration: Duration,
+    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
         self.recv_with_blocking_mode(BlockingMode::Timeout(duration))
     }
 }
@@ -452,14 +454,16 @@ impl OsIpcSender {
         }
     }
 
-    pub fn connect(name: String) -> Result<OsIpcSender,MachError> {
+    pub fn connect(name: String) -> Result<OsIpcSender, MachError> {
         unsafe {
             let mut bootstrap_port = 0;
-            let os_result = mach_sys::task_get_special_port(mach_task_self(),
-                                                            TASK_BOOTSTRAP_PORT,
-                                                            &mut bootstrap_port);
+            let os_result = mach_sys::task_get_special_port(
+                mach_task_self(),
+                TASK_BOOTSTRAP_PORT,
+                &mut bootstrap_port,
+            );
             if os_result != KERN_SUCCESS {
-                return Err(KernelError::from(os_result).into())
+                return Err(KernelError::from(os_result).into());
             }
 
             let mut port = 0;
@@ -477,11 +481,12 @@ impl OsIpcSender {
         usize::MAX
     }
 
-    pub fn send(&self,
-                data: &[u8],
-                ports: Vec<OsIpcChannel>,
-                mut shared_memory_regions: Vec<OsIpcSharedMemory>)
-                -> Result<(),MachError> {
+    pub fn send(
+        &self,
+        data: &[u8],
+        ports: Vec<OsIpcChannel>,
+        mut shared_memory_regions: Vec<OsIpcSharedMemory>,
+    ) -> Result<(), MachError> {
         let mut data = SendData::from(data);
         if let Some(data) = data.take_shared_memory() {
             shared_memory_regions.push(data);
@@ -490,8 +495,7 @@ impl OsIpcSender {
         unsafe {
             let size = Message::size_of(&data, ports.len(), shared_memory_regions.len());
             let message = libc::malloc(size as size_t) as *mut Message;
-            (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) |
-                MACH_MSGH_BITS_COMPLEX;
+            (*message).header.msgh_bits = (MACH_MSG_TYPE_COPY_SEND as u32) | MACH_MSGH_BITS_COMPLEX;
             (*message).header.msgh_size = size as u32;
             (*message).header.msgh_local_port = MACH_PORT_NULL;
             (*message).header.msgh_remote_port = self.port;
@@ -544,13 +548,15 @@ impl OsIpcSender {
                 ptr::copy_nonoverlapping(data.as_ptr(), data_dest, data_size);
             }
 
-            let os_result = mach_sys::mach_msg(message as *mut _,
-                                               MACH_SEND_MSG,
-                                               (*message).header.msgh_size,
-                                               0,
-                                               MACH_PORT_NULL,
-                                               MACH_MSG_TIMEOUT_NONE,
-                                               MACH_PORT_NULL);
+            let os_result = mach_sys::mach_msg(
+                message as *mut _,
+                MACH_SEND_MSG,
+                (*message).header.msgh_size,
+                0,
+                MACH_PORT_NULL,
+                MACH_MSG_TIMEOUT_NONE,
+                MACH_PORT_NULL,
+            );
             libc::free(message as *mut _);
             if os_result == MACH_SEND_TOO_LARGE && data.is_inline() {
                 let inline_data = data.inline_data();
@@ -564,7 +570,7 @@ impl OsIpcSender {
                 return self.send(inline_data, ports, shared_memory_regions);
             }
             if os_result != MACH_MSG_SUCCESS {
-                return Err(MachError::from(os_result))
+                return Err(MachError::from(os_result));
             }
             for outgoing_port in ports {
                 mem::forget(outgoing_port);
@@ -605,9 +611,7 @@ impl Drop for OsOpaqueIpcChannel {
 
 impl OsOpaqueIpcChannel {
     fn from_name(name: mach_port_t) -> OsOpaqueIpcChannel {
-        OsOpaqueIpcChannel {
-            port: name,
-        }
+        OsOpaqueIpcChannel { port: name }
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
@@ -628,7 +632,7 @@ pub struct OsIpcReceiverSet {
 }
 
 impl OsIpcReceiverSet {
-    pub fn new() -> Result<OsIpcReceiverSet,MachError> {
+    pub fn new() -> Result<OsIpcReceiverSet, MachError> {
         let port = mach_port_allocate(MACH_PORT_RIGHT_PORT_SET)?;
         Ok(OsIpcReceiverSet {
             port: port,
@@ -636,14 +640,14 @@ impl OsIpcReceiverSet {
         })
     }
 
-    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64,MachError> {
+    pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64, MachError> {
         mach_port_move_member(receiver.extract_port(), self.port)?;
         let receiver_port = receiver.consume_port();
         self.ports.push(receiver_port);
         Ok(receiver_port as u64)
     }
 
-    pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>,MachError> {
+    pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>, MachError> {
         select(self.port, BlockingMode::Blocking).map(|result| vec![result])
     }
 }
@@ -658,19 +662,34 @@ impl Drop for OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>),
+    DataReceived(
+        u64,
+        Vec<u8>,
+        Vec<OsOpaqueIpcChannel>,
+        Vec<OsIpcSharedMemory>,
+    ),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(self) -> (u64, Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>) {
+    pub fn unwrap(
+        self,
+    ) -> (
+        u64,
+        Vec<u8>,
+        Vec<OsOpaqueIpcChannel>,
+        Vec<OsIpcSharedMemory>,
+    ) {
         match self {
             OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
                 (id, data, channels, shared_memory_regions)
-            }
+            },
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!("OsIpcSelectionResult::unwrap(): receiver ID {} was closed!", id)
-            }
+                panic!(
+                    "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
+                    id
+                )
+            },
         }
     }
 }
@@ -682,8 +701,10 @@ enum BlockingMode {
     Timeout(Duration),
 }
 
-fn select(port: mach_port_t, blocking_mode: BlockingMode)
-          -> Result<OsIpcSelectionResult,MachError> {
+fn select(
+    port: mach_port_t,
+    blocking_mode: BlockingMode,
+) -> Result<OsIpcSelectionResult, MachError> {
     debug_assert!(port != MACH_PORT_NULL);
     unsafe {
         let mut buffer = [0; SMALL_MESSAGE_SIZE];
@@ -699,50 +720,58 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
                 .map(|ms| (MACH_RCV_MSG | MACH_RCV_LARGE | MACH_RCV_TIMEOUT, ms))
                 .unwrap_or((MACH_RCV_MSG | MACH_RCV_LARGE, MACH_MSG_TIMEOUT_NONE)),
         };
-        match mach_sys::mach_msg(message as *mut _,
-                                 flags,
-                                 0,
-                                 (*message).header.msgh_size,
-                                 port,
-                                 timeout,
-                                 MACH_PORT_NULL) {
+        match mach_sys::mach_msg(
+            message as *mut _,
+            flags,
+            0,
+            (*message).header.msgh_size,
+            port,
+            timeout,
+            MACH_PORT_NULL,
+        ) {
             MACH_RCV_TOO_LARGE => {
                 loop {
                     // the actual size gets written into msgh_size by the kernel
-                    let max_trailer_size = mem::size_of::<mach_sys::mach_msg_max_trailer_t>() as mach_sys::mach_msg_size_t;
+                    let max_trailer_size = mem::size_of::<mach_sys::mach_msg_max_trailer_t>()
+                        as mach_sys::mach_msg_size_t;
                     let actual_size = (*message).header.msgh_size + max_trailer_size;
                     allocated_buffer = Some(libc::malloc(actual_size as size_t));
-                    setup_receive_buffer(slice::from_raw_parts_mut(
-                                            allocated_buffer.unwrap() as *mut u8,
-                                            actual_size as usize),
-                                         port);
+                    setup_receive_buffer(
+                        slice::from_raw_parts_mut(
+                            allocated_buffer.unwrap() as *mut u8,
+                            actual_size as usize,
+                        ),
+                        port,
+                    );
                     message = allocated_buffer.unwrap() as *mut Message;
-                    match mach_sys::mach_msg(message as *mut _,
-                                             flags,
-                                             0,
-                                             actual_size,
-                                             port,
-                                             timeout,
-                                             MACH_PORT_NULL) {
+                    match mach_sys::mach_msg(
+                        message as *mut _,
+                        flags,
+                        0,
+                        actual_size,
+                        port,
+                        timeout,
+                        MACH_PORT_NULL,
+                    ) {
                         MACH_MSG_SUCCESS => break,
                         MACH_RCV_TOO_LARGE => {
                             libc::free(allocated_buffer.unwrap() as *mut _);
                             continue;
-                        }
+                        },
                         os_result => {
                             libc::free(allocated_buffer.unwrap() as *mut _);
-                            return Err(MachError::from(os_result))
-                        }
+                            return Err(MachError::from(os_result));
+                        },
                     }
                 }
-            }
-            MACH_MSG_SUCCESS => {}
+            },
+            MACH_MSG_SUCCESS => {},
             os_result => return Err(MachError::from(os_result)),
         }
 
         let local_port = (*message).header.msgh_local_port;
         if (*message).header.msgh_id == MACH_NOTIFY_NO_SENDERS {
-            return Ok(OsIpcSelectionResult::ChannelClosed(local_port as u64))
+            return Ok(OsIpcSelectionResult::ChannelClosed(local_port as u64));
         }
 
         let (mut ports, mut shared_memory_regions) = (Vec::new(), Vec::new());
@@ -750,7 +779,7 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
         let mut descriptors_remaining = (*message).body.msgh_descriptor_count;
         while descriptors_remaining > 0 {
             if (*port_descriptor).type_() != MACH_MSG_PORT_DESCRIPTOR {
-                break
+                break;
             }
             ports.push(OsOpaqueIpcChannel::from_name((*port_descriptor).name));
             port_descriptor = port_descriptor.offset(1);
@@ -761,8 +790,9 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
         while descriptors_remaining > 0 {
             debug_assert!((*shared_memory_descriptor).type_() == MACH_MSG_OOL_DESCRIPTOR);
             shared_memory_regions.push(OsIpcSharedMemory::from_raw_parts(
-                    (*shared_memory_descriptor).address as *mut u8,
-                    (*shared_memory_descriptor).size as usize));
+                (*shared_memory_descriptor).address as *mut u8,
+                (*shared_memory_descriptor).size as usize,
+            ));
             shared_memory_descriptor = shared_memory_descriptor.offset(1);
             descriptors_remaining -= 1;
         }
@@ -770,17 +800,19 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
         let has_inline_data_ptr = shared_memory_descriptor as *mut bool;
         let has_inline_data = *has_inline_data_ptr;
         let payload = if has_inline_data {
-            let padding_start = has_inline_data_ptr.offset(1) as  *mut u8;
+            let padding_start = has_inline_data_ptr.offset(1) as *mut u8;
             let padding_count = Message::payload_padding(padding_start as usize);
             let payload_size_ptr = padding_start.offset(padding_count as isize) as *mut usize;
             let payload_size = *payload_size_ptr;
-            let max_payload_size = message as usize + ((*message).header.msgh_size as usize) -
-                (shared_memory_descriptor as usize);
+            let max_payload_size = message as usize + ((*message).header.msgh_size as usize)
+                - (shared_memory_descriptor as usize);
             assert!(payload_size <= max_payload_size);
             let payload_ptr = payload_size_ptr.offset(1) as *mut u8;
             slice::from_raw_parts(payload_ptr, payload_size).to_vec()
         } else {
-            let ool_payload = shared_memory_regions.pop().expect("Missing OOL shared memory region");
+            let ool_payload = shared_memory_regions
+                .pop()
+                .expect("Missing OOL shared memory region");
             ool_payload.to_vec()
         };
 
@@ -788,10 +820,12 @@ fn select(port: mach_port_t, blocking_mode: BlockingMode)
             libc::free(allocated_buffer)
         }
 
-        Ok(OsIpcSelectionResult::DataReceived(local_port as u64,
-                                             payload,
-                                             ports,
-                                             shared_memory_regions))
+        Ok(OsIpcSelectionResult::DataReceived(
+            local_port as u64,
+            payload,
+            ports,
+            shared_memory_regions,
+        ))
     }
 }
 
@@ -807,21 +841,36 @@ impl Drop for OsIpcOneShotServer {
 }
 
 impl OsIpcOneShotServer {
-    pub fn new() -> Result<(OsIpcOneShotServer, String),MachError> {
+    pub fn new() -> Result<(OsIpcOneShotServer, String), MachError> {
         let receiver = OsIpcReceiver::new()?;
         let name = receiver.register_bootstrap_name()?;
-        Ok((OsIpcOneShotServer {
-            receiver: receiver,
-            name: name.clone(),
-        }, name))
+        Ok((
+            OsIpcOneShotServer {
+                receiver: receiver,
+                name: name.clone(),
+            },
+            name,
+        ))
     }
 
-    pub fn accept(self) -> Result<(OsIpcReceiver,
-                                   Vec<u8>,
-                                   Vec<OsOpaqueIpcChannel>,
-                                   Vec<OsIpcSharedMemory>),MachError> {
+    pub fn accept(
+        self,
+    ) -> Result<
+        (
+            OsIpcReceiver,
+            Vec<u8>,
+            Vec<OsOpaqueIpcChannel>,
+            Vec<OsIpcSharedMemory>,
+        ),
+        MachError,
+    > {
         let (bytes, channels, shared_memory_regions) = self.receiver.recv()?;
-        Ok((self.receiver.consume(), bytes, channels, shared_memory_regions))
+        Ok((
+            self.receiver.consume(),
+            bytes,
+            channels,
+            shared_memory_regions,
+        ))
     }
 }
 
@@ -837,9 +886,10 @@ impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
         if !self.ptr.is_null() {
             unsafe {
-                assert!(mach_sys::vm_deallocate(mach_task_self(),
-                                                self.ptr as usize,
-                                                self.length) == KERN_SUCCESS);
+                assert!(
+                    mach_sys::vm_deallocate(mach_task_self(), self.ptr as usize, self.length)
+                        == KERN_SUCCESS
+                );
             }
         }
     }
@@ -850,17 +900,19 @@ impl Clone for OsIpcSharedMemory {
         let mut address = 0;
         unsafe {
             if !self.ptr.is_null() {
-                let err = mach_sys::vm_remap(mach_task_self(),
-                                             &mut address,
-                                             self.length,
-                                             0,
-                                             1,
-                                             mach_task_self(),
-                                             self.ptr as usize,
-                                             0,
-                                             &mut 0,
-                                             &mut 0,
-                                             VM_INHERIT_SHARE);
+                let err = mach_sys::vm_remap(
+                    mach_task_self(),
+                    &mut address,
+                    self.length,
+                    0,
+                    1,
+                    mach_task_self(),
+                    self.ptr as usize,
+                    0,
+                    &mut 0,
+                    &mut 0,
+                    VM_INHERIT_SHARE,
+                );
                 assert!(err == KERN_SUCCESS);
             }
             OsIpcSharedMemory::from_raw_parts(address as *mut u8, self.length)
@@ -888,9 +940,7 @@ impl Deref for OsIpcSharedMemory {
         if self.ptr.is_null() && self.length > 0 {
             panic!("attempted to access a consumed `OsIpcSharedMemory`")
         }
-        unsafe {
-            slice::from_raw_parts(self.ptr, self.length)
-        }
+        unsafe { slice::from_raw_parts(self.ptr, self.length) }
     }
 }
 
@@ -947,15 +997,15 @@ struct Message {
 }
 
 impl Message {
-    fn payload_padding(unaligned: usize)-> usize {
-        ((unaligned + 7) & !7 ) - unaligned // 8 byte alignment
+    fn payload_padding(unaligned: usize) -> usize {
+        ((unaligned + 7) & !7) - unaligned // 8 byte alignment
     }
 
     fn size_of(data: &SendData, port_length: usize, shared_memory_length: usize) -> usize {
-        let mut size = mem::size_of::<Message>() +
-            mem::size_of::<mach_msg_port_descriptor_t>() * port_length +
-            mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length +
-            mem::size_of::<bool>();
+        let mut size = mem::size_of::<Message>()
+            + mem::size_of::<mach_msg_port_descriptor_t>() * port_length
+            + mem::size_of::<mach_msg_ool_descriptor_t>() * shared_memory_length
+            + mem::size_of::<bool>();
 
         if data.is_inline() {
             // rustc panics in debug mode for unaligned accesses.
@@ -992,18 +1042,23 @@ impl fmt::Display for KernelError {
             KernelError::Success => write!(fmt, "Success."),
             KernelError::NoSpace => write!(fmt, "No room in IPC name space for another right."),
             KernelError::InvalidName => write!(fmt, "Name doesn't denote a right in the task."),
-            KernelError::InvalidRight => write!(fmt, "Name denotes a right, but not an appropriate right."),
+            KernelError::InvalidRight => {
+                write!(fmt, "Name denotes a right, but not an appropriate right.")
+            },
             KernelError::InvalidValue => write!(fmt, "Blatant range error."),
-            KernelError::InvalidCapability => write!(fmt, "The supplied (port) capability is improper."),
-            KernelError::UrefsOverflow => write!(fmt, "Operation would overflow limit on user-references."),
+            KernelError::InvalidCapability => {
+                write!(fmt, "The supplied (port) capability is improper.")
+            },
+            KernelError::UrefsOverflow => {
+                write!(fmt, "Operation would overflow limit on user-references.")
+            },
             KernelError::NotInSet => write!(fmt, "Receive right is not a member of a port set."),
             KernelError::Unknown(code) => write!(fmt, "Unknown kernel error: {:x}", code),
         }
     }
 }
 
-impl StdError for KernelError {
-}
+impl StdError for KernelError {}
 
 impl From<kern_return_t> for KernelError {
     fn from(code: kern_return_t) -> KernelError {
@@ -1078,51 +1133,85 @@ impl fmt::Display for MachError {
         match *self {
             MachError::Success => write!(fmt, "Success"),
             MachError::Kernel(kernel_error) => fmt::Display::fmt(&kernel_error, fmt),
-            MachError::IpcSpace => write!(fmt, "No room in IPC name space for another capability name."),
-            MachError::VmSpace => write!(fmt,  "No room in VM address space for out-of-line memory."),
-            MachError::IpcKernel => write!(fmt, "Kernel resource shortage handling an IPC capability."),
-            MachError::VmKernel => write!(fmt, "Kernel resource shortage handling out-of-line memory."),
-            MachError::SendInProgress => write!(fmt, "Thread is waiting to send.  (Internal use only.)"),
-            MachError::SendInvalidData => write!(fmt,  "Bogus in-line data."),
-            MachError::SendInvalidDest => write!(fmt,  "Bogus destination port."),
-            MachError::SendTimedOut => write!(fmt,  "Message not sent before timeout expired."),
-            MachError::SendInvalidVoucher => write!(fmt,  "Bogus voucher port."),
+            MachError::IpcSpace => write!(
+                fmt,
+                "No room in IPC name space for another capability name."
+            ),
+            MachError::VmSpace => {
+                write!(fmt, "No room in VM address space for out-of-line memory.")
+            },
+            MachError::IpcKernel => {
+                write!(fmt, "Kernel resource shortage handling an IPC capability.")
+            },
+            MachError::VmKernel => {
+                write!(fmt, "Kernel resource shortage handling out-of-line memory.")
+            },
+            MachError::SendInProgress => {
+                write!(fmt, "Thread is waiting to send.  (Internal use only.)")
+            },
+            MachError::SendInvalidData => write!(fmt, "Bogus in-line data."),
+            MachError::SendInvalidDest => write!(fmt, "Bogus destination port."),
+            MachError::SendTimedOut => write!(fmt, "Message not sent before timeout expired."),
+            MachError::SendInvalidVoucher => write!(fmt, "Bogus voucher port."),
             MachError::SendInterrupted => write!(fmt, "Software interrupt."),
-            MachError::SendMsgTooSmall => write!(fmt,  "Data doesn't contain a complete message."),
-            MachError::SendInvalidReply => write!(fmt,  "Bogus reply port."),
-            MachError::SendInvalidRight => write!(fmt,  "Bogus port rights in the message body."),
-            MachError::SendInvalidNotify => write!(fmt,  "Bogus notify port argument."),
-            MachError::SendInvalidMemory => write!(fmt,  "Invalid out-of-line memory pointer."),
-            MachError::SendNoBuffer => write!(fmt,  "No message buffer is available."),
-            MachError::SendTooLarge => write!(fmt,  "Send is too large for port"),
-            MachError::SendInvalidType => write!(fmt,  "Invalid msg-type specification."),
-            MachError::SendInvalidHeader => write!(fmt,  "A field in the header had a bad value."),
-            MachError::SendInvalidTrailer => write!(fmt, "The trailer to be sent does not match kernel format."),
-            MachError::SendInvalidRtOolSize => write!(fmt,  "compatibility: no longer a returned error"),
-            MachError::RcvInProgress => write!(fmt, "Thread is waiting for receive.  (Internal use only.)"),
-            MachError::RcvInvalidName => write!(fmt,  "Bogus name for receive port/port-set."),
-            MachError::RcvTimedOut => write!(fmt,  "Didn't get a message within the timeout value."),
-            MachError::RcvTooLarge => write!(fmt, "Message buffer is not large enough for inline data."),
-            MachError::RcvInterrupted => write!(fmt,  "Software interrupt."),
-            MachError::RcvPortChanged => write!(fmt,  "compatibility: no longer a returned error"),
-            MachError::RcvInvalidNotify => write!(fmt,  "Bogus notify port argument."),
-            MachError::RcvInvalidData => write!(fmt,  "Bogus message buffer for inline data."),
-            MachError::RcvPortDied => write!(fmt,  "Port/set was sent away/died during receive."),
-            MachError::RcvInSet => write!(fmt,  "compatibility: no longer a returned error"),
-            MachError::RcvHeaderError => write!(fmt,  "Error receiving message header.  See special bits."),
-            MachError::RcvBodyError => write!(fmt,  "Error receiving message body.  See special bits."),
-            MachError::RcvInvalidType => write!(fmt, "Invalid msg-type specification in scatter list."),
-            MachError::RcvScatterSmall => write!(fmt, "Out-of-line overwrite region is not large enough"),
-            MachError::RcvInvalidTrailer => write!(fmt, "trailer type or number of trailer elements not supported"),
-            MachError::RcvInProgressTimed => write!(fmt, "Waiting for receive with timeout. (Internal use only.)"),
+            MachError::SendMsgTooSmall => write!(fmt, "Data doesn't contain a complete message."),
+            MachError::SendInvalidReply => write!(fmt, "Bogus reply port."),
+            MachError::SendInvalidRight => write!(fmt, "Bogus port rights in the message body."),
+            MachError::SendInvalidNotify => write!(fmt, "Bogus notify port argument."),
+            MachError::SendInvalidMemory => write!(fmt, "Invalid out-of-line memory pointer."),
+            MachError::SendNoBuffer => write!(fmt, "No message buffer is available."),
+            MachError::SendTooLarge => write!(fmt, "Send is too large for port"),
+            MachError::SendInvalidType => write!(fmt, "Invalid msg-type specification."),
+            MachError::SendInvalidHeader => write!(fmt, "A field in the header had a bad value."),
+            MachError::SendInvalidTrailer => {
+                write!(fmt, "The trailer to be sent does not match kernel format.")
+            },
+            MachError::SendInvalidRtOolSize => {
+                write!(fmt, "compatibility: no longer a returned error")
+            },
+            MachError::RcvInProgress => {
+                write!(fmt, "Thread is waiting for receive.  (Internal use only.)")
+            },
+            MachError::RcvInvalidName => write!(fmt, "Bogus name for receive port/port-set."),
+            MachError::RcvTimedOut => write!(fmt, "Didn't get a message within the timeout value."),
+            MachError::RcvTooLarge => {
+                write!(fmt, "Message buffer is not large enough for inline data.")
+            },
+            MachError::RcvInterrupted => write!(fmt, "Software interrupt."),
+            MachError::RcvPortChanged => write!(fmt, "compatibility: no longer a returned error"),
+            MachError::RcvInvalidNotify => write!(fmt, "Bogus notify port argument."),
+            MachError::RcvInvalidData => write!(fmt, "Bogus message buffer for inline data."),
+            MachError::RcvPortDied => write!(fmt, "Port/set was sent away/died during receive."),
+            MachError::RcvInSet => write!(fmt, "compatibility: no longer a returned error"),
+            MachError::RcvHeaderError => {
+                write!(fmt, "Error receiving message header.  See special bits.")
+            },
+            MachError::RcvBodyError => {
+                write!(fmt, "Error receiving message body.  See special bits.")
+            },
+            MachError::RcvInvalidType => {
+                write!(fmt, "Invalid msg-type specification in scatter list.")
+            },
+            MachError::RcvScatterSmall => {
+                write!(fmt, "Out-of-line overwrite region is not large enough")
+            },
+            MachError::RcvInvalidTrailer => write!(
+                fmt,
+                "trailer type or number of trailer elements not supported"
+            ),
+            MachError::RcvInProgressTimed => write!(
+                fmt,
+                "Waiting for receive with timeout. (Internal use only.)"
+            ),
             MachError::NotifyNoSenders => write!(fmt, "No senders exist for this port."),
-            MachError::Unknown(mach_error_number) => write!(fmt, "Unknown Mach error: {:x}", mach_error_number),
+            MachError::Unknown(mach_error_number) => {
+                write!(fmt, "Unknown Mach error: {:x}", mach_error_number)
+            },
         }
     }
 }
 
-impl StdError for MachError {
-}
+impl StdError for MachError {}
 
 impl From<MachError> for bincode::Error {
     fn from(mach_error: MachError) -> Self {
@@ -1260,9 +1349,16 @@ impl From<MachError> for io::Error {
     }
 }
 
-extern {
-    fn bootstrap_register2(bp: mach_port_t, service_name: name_t, sp: mach_port_t, flags: u64)
-                           -> kern_return_t;
-    fn bootstrap_look_up(bp: mach_port_t, service_name: name_t, sp: *mut mach_port_t)
-                         -> kern_return_t;
+extern "C" {
+    fn bootstrap_register2(
+        bp: mach_port_t,
+        service_name: name_t,
+        sp: mach_port_t,
+        flags: u64,
+    ) -> kern_return_t;
+    fn bootstrap_look_up(
+        bp: mach_port_t,
+        service_name: name_t,
+        sp: *mut mach_port_t,
+    ) -> kern_return_t;
 }
