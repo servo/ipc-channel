@@ -56,10 +56,11 @@ lazy_static! {
             while let Ok(mut selections) = receivers.select() {
                 for selection in selections.drain(..) {
                     match selection {
-                        IpcSelectionResult::MessageReceived(id, msg) =>
+                        IpcSelectionResult::MessageReceived(id, msg) => {
                             if let Some(sender) = senders.get(&id) {
                                 let _ = sender.unbounded_send(msg);
-                            },
+                            }
+                        },
                         IpcSelectionResult::ChannelClosed(id) => {
                             senders.remove(&id);
                         },
@@ -113,7 +114,7 @@ where
     }
 }
 
-impl<T> FusedStream for IpcStream<T> 
+impl<T> FusedStream for IpcStream<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {

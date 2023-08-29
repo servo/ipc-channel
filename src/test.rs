@@ -7,20 +7,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios"
-)))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use crate::ipc::IpcReceiver;
 use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-use crate::router::{ROUTER, RouterProxy};
+use crate::router::{RouterProxy, ROUTER};
 use crossbeam_channel::{self, Sender};
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios"
-)))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -118,12 +110,20 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios", all(target_os = "windows", not(feature = "windows-shared-memory-equality")))))]
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "android",
+    target_os = "ios",
+    all(target_os = "windows", not(feature = "windows-shared-memory-equality"))
+)))]
 pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
     Command::new(env::current_exe().unwrap())
         .arg(test_name)
-        .args(server_args.iter()
-                         .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)))
+        .args(
+            server_args
+                .iter()
+                .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -228,11 +228,7 @@ fn select() {
     }
 }
 
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios"
-)))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn cross_process_embedded_senders_spawn() {
     let person = ("Patrick Walton".to_owned(), 29);
@@ -247,7 +243,9 @@ fn cross_process_embedded_senders_spawn() {
         let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
         tx2.send(person.clone()).unwrap();
 
-        unsafe { libc::exit(0); }
+        unsafe {
+            libc::exit(0);
+        }
     }
 }
 
@@ -388,7 +386,12 @@ fn router_drops_callbacks_on_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(rx0.to_opaque(), Box::new(move |_| { let _ = &dropper; }));
+    router.add_route(
+        rx0.to_opaque(),
+        Box::new(move |_| {
+            let _ = &dropper;
+        }),
+    );
     drop(tx0);
     assert_eq!(drop_rx.recv(), Ok(42));
 }
@@ -410,7 +413,12 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(rx0.to_opaque(), Box::new(move |_| { let _ = &dropper; }));
+    router.add_route(
+        rx0.to_opaque(),
+        Box::new(move |_| {
+            let _ = &dropper;
+        }),
+    );
     let txs = vec![tx0.clone(), tx0.clone(), tx0.clone()];
     drop(txs);
     drop(tx0);
@@ -446,7 +454,10 @@ fn shared_memory() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
-    assert_eq!(received_person_and_shared_memory.0, person_and_shared_memory.0);
+    assert_eq!(
+        received_person_and_shared_memory.0,
+        person_and_shared_memory.0
+    );
     assert!(person_and_shared_memory.1.iter().all(|byte| *byte == 0xba));
     assert!(received_person_and_shared_memory
         .1
@@ -455,7 +466,10 @@ fn shared_memory() {
 }
 
 #[test]
-#[cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
+#[cfg(any(
+    not(target_os = "windows"),
+    all(target_os = "windows", feature = "windows-shared-memory-equality")
+))]
 fn shared_memory_object_equality() {
     let person = ("Patrick Walton".to_owned(), 29);
     let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
@@ -523,7 +537,9 @@ fn try_recv_timeout() {
     let timeout = Duration::from_millis(1000);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= Duration::from_millis(500)),
+        Err(ipc::TryRecvError::Empty) => {
+            assert!(start_recv.elapsed() >= Duration::from_millis(500))
+        },
         v => panic!("Expected empty channel err: {:?}", v),
     }
     tx.send(person.clone()).unwrap();
@@ -533,7 +549,9 @@ fn try_recv_timeout() {
     assert_eq!(person, received_person);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => assert!(start_recv.elapsed() >= Duration::from_millis(500)),
+        Err(ipc::TryRecvError::Empty) => {
+            assert!(start_recv.elapsed() >= Duration::from_millis(500))
+        },
         v => panic!("Expected empty channel err: {:?}", v),
     }
     drop(tx);
