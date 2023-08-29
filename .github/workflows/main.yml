@@ -26,6 +26,9 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
+      - name: clippy
+        run: cargo clippy --features "${{ matrix.features }}"
+
       - name: Cargo build
         run: cargo build --features "${{ matrix.features }}"
 

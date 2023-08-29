@@ -150,18 +150,21 @@ impl OsIpcReceiver {
         OsIpcReceiver::from_fd(self.consume_fd())
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn recv(
         &self,
     ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
         recv(self.fd.get(), BlockingMode::Blocking)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn try_recv(
         &self,
     ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
         recv(self.fd.get(), BlockingMode::Nonblocking)
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn try_recv_timeout(
         &self,
         duration: Duration,
@@ -284,7 +287,7 @@ impl OsIpcSender {
                 let cmsg_length = mem::size_of_val(fds);
                 let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
                     let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
-                    if cmsg_buffer == ptr::null_mut() {
+                    if cmsg_buffer.is_null() {
                         return Err(UnixError::last());
                     }
                     (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length) as MsgControlLen;
@@ -361,7 +364,7 @@ impl OsIpcSender {
             if sent_size > 2000 {
                 *sendbuf_size /= 2;
                 // Make certain we end up with less than what we tried before...
-                if !(*sendbuf_size < sent_size) {
+                if *sendbuf_size >= sent_size {
                     *sendbuf_size = sent_size / 2;
                 }
                 Ok(())
@@ -507,10 +510,7 @@ impl OsIpcReceiverSet {
         let fd = receiver.consume_fd();
         let io = EventedFd(&fd);
         let fd_token = Token(fd as usize);
-        let poll_entry = PollEntry {
-            id: last_index,
-            fd: fd,
-        };
+        let poll_entry = PollEntry { id: last_index, fd };
         self.poll
             .register(&io, fd_token, Ready::readable(), PollOpt::level())?;
         self.pollfds.insert(fd_token, poll_entry);
@@ -626,7 +626,7 @@ impl Drop for OsOpaqueIpcChannel {
 
 impl OsOpaqueIpcChannel {
     fn from_fd(fd: c_int) -> OsOpaqueIpcChannel {
-        OsOpaqueIpcChannel { fd: fd }
+        OsOpaqueIpcChannel { fd }
     }
 
     pub fn to_sender(&mut self) -> OsIpcSender {
@@ -681,7 +681,7 @@ impl OsIpcOneShotServer {
 
             Ok((
                 OsIpcOneShotServer {
-                    fd: fd,
+                    fd,
                     _temp_dir: temp_dir,
                 },
                 path_string.to_string(),
@@ -689,6 +689,7 @@ impl OsIpcOneShotServer {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     pub fn accept(
         self,
     ) -> Result<
@@ -761,7 +762,7 @@ impl BackingStore {
     }
 
     pub fn from_fd(fd: c_int) -> BackingStore {
-        BackingStore { fd: fd }
+        BackingStore { fd }
     }
 
     pub fn fd(&self) -> c_int {
@@ -786,7 +787,7 @@ impl BackingStore {
             self.fd,
             0,
         );
-        assert!(address != ptr::null_mut());
+        assert!(!address.is_null());
         assert!(address != MAP_FAILED);
         (address as *mut u8, length)
     }
@@ -858,11 +859,7 @@ impl OsIpcSharedMemory {
         length: usize,
         store: BackingStore,
     ) -> OsIpcSharedMemory {
-        OsIpcSharedMemory {
-            ptr: ptr,
-            length: length,
-            store: store,
-        }
+        OsIpcSharedMemory { ptr, length, store }
     }
 
     unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemory {
@@ -974,6 +971,7 @@ enum BlockingMode {
     Timeout(Duration),
 }
 
+#[allow(clippy::uninit_vec, clippy::type_complexity)]
 fn recv(
     fd: c_int,
     blocking_mode: BlockingMode,
@@ -1014,7 +1012,7 @@ fn recv(
             (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
         };
         for index in 0..channel_length {
-            let fd = *cmsg_fds.offset(index as isize);
+            let fd = *cmsg_fds.add(index);
             if is_socket(fd) {
                 channels.push(OsOpaqueIpcChannel::from_fd(fd));
                 continue;
@@ -1065,11 +1063,11 @@ fn recv(
             result
         };
 
-        if result == 0 {
-            return Err(UnixError::ChannelClosed);
-        } else if result < 0 {
-            return Err(UnixError::last());
-        };
+        match result.cmp(&0) {
+            cmp::Ordering::Greater => continue,
+            cmp::Ordering::Equal => return Err(UnixError::ChannelClosed),
+            cmp::Ordering::Less => return Err(UnixError::last()),
+        }
     }
 
     Ok((main_data_buffer, channels, shared_memory_regions))
@@ -1134,11 +1132,11 @@ impl UnixCmsg {
     unsafe fn new(iovec: &mut [iovec]) -> Result<UnixCmsg, UnixError> {
         let cmsg_length = CMSG_SPACE(MAX_FDS_IN_CMSG as usize * mem::size_of::<c_int>());
         let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
-        if cmsg_buffer == ptr::null_mut() {
+        if cmsg_buffer.is_null() {
             return Err(UnixError::last());
         }
         Ok(UnixCmsg {
-            cmsg_buffer: cmsg_buffer,
+            cmsg_buffer,
             msghdr: new_msghdr(iovec, cmsg_buffer, cmsg_length as MsgControlLen),
         })
     }
@@ -1162,22 +1160,22 @@ impl UnixCmsg {
                     fd.len() as libc::c_ulong,
                     duration.as_millis().try_into().unwrap_or(-1),
                 );
-                if result == 0 {
-                    return Err(UnixError::Errno(EAGAIN));
-                } else if result < 0 {
-                    return Err(UnixError::last());
-                };
+
+                match result.cmp(&0) {
+                    cmp::Ordering::Equal => return Err(UnixError::Errno(EAGAIN)),
+                    cmp::Ordering::Less => return Err(UnixError::last()),
+                    cmp::Ordering::Greater => {},
+                }
             },
             BlockingMode::Blocking => {},
         }
 
         let result = recvmsg(fd, &mut self.msghdr, RECVMSG_FLAGS);
-        let result = if result > 0 {
-            Ok(result as usize)
-        } else if result == 0 {
-            Err(UnixError::ChannelClosed)
-        } else {
-            Err(UnixError::last())
+
+        let result = match result.cmp(&0) {
+            cmp::Ordering::Equal => Err(UnixError::ChannelClosed),
+            cmp::Ordering::Less => Err(UnixError::last()),
+            cmp::Ordering::Greater => Ok(result as usize),
         };
 
         if let BlockingMode::Nonblocking = blocking_mode {
@@ -1217,8 +1215,7 @@ fn CMSG_LEN(length: size_t) -> size_t {
 
 #[allow(non_snake_case)]
 unsafe fn CMSG_DATA(cmsg: *mut cmsghdr) -> *mut c_void {
-    (cmsg as *mut libc::c_uchar).offset(CMSG_ALIGN(mem::size_of::<cmsghdr>()) as isize)
-        as *mut c_void
+    (cmsg as *mut libc::c_uchar).add(CMSG_ALIGN(mem::size_of::<cmsghdr>())) as *mut c_void
 }
 
 #[allow(non_snake_case)]

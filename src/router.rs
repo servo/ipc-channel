@@ -39,6 +39,7 @@ pub struct RouterProxy {
     comm: Mutex<RouterProxyComm>,
 }
 
+#[allow(clippy::new_without_default)]
 impl RouterProxy {
     pub fn new() -> RouterProxy {
         // Router acts like a receiver, running in its own thread with both
@@ -49,8 +50,8 @@ impl RouterProxy {
         thread::spawn(move || Router::new(msg_receiver, wakeup_receiver).run());
         RouterProxy {
             comm: Mutex::new(RouterProxyComm {
-                msg_sender: msg_sender,
-                wakeup_sender: wakeup_sender,
+                msg_sender,
+                wakeup_sender,
                 shutdown: false,
             }),
         }
@@ -84,15 +85,13 @@ impl RouterProxy {
         comm.shutdown = true;
 
         let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
-        let _ = comm
-            .wakeup_sender
+        comm.wakeup_sender
             .send(())
-            .and_then(|_| {
+            .map(|_| {
                 comm.msg_sender
                     .send(RouterMsg::Shutdown(ack_sender))
                     .unwrap();
                 ack_receiver.recv().unwrap();
-                Ok(())
             })
             .unwrap();
     }
@@ -150,9 +149,9 @@ impl Router {
         let mut ipc_receiver_set = IpcReceiverSet::new().unwrap();
         let msg_wakeup_id = ipc_receiver_set.add(wakeup_receiver).unwrap();
         Router {
-            msg_receiver: msg_receiver,
-            msg_wakeup_id: msg_wakeup_id,
-            ipc_receiver_set: ipc_receiver_set,
+            msg_receiver,
+            msg_wakeup_id,
+            ipc_receiver_set,
             handlers: HashMap::new(),
         }
     }

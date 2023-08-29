@@ -127,11 +127,11 @@ where
 {
     let (os_sender, os_receiver) = platform::channel()?;
     let ipc_receiver = IpcReceiver {
-        os_receiver: os_receiver,
+        os_receiver,
         phantom: PhantomData,
     };
     let ipc_sender = IpcSender {
-        os_sender: os_sender,
+        os_sender,
         phantom: PhantomData,
     };
     Ok((ipc_sender, ipc_receiver))
@@ -167,12 +167,8 @@ where
 /// [IpcBytesSender]: struct.IpcBytesSender.html
 pub fn bytes_channel() -> Result<(IpcBytesSender, IpcBytesReceiver), io::Error> {
     let (os_sender, os_receiver) = platform::channel()?;
-    let ipc_bytes_receiver = IpcBytesReceiver {
-        os_receiver: os_receiver,
-    };
-    let ipc_bytes_sender = IpcBytesSender {
-        os_sender: os_sender,
-    };
+    let ipc_bytes_receiver = IpcBytesReceiver { os_receiver };
+    let ipc_bytes_sender = IpcBytesSender { os_sender };
     Ok((ipc_bytes_sender, ipc_bytes_receiver))
 }
 
@@ -302,7 +298,7 @@ impl<'de, T> Deserialize<'de> for IpcReceiver<T> {
     {
         let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
         Ok(IpcReceiver {
-            os_receiver: os_receiver,
+            os_receiver,
             phantom: PhantomData,
         })
     }
@@ -376,13 +372,10 @@ where
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                 |os_ipc_shared_memory_regions_for_serialization| {
-                    let old_os_ipc_channels = mem::replace(
-                        &mut *os_ipc_channels_for_serialization.borrow_mut(),
-                        Vec::new(),
-                    );
-                    let old_os_ipc_shared_memory_regions = mem::replace(
+                    let old_os_ipc_channels =
+                        mem::take(&mut *os_ipc_channels_for_serialization.borrow_mut());
+                    let old_os_ipc_shared_memory_regions = mem::take(
                         &mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
-                        Vec::new(),
                     );
                     let os_ipc_shared_memory_regions;
                     let os_ipc_channels;
@@ -421,7 +414,7 @@ impl<'de, T> Deserialize<'de> for IpcSender<T> {
     {
         let os_sender = deserialize_os_ipc_sender(deserializer)?;
         Ok(IpcSender {
-            os_sender: os_sender,
+            os_sender,
             phantom: PhantomData,
         })
     }
@@ -521,11 +514,11 @@ impl IpcReceiverSet {
                 ) => IpcSelectionResult::MessageReceived(
                     os_receiver_id,
                     OpaqueIpcMessage {
-                        data: data,
-                        os_ipc_channels: os_ipc_channels,
+                        data,
+                        os_ipc_channels,
                         os_ipc_shared_memory_regions: os_ipc_shared_memory_regions
                             .into_iter()
-                            .map(|os_ipc_shared_memory_region| Some(os_ipc_shared_memory_region))
+                            .map(Some)
                             .collect(),
                     },
                 ),
@@ -568,7 +561,7 @@ impl Deref for IpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        &*self.os_shared_memory
+        &self.os_shared_memory
     }
 }
 
@@ -582,16 +575,12 @@ impl<'de> Deserialize<'de> for IpcSharedMemory {
             |os_ipc_shared_memory_regions_for_deserialization| {
                 // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
                 // of bounds. We should return an `Err` result instead.
-                mem::replace(
-                    &mut os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index],
-                    None,
-                )
-                .unwrap()
+                os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index]
+                    .take()
+                    .unwrap()
             },
         );
-        Ok(IpcSharedMemory {
-            os_shared_memory: os_shared_memory,
-        })
+        Ok(IpcSharedMemory { os_shared_memory })
     }
 }
 
@@ -694,11 +683,11 @@ impl OpaqueIpcMessage {
         os_ipc_shared_memory_regions: Vec<OsIpcSharedMemory>,
     ) -> OpaqueIpcMessage {
         OpaqueIpcMessage {
-            data: data,
-            os_ipc_channels: os_ipc_channels,
+            data,
+            os_ipc_channels,
             os_ipc_shared_memory_regions: os_ipc_shared_memory_regions
                 .into_iter()
-                .map(|os_ipc_shared_memory_region| Some(os_ipc_shared_memory_region))
+                .map(Some)
                 .collect(),
         }
     }
@@ -730,7 +719,7 @@ impl OpaqueIpcMessage {
                     );
                     /* Error check comes after doing cleanup,
                      * since we need the cleanup both in the success and the error cases. */
-                    Ok(result?)
+                    result
                 },
             )
         })
@@ -760,9 +749,7 @@ impl<'de> Deserialize<'de> for OpaqueIpcSender {
         D: Deserializer<'de>,
     {
         let os_sender = deserialize_os_ipc_sender(deserializer)?;
-        Ok(OpaqueIpcSender {
-            os_sender: os_sender,
-        })
+        Ok(OpaqueIpcSender { os_sender })
     }
 }
 
@@ -798,9 +785,7 @@ impl<'de> Deserialize<'de> for OpaqueIpcReceiver {
         D: Deserializer<'de>,
     {
         let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
-        Ok(OpaqueIpcReceiver {
-            os_receiver: os_receiver,
-        })
+        Ok(OpaqueIpcReceiver { os_receiver })
     }
 }
 
@@ -859,7 +844,7 @@ where
         let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((
             IpcOneShotServer {
-                os_server: os_server,
+                os_server,
                 phantom: PhantomData,
             },
             name,
@@ -869,17 +854,14 @@ where
     pub fn accept(self) -> Result<(IpcReceiver<T>, T), bincode::Error> {
         let (os_receiver, data, os_channels, os_shared_memory_regions) = self.os_server.accept()?;
         let value = OpaqueIpcMessage {
-            data: data,
+            data,
             os_ipc_channels: os_channels,
-            os_ipc_shared_memory_regions: os_shared_memory_regions
-                .into_iter()
-                .map(|os_shared_memory_region| Some(os_shared_memory_region))
-                .collect(),
+            os_ipc_shared_memory_regions: os_shared_memory_regions.into_iter().map(Some).collect(),
         }
         .to()?;
         Ok((
             IpcReceiver {
-                os_receiver: os_receiver,
+                os_receiver,
                 phantom: PhantomData,
             },
             value,
@@ -918,9 +900,7 @@ impl<'de> Deserialize<'de> for IpcBytesReceiver {
         D: Deserializer<'de>,
     {
         let os_receiver = deserialize_os_ipc_receiver(deserializer)?;
-        Ok(IpcBytesReceiver {
-            os_receiver: os_receiver,
-        })
+        Ok(IpcBytesReceiver { os_receiver })
     }
 }
 
@@ -953,9 +933,7 @@ impl<'de> Deserialize<'de> for IpcBytesSender {
         D: Deserializer<'de>,
     {
         let os_sender = deserialize_os_ipc_sender(deserializer)?;
-        Ok(IpcBytesSender {
-            os_sender: os_sender,
-        })
+        Ok(IpcBytesSender { os_sender })
     }
 }
 
@@ -973,7 +951,7 @@ impl IpcBytesSender {
     pub fn send(&self, data: &[u8]) -> Result<(), io::Error> {
         self.os_sender
             .send(data, vec![], vec![])
-            .map_err(|e| io::Error::from(e))
+            .map_err(io::Error::from)
     }
 }
 
