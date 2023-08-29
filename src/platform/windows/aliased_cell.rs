@@ -174,9 +174,7 @@ mod tests {
     fn noop_roundtrip() {
         let value = [1, 3, 3, 7];
         let cell = AliasedCell::new(Box::new(value));
-        let new_value = unsafe {
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 3, 3, 7]);
     }
 
@@ -187,9 +185,7 @@ mod tests {
         unsafe {
             cell.alias_mut().as_mut();
         }
-        let new_value = unsafe {
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 3, 3, 7]);
     }
 
@@ -200,9 +196,7 @@ mod tests {
         unsafe {
             mutate_value(cell.alias_mut().as_mut());
         }
-        let new_value = unsafe {
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 10, 3, 7]);
     }
 
@@ -217,9 +211,7 @@ mod tests {
         unsafe {
             mutate_value(cell.alias_mut().as_mut());
         }
-        let new_value = unsafe {
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 17, 3, 7]);
     }
 
@@ -236,9 +228,7 @@ mod tests {
             mutate_value(cell2.alias_mut().as_mut());
         }
         let cell3 = cell2;
-        let new_value = unsafe {
-            *cell3.into_inner()
-        };
+        let new_value = unsafe { *cell3.into_inner() };
         assert_eq!(new_value, [1, 17, 3, 7]);
     }
 
@@ -247,9 +237,7 @@ mod tests {
     fn mutate_deferred() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));
-        let mut mutator = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mut mutator = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         unsafe {
             mutator.mutate();
         }
@@ -264,9 +252,7 @@ mod tests {
     fn mutate_deferred_twice() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));
-        let mut mutator = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mut mutator = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         unsafe {
             mutator.mutate();
         }
@@ -285,9 +271,7 @@ mod tests {
     fn deferred_moves() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));
-        let mutator = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mutator = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         let cell2 = cell;
         let mut mutator2 = mutator;
         unsafe {
@@ -307,9 +291,7 @@ mod tests {
     fn safe_frobbing() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));
-        let mut mutator = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mut mutator = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         unsafe {
             mutator.mutate();
         }
@@ -329,15 +311,11 @@ mod tests {
     fn two_mutators() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));
-        let mut mutator1 = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mut mutator1 = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         unsafe {
             mutator1.mutate();
         }
-        let mut mutator2 = unsafe {
-            Mutator::new(cell.alias_mut().as_mut())
-        };
+        let mut mutator2 = unsafe { Mutator::new(cell.alias_mut().as_mut()) };
         unsafe {
             mutator2.mutate();
         }
@@ -350,7 +328,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Trying to drop an AliasedCell, which may still have aliases outstanding.")]
+    #[should_panic(
+        expected = "Trying to drop an AliasedCell, which may still have aliases outstanding."
+    )]
     fn invalid_drop() {
         let value = [1, 3, 3, 7];
         let mut cell = AliasedCell::new(Box::new(value));

@@ -82,7 +82,6 @@ pub mod asynch;
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
 extern crate windows;
 
-
 pub mod ipc;
 pub mod platform;
 pub mod router;

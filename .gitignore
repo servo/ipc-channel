@@ -3,3 +3,4 @@
 *.swo
 target
 Cargo.lock
+.idea

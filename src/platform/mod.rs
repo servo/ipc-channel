@@ -7,13 +7,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "openbsd",
-                                                target_os = "freebsd")))]
+#[cfg(all(
+    not(feature = "force-inprocess"),
+    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
+))]
 mod unix;
-#[cfg(all(not(feature = "force-inprocess"), any(target_os = "linux",
-                                                target_os = "openbsd",
-                                                target_os = "freebsd")))]
+#[cfg(all(
+    not(feature = "force-inprocess"),
+    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
+))]
 mod os {
     pub use super::unix::*;
 }
@@ -34,20 +36,26 @@ mod os {
 
 #[cfg(any(
     feature = "force-inprocess",
-    target_os = "android", target_os = "ios", target_os = "wasi", target_os = "unknown"
+    target_os = "android",
+    target_os = "ios",
+    target_os = "wasi",
+    target_os = "unknown"
 ))]
 mod inprocess;
 #[cfg(any(
     feature = "force-inprocess",
-    target_os = "android", target_os = "ios", target_os = "wasi", target_os = "unknown"
+    target_os = "android",
+    target_os = "ios",
+    target_os = "wasi",
+    target_os = "unknown"
 ))]
 mod os {
     pub use super::inprocess::*;
 }
 
+pub use self::os::{channel, OsOpaqueIpcChannel};
 pub use self::os::{OsIpcChannel, OsIpcOneShotServer, OsIpcReceiver, OsIpcReceiverSet};
 pub use self::os::{OsIpcSelectionResult, OsIpcSender, OsIpcSharedMemory};
-pub use self::os::{OsOpaqueIpcChannel, channel};
 
 #[cfg(test)]
 mod test;
