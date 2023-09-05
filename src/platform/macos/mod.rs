@@ -246,7 +246,7 @@ impl OsIpcReceiver {
         Ok(OsIpcSender::from_name(right))
     }
 
-    fn register_bootstrap_name(&self) -> Result<String, MachError> {
+    fn register_bootstrap_name(&self) -> Result<(u32, String), MachError> {
         let port = self.port.get();
         debug_assert!(port != MACH_PORT_NULL);
         unsafe {
@@ -260,7 +260,6 @@ impl OsIpcReceiver {
                 return Err(KernelError::from(os_result).into());
             }
 
-            // FIXME(pcwalton): Does this leak?
             let (right, acquired_right) =
                 mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
             debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
@@ -279,7 +278,7 @@ impl OsIpcReceiver {
                 }
                 break;
             }
-            Ok(name)
+            Ok((right, name))
         }
     }
 
@@ -418,14 +417,7 @@ impl Drop for OsIpcSender {
         if self.port == MACH_PORT_NULL {
             return;
         }
-        // mach_port_deallocate and mach_port_mod_refs are very similar, except that
-        // mach_port_mod_refs returns an error when there are no receivers for the port,
-        // causing the sender port to never be deallocated. mach_port_deallocate handles
-        // this case correctly and is therefore important to avoid dangling port leaks.
-        let err = unsafe { mach_port_deallocate(mach_task_self(), self.port) };
-        if err != KERN_SUCCESS {
-            panic!("mach_port_deallocate({}) failed: {:?}", self.port, err);
-        }
+        deallocate_mach_port(self.port);
     }
 }
 
@@ -832,22 +824,25 @@ fn select(
 pub struct OsIpcOneShotServer {
     receiver: OsIpcReceiver,
     name: String,
+    registration_port: u32,
 }
 
 impl Drop for OsIpcOneShotServer {
     fn drop(&mut self) {
         let _ = OsIpcReceiver::unregister_global_name(mem::replace(&mut self.name, String::new()));
+        deallocate_mach_port(self.registration_port);
     }
 }
 
 impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String), MachError> {
         let receiver = OsIpcReceiver::new()?;
-        let name = receiver.register_bootstrap_name()?;
+        let (registration_port, name) = receiver.register_bootstrap_name()?;
         Ok((
             OsIpcOneShotServer {
                 receiver: receiver,
                 name: name.clone(),
+                registration_port,
             },
             name,
         ))
@@ -988,6 +983,17 @@ unsafe fn setup_receive_buffer(buffer: &mut [u8], port_name: mach_port_t) {
 
 unsafe fn mach_task_self() -> mach_port_t {
     mach_task_self_
+}
+
+fn deallocate_mach_port(port: mach_port_t) {
+    // mach_port_deallocate and mach_port_mod_refs are very similar, except that
+    // mach_port_mod_refs returns an error when there are no receivers for the port,
+    // causing the sender port to never be deallocated. mach_port_deallocate handles
+    // this case correctly and is therefore important to avoid dangling port leaks.
+    let err = unsafe { mach_port_deallocate(mach_task_self(), port) };
+    if err != KERN_SUCCESS {
+        panic!("mach_port_deallocate({}) failed: {:?}", port, err);
+    }
 }
 
 #[repr(C)]
