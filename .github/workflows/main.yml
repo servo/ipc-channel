@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: ["", "force-inprocess", "memfd"]
+        features: ["", "force-inprocess", "memfd", "async"]
     steps:
       - uses: actions/checkout@v3
 
@@ -42,7 +42,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        features: ["", "force-inprocess"]
+        features: ["", "force-inprocess", "async"]
 
     steps:
       - uses: actions/checkout@v3
@@ -63,7 +63,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        features: ["", "--features force-inprocess", "--features windows-shared-memory-equality"]
+        features: ["", "--features force-inprocess", "--features windows-shared-memory-equality", "--features async"]
         target: ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
 
     steps:
