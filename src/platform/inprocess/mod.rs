@@ -10,6 +10,7 @@
 use crate::ipc;
 use bincode;
 use crossbeam_channel::{self, Receiver, RecvTimeoutError, Select, Sender, TryRecvError};
+use lazy_static::lazy_static;
 use std::cell::{Ref, RefCell};
 use std::cmp::PartialEq;
 use std::collections::hash_map::HashMap;

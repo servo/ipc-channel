@@ -20,6 +20,7 @@ use futures::stream::FusedStream;
 use futures::task::Context;
 use futures::task::Poll;
 use futures::Stream;
+use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;

@@ -9,6 +9,7 @@
 
 use crate::ipc;
 use bincode;
+use lazy_static::lazy_static;
 use serde;
 
 use std::{

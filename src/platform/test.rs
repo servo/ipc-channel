@@ -305,6 +305,7 @@ fn with_n_fds(n: usize, size: usize) {
 mod fragment_tests {
     use super::with_n_fds;
     use crate::platform;
+    use lazy_static::lazy_static;
 
     lazy_static! {
         static ref FRAGMENT_SIZE: usize = { platform::OsIpcSender::get_max_fragment_size() };

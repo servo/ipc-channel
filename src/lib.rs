@@ -36,45 +36,19 @@
 //! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
 //! [memfd_create]: http://man7.org/linux/man-pages/man2/memfd_create.2.html
 
-extern crate bincode;
-extern crate crossbeam_channel;
-
-#[macro_use]
-extern crate lazy_static;
-#[cfg(all(
-    not(feature = "force-inprocess"),
-    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
-))]
-extern crate fnv;
-extern crate libc;
-#[cfg(all(
-    not(feature = "force-inprocess"),
-    any(target_os = "linux", target_os = "openbsd", target_os = "freebsd")
-))]
-extern crate mio;
-extern crate rand;
-extern crate serde;
-extern crate tempfile;
 #[cfg(any(
     feature = "force-inprocess",
     target_os = "windows",
     target_os = "android",
     target_os = "ios"
 ))]
-extern crate uuid;
 #[cfg(all(
     feature = "memfd",
     not(feature = "force-inprocess"),
     target_os = "linux"
 ))]
-#[macro_use]
-extern crate sc;
-
 #[cfg(feature = "async")]
-extern crate futures;
-
-#[cfg(all(feature = "async", test))]
-extern crate futures_test;
+use futures;
 
 #[cfg(feature = "async")]
 pub mod asynch;
