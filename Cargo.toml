@@ -10,7 +10,6 @@ edition = "2021"
 [features]
 force-inprocess = []
 memfd = ["sc"]
-unstable = []
 async = ["futures", "futures-test"]
 win32-trace = []
 windows-shared-memory-equality = ["windows/Win32_System_LibraryLoader"]
@@ -34,6 +33,7 @@ sc = { version = "0.2.2", optional = true }
 
 [dev-dependencies]
 crossbeam-utils = "0.8"
+static_assertions = "1.1.0"
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.48.0"

@@ -7,8 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![cfg_attr(all(feature = "unstable", test), feature(specialization))]
-
 //! An implementation of the Rust channel API over process boundaries. Under the
 //! hood, this API uses Mach ports on Mac and file descriptor passing over Unix
 //! sockets on Linux. The serde library is used to serialize values for transport

@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features: ["unstable", "unstable force-inprocess", "unstable memfd"]
+        features: ["", "force-inprocess", "memfd"]
     steps:
       - uses: actions/checkout@v3
 
@@ -42,7 +42,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        features: ["unstable", "unstable force-inprocess"]
+        features: ["", "force-inprocess"]
 
     steps:
       - uses: actions/checkout@v3
@@ -63,7 +63,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        features: ["unstable", "unstable force-inprocess", "unstable windows-shared-memory-equality"]
+        features: ["", "--features force-inprocess", "--features windows-shared-memory-equality"]
         target: ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
 
     steps:
@@ -75,10 +75,10 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cargo build
-        run: cargo build --features "${{ matrix.features }}" --target ${{ matrix.target }}
+        run: cargo build ${{ matrix.features }} --target ${{ matrix.target }}
 
       - name: Cargo test
-        run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.target }}
+        run: cargo test ${{ matrix.features }} --target ${{ matrix.target }}
         env:
           RUST_BACKTRACE: 1
 

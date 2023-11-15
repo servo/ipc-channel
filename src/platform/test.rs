@@ -1232,27 +1232,13 @@ fn try_recv_large_delayed() {
     }
 }
 
-#[cfg(feature = "unstable")]
 mod sync_test {
     use crate::platform;
-
-    trait SyncTest {
-        fn test_not_sync();
-    }
-
-    impl<T> SyncTest for T {
-        default fn test_not_sync() {}
-    }
-
-    impl<T: Sync> SyncTest for T {
-        fn test_not_sync() {
-            panic!("`OsIpcSender` should not be `Sync`");
-        }
-    }
+    use static_assertions::assert_not_impl_any;
 
     #[test]
     fn receiver_not_sync() {
-        platform::OsIpcSender::test_not_sync();
+        assert_not_impl_any!(platform::OsIpcSender : Sync);
     }
 }
 
