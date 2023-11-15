@@ -12,6 +12,7 @@
 //! `IpcReceiver<T>`s. The router will then either call the appropriate callback or route the
 //! message to a crossbeam `Sender<T>` or `Receiver<T>`. You should use the global `ROUTER` to
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
+use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::thread;
