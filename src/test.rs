@@ -680,7 +680,7 @@ fn transfer_closed_sender() {
 #[test]
 fn test_receiver_stream() {
     use futures::task::Context;
-    use futures::Poll;
+    use futures::task::Poll;
     use futures::Stream;
     use std::pin::Pin;
     let (tx, rx) = ipc::channel().unwrap();
