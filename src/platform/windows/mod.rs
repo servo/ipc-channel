@@ -1428,10 +1428,15 @@ impl OsIpcSender {
         let mut oob = OutOfBandMessage::new(server_pid);
 
         for ref shmem in shared_memory_regions {
-            // shmem.handle, shmem.length
-            let mut remote_handle = dup_handle_to_process(&shmem.handle, &server_h)?;
-            oob.shmem_handles
-                .push((remote_handle.take_raw().0, shmem.length as u64));
+            match shmem {
+                OsIpcSharedMemory::Filled { handle, length, .. } => {
+                    // shmem.handle, shmem.length
+                    let mut remote_handle = dup_handle_to_process(handle, &server_h)?;
+                    oob.shmem_handles
+                        .push((remote_handle.take_raw().0, *length as u64));
+                },
+                OsIpcSharedMemory::Empty => oob.shmem_handles.push((INVALID_HANDLE_VALUE.0, 0)),
+            }
         }
 
         for port in ports {
@@ -1826,10 +1831,13 @@ impl OsIpcSelectionResult {
 }
 
 #[derive(Debug)]
-pub struct OsIpcSharedMemory {
-    handle: WinHandle,
-    view_handle: MEMORYMAPPEDVIEW_HANDLE,
-    length: usize,
+pub enum OsIpcSharedMemory {
+    Filled {
+        handle: WinHandle,
+        view_handle: MEMORYMAPPEDVIEW_HANDLE,
+        length: usize,
+    },
+    Empty,
 }
 
 unsafe impl Send for OsIpcSharedMemory {}
@@ -1837,23 +1845,43 @@ unsafe impl Sync for OsIpcSharedMemory {}
 
 impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
-        unsafe {
-            let result = UnmapViewOfFile(self.view_handle);
-            assert!(result.as_bool() || thread::panicking());
+        if let OsIpcSharedMemory::Filled { view_handle, .. } = self {
+            unsafe {
+                let result = UnmapViewOfFile(*view_handle);
+                assert!(result.as_bool() || thread::panicking());
+            }
         }
     }
 }
 
 impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
-        OsIpcSharedMemory::from_handle(dup_handle(&self.handle).unwrap(), self.length).unwrap()
+        match self {
+            OsIpcSharedMemory::Filled { handle, length, .. } => {
+                OsIpcSharedMemory::from_handle(dup_handle(&handle).unwrap(), *length).unwrap()
+            },
+            OsIpcSharedMemory::Empty => OsIpcSharedMemory::Empty,
+        }
     }
 }
 
 #[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for OsIpcSharedMemory {
     fn eq(&self, other: &OsIpcSharedMemory) -> bool {
-        self.handle == other.handle
+        match self {
+            OsIpcSharedMemory::Filled { handle, .. } => {
+                if let OsIpcSharedMemory::Filled {
+                    handle: other_handle,
+                    ..
+                } = other
+                {
+                    handle == other_handle
+                } else {
+                    false
+                }
+            },
+            OsIpcSharedMemory::Empty => matches!(other, OsIpcSharedMemory::Empty),
+        }
     }
 }
 
@@ -1862,29 +1890,43 @@ impl Deref for OsIpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        assert!(!self.view_handle.is_invalid() && self.handle.is_valid());
-        unsafe { slice::from_raw_parts(self.view_handle.0 as _, self.length) }
+        match self {
+            OsIpcSharedMemory::Filled {
+                handle,
+                view_handle,
+                length,
+                ..
+            } => {
+                assert!(!view_handle.is_invalid() && handle.is_valid());
+                unsafe { slice::from_raw_parts(view_handle.0 as _, *length) }
+            },
+            OsIpcSharedMemory::Empty => &[],
+        }
     }
 }
 
 impl OsIpcSharedMemory {
     fn new(length: usize) -> Result<OsIpcSharedMemory, WinError> {
-        unsafe {
-            assert!(length < u32::max_value() as usize);
-            let (lhigh, llow) = (
-                length.checked_shr(32).unwrap_or(0) as u32,
-                (length & 0xffffffff) as u32,
-            );
-            let handle = CreateFileMappingA(
-                INVALID_HANDLE_VALUE,
-                None,
-                PAGE_READWRITE | SEC_COMMIT,
-                lhigh,
-                llow,
-                None,
-            )?;
+        if length == 0 {
+            Ok(OsIpcSharedMemory::Empty)
+        } else {
+            unsafe {
+                assert!(length < u32::max_value() as usize);
+                let (lhigh, llow) = (
+                    length.checked_shr(32).unwrap_or(0) as u32,
+                    (length & 0xffffffff) as u32,
+                );
+                let handle = CreateFileMappingA(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE | SEC_COMMIT,
+                    lhigh,
+                    llow,
+                    None,
+                )?;
 
-            OsIpcSharedMemory::from_handle(WinHandle::new(handle), length)
+                OsIpcSharedMemory::from_handle(WinHandle::new(handle), length)
+            }
         }
     }
 
@@ -1895,14 +1937,18 @@ impl OsIpcSharedMemory {
     // This function takes ownership of the handle, and will close it
     // when finished.
     fn from_handle(handle: WinHandle, length: usize) -> Result<OsIpcSharedMemory, WinError> {
-        unsafe {
-            let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0)?;
+        if length == 0 {
+            Ok(OsIpcSharedMemory::Empty)
+        } else {
+            unsafe {
+                let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0)?;
 
-            Ok(OsIpcSharedMemory {
-                handle: handle,
-                view_handle: address,
-                length: length,
-            })
+                Ok(OsIpcSharedMemory::Filled {
+                    handle: handle,
+                    view_handle: address,
+                    length: length,
+                })
+            }
         }
     }
 
@@ -1910,8 +1956,15 @@ impl OsIpcSharedMemory {
         unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(length).unwrap();
-            for element in slice::from_raw_parts_mut(mem.view_handle.0 as _, mem.length) {
-                *element = byte;
+            if let OsIpcSharedMemory::Filled {
+                view_handle,
+                length,
+                ..
+            } = &mem
+            {
+                for element in slice::from_raw_parts_mut(view_handle.0 as _, *length) {
+                    *element = byte;
+                }
             }
             mem
         }
@@ -1921,7 +1974,9 @@ impl OsIpcSharedMemory {
         unsafe {
             // panic if we can't create it
             let mem = OsIpcSharedMemory::new(bytes.len()).unwrap();
-            ptr::copy_nonoverlapping(bytes.as_ptr(), mem.view_handle.0 as _, bytes.len());
+            if let OsIpcSharedMemory::Filled { view_handle, .. } = &mem {
+                ptr::copy_nonoverlapping(bytes.as_ptr(), view_handle.0 as _, bytes.len());
+            }
             mem
         }
     }
