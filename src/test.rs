@@ -466,6 +466,26 @@ fn shared_memory() {
 }
 
 #[test]
+fn shared_memory_slice() {
+    let (tx, rx) = ipc::channel().unwrap();
+    // test byte of size 0
+    let shared_memory = IpcSharedMemory::from_byte(42, 0);
+    tx.send(shared_memory.clone()).unwrap();
+    let received_shared_memory = rx.recv().unwrap();
+    assert_eq!(*received_shared_memory, *shared_memory);
+    // test empty slice
+    let shared_memory = IpcSharedMemory::from_bytes(&[]);
+    tx.send(shared_memory.clone()).unwrap();
+    let received_shared_memory = rx.recv().unwrap();
+    assert_eq!(*received_shared_memory, *shared_memory);
+    // test non-empty slice
+    let shared_memory = IpcSharedMemory::from_bytes(&[4, 2, 42]);
+    tx.send(shared_memory.clone()).unwrap();
+    let received_shared_memory = rx.recv().unwrap();
+    assert_eq!(*received_shared_memory, *shared_memory);
+}
+
+#[test]
 #[cfg(any(
     not(target_os = "windows"),
     all(target_os = "windows", feature = "windows-shared-memory-equality")
