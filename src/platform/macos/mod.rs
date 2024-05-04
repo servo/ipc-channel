@@ -27,7 +27,7 @@ use std::io;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::RwLock;
 use std::time::Duration;
@@ -871,7 +871,7 @@ impl OsIpcOneShotServer {
 }
 
 pub struct OsIpcSharedMemory {
-    ptr: *mut u8,
+    ptr: Option<NonNull<u8>>,
     length: usize,
 }
 
@@ -880,10 +880,10 @@ unsafe impl Sync for OsIpcSharedMemory {}
 
 impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
+        if let Some(ptr) = self.ptr {
             unsafe {
                 assert!(
-                    mach_sys::vm_deallocate(mach_task_self(), self.ptr as usize, self.length)
+                    mach_sys::vm_deallocate(mach_task_self(), ptr.as_ptr() as usize, self.length)
                         == KERN_SUCCESS
                 );
             }
@@ -895,7 +895,7 @@ impl Clone for OsIpcSharedMemory {
     fn clone(&self) -> OsIpcSharedMemory {
         let mut address = 0;
         unsafe {
-            if !self.ptr.is_null() {
+            if let Some(ptr) = self.ptr {
                 let err = mach_sys::vm_remap(
                     mach_task_self(),
                     &mut address,
@@ -903,7 +903,7 @@ impl Clone for OsIpcSharedMemory {
                     0,
                     1,
                     mach_task_self(),
-                    self.ptr as usize,
+                    ptr.as_ptr() as usize,
                     0,
                     &mut 0,
                     &mut 0,
@@ -933,26 +933,31 @@ impl Deref for OsIpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        if self.ptr.is_null() && self.length > 0 {
+        if let Some(ptr) = self.ptr {
+            unsafe { slice::from_raw_parts(ptr.as_ptr(), self.length) }
+        } else if self.length > 0 {
             panic!("attempted to access a consumed `OsIpcSharedMemory`")
+        } else {
+            &[]
         }
-        unsafe { slice::from_raw_parts(self.ptr, self.length) }
     }
 }
 
 impl OsIpcSharedMemory {
     unsafe fn from_raw_parts(ptr: *mut u8, length: usize) -> OsIpcSharedMemory {
         OsIpcSharedMemory {
-            ptr: ptr,
-            length: length,
+            ptr: NonNull::new(ptr),
+            length,
         }
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
         unsafe {
             let address = allocate_vm_pages(length);
-            for element in slice::from_raw_parts_mut(address, length) {
-                *element = byte;
+            if length != 0 {
+                for element in slice::from_raw_parts_mut(address, length) {
+                    *element = byte;
+                }
             }
             OsIpcSharedMemory::from_raw_parts(address, length)
         }
@@ -961,7 +966,9 @@ impl OsIpcSharedMemory {
     pub fn from_bytes(bytes: &[u8]) -> OsIpcSharedMemory {
         unsafe {
             let address = allocate_vm_pages(bytes.len());
-            ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            if !bytes.is_empty() {
+                ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            }
             OsIpcSharedMemory::from_raw_parts(address, bytes.len())
         }
     }
