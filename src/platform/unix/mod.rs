@@ -33,7 +33,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, RangeFrom};
 use std::os::fd::RawFd;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -816,7 +816,7 @@ impl Drop for BackingStore {
 }
 
 pub struct OsIpcSharedMemory {
-    ptr: *mut u8,
+    ptr: Option<NonNull<u8>>,
     length: usize,
     store: BackingStore,
 }
@@ -826,9 +826,9 @@ unsafe impl Sync for OsIpcSharedMemory {}
 
 impl Drop for OsIpcSharedMemory {
     fn drop(&mut self) {
-        unsafe {
-            if !self.ptr.is_null() {
-                let result = libc::munmap(self.ptr as *mut c_void, self.length);
+        if let Some(ptr) = self.ptr {
+            unsafe {
+                let result = libc::munmap(ptr.as_ptr() as *mut c_void, self.length);
                 assert!(thread::panicking() || result == 0);
             }
         }
@@ -862,7 +862,11 @@ impl Deref for OsIpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        unsafe { slice::from_raw_parts(self.ptr, self.length) }
+        if let Some(ptr) = self.ptr {
+            unsafe { slice::from_raw_parts(ptr.as_ptr(), self.length) }
+        } else {
+            &[]
+        }
     }
 }
 
@@ -872,7 +876,11 @@ impl OsIpcSharedMemory {
         length: usize,
         store: BackingStore,
     ) -> OsIpcSharedMemory {
-        OsIpcSharedMemory { ptr, length, store }
+        OsIpcSharedMemory {
+            ptr: NonNull::new(ptr),
+            length,
+            store,
+        }
     }
 
     unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemory {
@@ -885,8 +893,10 @@ impl OsIpcSharedMemory {
         unsafe {
             let store = BackingStore::new(length);
             let (address, _) = store.map_file(Some(length));
-            for element in slice::from_raw_parts_mut(address, length) {
-                *element = byte;
+            if length != 0 {
+                for element in slice::from_raw_parts_mut(address, length) {
+                    *element = byte;
+                }
             }
             OsIpcSharedMemory::from_raw_parts(address, length, store)
         }
@@ -896,7 +906,9 @@ impl OsIpcSharedMemory {
         unsafe {
             let store = BackingStore::new(bytes.len());
             let (address, _) = store.map_file(Some(bytes.len()));
-            ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            if !bytes.is_empty() {
+                ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            }
             OsIpcSharedMemory::from_raw_parts(address, bytes.len(), store)
         }
     }
