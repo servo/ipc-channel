@@ -553,7 +553,8 @@ impl IpcReceiverSet {
     derive(PartialEq)
 )]
 pub struct IpcSharedMemory {
-    os_shared_memory: OsIpcSharedMemory,
+    /// None represents no data (empty slice)
+    os_shared_memory: Option<OsIpcSharedMemory>,
 }
 
 impl Deref for IpcSharedMemory {
@@ -561,7 +562,11 @@ impl Deref for IpcSharedMemory {
 
     #[inline]
     fn deref(&self) -> &[u8] {
-        &self.os_shared_memory
+        if let Some(os_shared_memory) = &self.os_shared_memory {
+            os_shared_memory
+        } else {
+            &[]
+        }
     }
 }
 
@@ -571,16 +576,22 @@ impl<'de> Deserialize<'de> for IpcSharedMemory {
         D: Deserializer<'de>,
     {
         let index: usize = Deserialize::deserialize(deserializer)?;
-        let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
-            |os_ipc_shared_memory_regions_for_deserialization| {
-                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
-                // of bounds. We should return an `Err` result instead.
-                os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index]
-                    .take()
-                    .unwrap()
-            },
-        );
-        Ok(IpcSharedMemory { os_shared_memory })
+        if index == usize::MAX {
+            Ok(IpcSharedMemory::empty())
+        } else {
+            let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
+                |os_ipc_shared_memory_regions_for_deserialization| {
+                    // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
+                    // of bounds. We should return an `Err` result instead.
+                    os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index]
+                        .take()
+                        .unwrap()
+                },
+            );
+            Ok(IpcSharedMemory {
+                os_shared_memory: Some(os_shared_memory),
+            })
+        }
     }
 }
 
@@ -589,32 +600,52 @@ impl Serialize for IpcSharedMemory {
     where
         S: Serializer,
     {
-        let index = OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
-            |os_ipc_shared_memory_regions_for_serialization| {
-                let mut os_ipc_shared_memory_regions_for_serialization =
-                    os_ipc_shared_memory_regions_for_serialization.borrow_mut();
-                let index = os_ipc_shared_memory_regions_for_serialization.len();
-                os_ipc_shared_memory_regions_for_serialization.push(self.os_shared_memory.clone());
-                index
-            },
-        );
-        index.serialize(serializer)
+        if let Some(os_shared_memory) = &self.os_shared_memory {
+            let index = OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
+                |os_ipc_shared_memory_regions_for_serialization| {
+                    let mut os_ipc_shared_memory_regions_for_serialization =
+                        os_ipc_shared_memory_regions_for_serialization.borrow_mut();
+                    let index = os_ipc_shared_memory_regions_for_serialization.len();
+                    os_ipc_shared_memory_regions_for_serialization.push(os_shared_memory.clone());
+                    index
+                },
+            );
+            debug_assert!(index < usize::MAX);
+            index
+        } else {
+            usize::MAX
+        }
+        .serialize(serializer)
     }
 }
 
 impl IpcSharedMemory {
+    const fn empty() -> Self {
+        Self {
+            os_shared_memory: None,
+        }
+    }
+
     /// Create shared memory initialized with the bytes provided.
     pub fn from_bytes(bytes: &[u8]) -> IpcSharedMemory {
-        IpcSharedMemory {
-            os_shared_memory: OsIpcSharedMemory::from_bytes(bytes),
+        if bytes.is_empty() {
+            IpcSharedMemory::empty()
+        } else {
+            IpcSharedMemory {
+                os_shared_memory: Some(OsIpcSharedMemory::from_bytes(bytes)),
+            }
         }
     }
 
     /// Create a chunk of shared memory that is filled with the byte
     /// provided.
     pub fn from_byte(byte: u8, length: usize) -> IpcSharedMemory {
-        IpcSharedMemory {
-            os_shared_memory: OsIpcSharedMemory::from_byte(byte, length),
+        if length == 0 {
+            IpcSharedMemory::empty()
+        } else {
+            IpcSharedMemory {
+                os_shared_memory: Some(OsIpcSharedMemory::from_byte(byte, length)),
+            }
         }
     }
 }
