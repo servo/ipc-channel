@@ -167,7 +167,7 @@ impl<'data> Message<'data> {
                        This likely happened because a receiver was transferred while it had outstanding data \
                        that contained a channel or shared memory in its pipe. \
                        This isn't supported in the Windows implementation.",
-                       oob.target_process_id, *CURRENT_PROCESS_ID);
+                       oob.target_process_id, current_pid);
             }
             Some(oob)
         } else {
