@@ -277,6 +277,53 @@ fn cross_process_embedded_senders_fork() {
     assert_eq!(received_person, person);
 }
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "windows", target_os = "android", target_os = "ios")))]
+#[test]
+fn stress_in_process() {
+    enum Message {
+        CloneApi(IpcSender<i32>),
+    }
+
+    impl Serialize for Message {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
+            match *self {
+                Message::CloneApi(ref s) => s.serialize(serializer),
+            }
+        }
+    }
+
+    impl<'de> Deserialize<'de> for Message {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: Deserializer<'de> {
+            Deserialize::deserialize(deserializer).map(Message::CloneApi)
+        }
+    }
+
+
+    let (api, rx) = ipc::channel::<Message>().unwrap();
+
+    {
+        ::std::mem::forget(api.clone());
+    }
+
+    thread::spawn(move || {
+        loop {
+            match rx.recv().unwrap() {
+                Message::CloneApi(sender) => {
+                    sender.send(0).unwrap();
+                }
+            }
+        }
+    });
+
+    for _ in 0..100000 {
+        let (one_shot_tx, one_shot_rx) = ipc::channel().expect("create");
+        api.send(Message::CloneApi(one_shot_tx)).expect("send");
+        let received = one_shot_rx.recv().expect("recv");
+        assert_eq!(received, 0);
+    }
+}
+
+
 #[test]
 fn router_simple_global() {
     // Note: All ROUTER operation need to run in a single test,
