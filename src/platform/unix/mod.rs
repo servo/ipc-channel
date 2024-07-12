@@ -1162,7 +1162,8 @@ impl UnixCmsg {
                 }
             },
             BlockingMode::Timeout(duration) => {
-                let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
+                // Calls it unix... only supports linux
+                let events = libc::POLLIN | libc::POLLPRI | 0x2000;
                 let mut fd = [libc::pollfd {
                     fd,
                     events,
@@ -1170,7 +1171,7 @@ impl UnixCmsg {
                 }];
                 let result = libc::poll(
                     fd.as_mut_ptr(),
-                    fd.len() as libc::c_ulong,
+                    fd.len() as libc::c_uint,
                     duration.as_millis().try_into().unwrap_or(-1),
                 );
 
