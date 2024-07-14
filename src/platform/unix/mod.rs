@@ -1246,9 +1246,22 @@ fn S_ISSOCK(mode: mode_t) -> bool {
     (mode & S_IFMT) == S_IFSOCK
 }
 
+#[cfg(target_env = "gnu")]
 #[repr(C)]
 struct cmsghdr {
     cmsg_len: MsgControlLen,
+    cmsg_level: c_int,
+    cmsg_type: c_int,
+}
+
+#[cfg(not(target_env = "gnu"))]
+#[repr(C)]
+struct cmsghdr {
+    #[cfg(target_endian = "big")]
+    __pad1: c_int,
+    cmsg_len: MsgControlLen,
+    #[cfg(target_endian = "little")]
+    __pad1: c_int,
     cmsg_level: c_int,
     cmsg_type: c_int,
 }
