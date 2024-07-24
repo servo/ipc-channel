@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.18.0"
+version = "0.18.1"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
@@ -27,7 +27,7 @@ serde = { version = "1.0", features = ["rc"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
-mio = { version = "0.8", features = ["os-ext"] }
+mio = { version = "1.0", features = ["os-ext"] }
 sc = { version = "0.2.2", optional = true }
 tempfile = "3.4"
 
