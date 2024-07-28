@@ -1162,7 +1162,18 @@ impl UnixCmsg {
                 }
             },
             BlockingMode::Timeout(duration) => {
-                let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
+                #[cfg(target_os = "linux")]
+                const POLLRDHUP: lib::c_short = libc::POLLRDHUP;
+
+                // It's rather unfortunate that Rust's libc doesn't know that
+                // FreeBSD has POLLRDHUP, but in the mean time we can add
+                // the value ourselves.
+                // https://cgit.freebsd.org/src/tree/sys/sys/poll.h#n72
+                #[cfg(target_os = "freebsd")]
+                const POLLRDHUP: libc::c_short = 0x4000;
+
+                let events = libc::POLLIN | libc::POLLPRI | POLLRDHUP;
+
                 let mut fd = [libc::pollfd {
                     fd,
                     events,
@@ -1170,7 +1181,7 @@ impl UnixCmsg {
                 }];
                 let result = libc::poll(
                     fd.as_mut_ptr(),
-                    fd.len() as libc::c_ulong,
+                    fd.len() as _,
                     duration.as_millis().try_into().unwrap_or(-1),
                 );
 
