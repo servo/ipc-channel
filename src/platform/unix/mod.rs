@@ -1163,7 +1163,7 @@ impl UnixCmsg {
             },
             BlockingMode::Timeout(duration) => {
                 #[cfg(target_os = "linux")]
-                const POLLRDHUP: lib::c_short = libc::POLLRDHUP;
+                const POLLRDHUP: libc::c_short = libc::POLLRDHUP;
 
                 // It's rather unfortunate that Rust's libc doesn't know that
                 // FreeBSD has POLLRDHUP, but in the mean time we can add
