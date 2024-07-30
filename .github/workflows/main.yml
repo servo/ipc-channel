@@ -54,7 +54,7 @@ jobs:
         run: cargo build --features "${{ matrix.features }}"
 
       - name: Cargo test
-        run: cargo test --features "${{ matrix.features }}"
+        run: cargo test --features blahbalh "${{ matrix.features }}"
         env:
           RUST_BACKTRACE: 1
 
