@@ -389,7 +389,7 @@ impl OsIpcSender {
                     // using a reduced send buffer size.
                     //
                     // Any other errors we might get here are non-recoverable.
-                    if !(error == UnixError::Errno(libc::ENOBUFS)
+                    if !(matches!(error, UnixError::Errno(libc::ENOBUFS))
                         && downsize(&mut sendbuf_size, data.len()).is_ok())
                     {
                         return Err(error);
@@ -431,7 +431,7 @@ impl OsIpcSender {
             };
 
             if let Err(error) = result {
-                if error == UnixError::Errno(libc::ENOBUFS)
+                if matches!(error, UnixError::Errno(libc::ENOBUFS))
                     && downsize(&mut sendbuf_size, end_byte_position - byte_position).is_ok()
                 {
                     // If the kernel failed to allocate a buffer large enough for the packet,
@@ -673,7 +673,7 @@ impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String), UnixError> {
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET | SOCK_FLAGS, 0);
-            let temp_dir = Builder::new().tempdir().unwrap();
+            let temp_dir = Builder::new().tempdir()?;
             let socket_path = temp_dir.path().join("socket");
             let path_string = socket_path.to_str().unwrap();
 
@@ -902,10 +902,11 @@ impl OsIpcSharedMemory {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Debug)]
 pub enum UnixError {
     Errno(c_int),
     ChannelClosed,
+    IoError(io::Error),
 }
 
 impl UnixError {
@@ -915,15 +916,18 @@ impl UnixError {
 
     #[allow(dead_code)]
     pub fn channel_is_closed(&self) -> bool {
-        *self == UnixError::ChannelClosed
+        matches!(self, UnixError::ChannelClosed)
     }
 }
 
 impl fmt::Display for UnixError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            UnixError::Errno(errno) => fmt::Display::fmt(&io::Error::from_raw_os_error(errno), fmt),
+        match self {
+            UnixError::Errno(errno) => {
+                fmt::Display::fmt(&io::Error::from_raw_os_error(*errno), fmt)
+            },
             UnixError::ChannelClosed => write!(fmt, "All senders for this socket closed"),
+            UnixError::IoError(e) => write!(fmt, "{e}"),
         }
     }
 }
@@ -941,6 +945,7 @@ impl From<UnixError> for io::Error {
         match unix_error {
             UnixError::Errno(errno) => io::Error::from_raw_os_error(errno),
             UnixError::ChannelClosed => io::Error::new(io::ErrorKind::ConnectionReset, unix_error),
+            UnixError::IoError(e) => e,
         }
     }
 }
