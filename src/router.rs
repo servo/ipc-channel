@@ -178,7 +178,7 @@ impl Router {
                 match result {
                     // Message came from the RouterProxy. Listen on our `msg_receiver`
                     // channel.
-                    IpcSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id =>
+                    IpcSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {
                         match self.msg_receiver.recv().unwrap() {
                             RouterMsg::AddRoute(receiver, handler) => {
                                 let new_receiver_id =
@@ -191,10 +191,12 @@ impl Router {
                                     .expect("Failed to send comfirmation of shutdown.");
                                 break;
                             },
-                        },
+                        }
+                    },
                     // Event from one of our registered receivers, call callback.
-                    IpcSelectionResult::MessageReceived(id, message) =>
-                        self.handlers.get_mut(&id).unwrap()(message),
+                    IpcSelectionResult::MessageReceived(id, message) => {
+                        self.handlers.get_mut(&id).unwrap()(message)
+                    },
                     IpcSelectionResult::ChannelClosed(id) => {
                         let _ = self.handlers.remove(&id).unwrap();
                     },
