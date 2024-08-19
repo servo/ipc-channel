@@ -47,7 +47,7 @@ jobs:
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
 
-      - name: Cargo test
+      - name: Cargo test benches
         run: cargo test --benches --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
 
   build_result:
