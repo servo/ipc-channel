@@ -1,9 +1,2 @@
 match_block_trailing_comma = true
-match_arm_blocks = false
-binop_separator = "Back"
 reorder_imports = true
-# TODO(dlrobertson): gradually start formatting files
-ignore = [
-  "src/platform",
-  "src/ipc.rs"
-]

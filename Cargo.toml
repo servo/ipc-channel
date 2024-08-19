@@ -7,6 +7,18 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
 edition = "2021"
 
+[[bench]]
+name = "platform"
+harness = false
+
+[[bench]]
+name = "ipc"
+harness = false
+
+[[bench]]
+name = "ipc_receiver_set"
+harness = false
+
 [features]
 force-inprocess = []
 memfd = ["sc"]
@@ -34,6 +46,7 @@ tempfile = "3.4"
 [dev-dependencies]
 crossbeam-utils = "0.8"
 static_assertions = "1.1.0"
+criterion = { version = "0.5", features = ["html_reports"] }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.58.0"

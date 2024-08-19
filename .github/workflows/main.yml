@@ -7,19 +7,34 @@ on:
   workflow_dispatch:
   merge_group:
     types: [checks_requested]
-    
+
 jobs:
-  linux-ci:
-    name: Linux
-    runs-on: ubuntu-latest
+  test:
+    name: ${{ format('{0} {1}', matrix.platform.target, matrix.features)}}
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      RUST_BACKTRACE: 1
     strategy:
       matrix:
-        features: ["", "force-inprocess", "memfd", "async"]
+        platform:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: i686-pc-windows-msvc, os: windows-latest }
+        features: ["", "force-inprocess", "async"]
+        include:
+          - features: "windows-shared-memory-equality"
+            platform: { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - features: "windows-shared-memory-equality"
+            platform: { target: i686-pc-windows-msvc, os: windows-latest }
+          - features: "memfd"
+            platform: { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
@@ -27,69 +42,20 @@ jobs:
         run: cargo fmt --check
 
       - name: clippy
-        run: cargo clippy --features "${{ matrix.features }}"
-
-      - name: Cargo build
-        run: cargo build --features "${{ matrix.features }}"
+        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
 
       - name: Cargo test
-        run: cargo test --features "${{ matrix.features }}"
-        env:
-          RUST_BACKTRACE: 1
+        run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
 
-  mac-ci:
-    name: macOS
-    runs-on: macos-latest
-    strategy:
-      matrix:
-        features: ["", "force-inprocess", "async"]
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-
-      - name: Cargo build
-        run: cargo build --features "${{ matrix.features }}"
-
-      - name: Cargo test
-        run: cargo test --features "${{ matrix.features }}"
-        env:
-          RUST_BACKTRACE: 1
-
-  windows-ci:
-    name: Windows
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        features: ["", "--features force-inprocess", "--features windows-shared-memory-equality", "--features async"]
-        target: ["x86_64-pc-windows-msvc", "i686-pc-windows-msvc"]
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install nightly toolchain
-        uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Cargo build
-        run: cargo build ${{ matrix.features }} --target ${{ matrix.target }}
-
-      - name: Cargo test
-        run: cargo test ${{ matrix.features }} --target ${{ matrix.target }}
-        env:
-          RUST_BACKTRACE: 1
+      - name: Cargo test benches
+        run: cargo test --benches --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
 
   build_result:
     name: Result
     runs-on: ubuntu-latest
     if: always()
     needs:
-      - "linux-ci"
-      - "mac-ci"
-      - "windows-ci"
+      - "test"
 
     steps:
       - name: Success
@@ -98,4 +64,3 @@ jobs:
       - name: Failure
         run: exit 1
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
-
