@@ -13,9 +13,9 @@ use std::sync::{mpsc, Mutex};
 /// as the benchmark framework doesn't know about the inner iterations...
 const ITERATIONS: usize = 1;
 
-fn create_channel(c: &mut Criterion) {
-    c.bench_function("create_channel", |b| {
-        b.iter(|| {
+fn create_channel(criterion: &mut Criterion) {
+    criterion.bench_function("create_channel", |bencher| {
+        bencher.iter(|| {
             for _ in 0..ITERATIONS {
                 platform::channel().unwrap();
             }
@@ -23,8 +23,8 @@ fn create_channel(c: &mut Criterion) {
     });
 }
 
-fn transfer_data<const SIZE: usize>(c: &mut Criterion) {
-    c.bench_function(&format!("transfer_data_{SIZE}"), |b| {
+fn transfer_data<const SIZE: usize>(criterion: &mut Criterion) {
+    criterion.bench_function(&format!("transfer_data_{SIZE}"), |bencher| {
         let data: Vec<u8> = (0..SIZE).map(|i| (i % 251) as u8).collect();
         let (tx, rx) = platform::channel().unwrap();
 
@@ -32,7 +32,7 @@ fn transfer_data<const SIZE: usize>(c: &mut Criterion) {
         let wait_rx = Mutex::new(wait_rx);
 
         if SIZE > platform::OsIpcSender::get_max_fragment_size() {
-            b.iter(|| {
+            bencher.iter(|| {
                 crossbeam_utils::thread::scope(|scope| {
                     let tx = tx.clone();
                     scope.spawn(|_| {
@@ -63,7 +63,7 @@ fn transfer_data<const SIZE: usize>(c: &mut Criterion) {
                 })
             });
         } else {
-            b.iter(|| {
+            bencher.iter(|| {
                 for _ in 0..ITERATIONS {
                     tx.send(&data, vec![], vec![]).unwrap();
                     rx.recv().unwrap();

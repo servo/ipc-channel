@@ -15,8 +15,8 @@ use ipc_channel::ipc::{self, IpcReceiverSet};
 
 /// Benchmark selecting over a set of `n` receivers,
 /// with `to_send` of them actually having pending data.
-fn bench_send_on_m_of_n<const TO_SEND: usize, const N: usize>(c: &mut Criterion) {
-    c.bench_function(&format!("bench_send_on_{TO_SEND}_of_{N}"), |b| {
+fn bench_send_on_m_of_n<const TO_SEND: usize, const N: usize>(criterion: &mut Criterion) {
+    criterion.bench_function(&format!("bench_send_on_{TO_SEND}_of_{N}"), |bencher| {
         let mut senders = Vec::with_capacity(N);
         let mut rx_set = IpcReceiverSet::new().unwrap();
         for _ in 0..N {
@@ -24,7 +24,7 @@ fn bench_send_on_m_of_n<const TO_SEND: usize, const N: usize>(c: &mut Criterion)
             rx_set.add(rx).unwrap();
             senders.push(tx);
         }
-        b.iter(|| {
+        bencher.iter(|| {
             for _ in 0..ITERATIONS {
                 for tx in senders.iter().take(TO_SEND) {
                     tx.send(()).unwrap();
@@ -47,9 +47,9 @@ fn create_set_of_n<const N: usize>() -> IpcReceiverSet {
     rx_set
 }
 
-fn create_and_destroy_set_of_n<const N: usize>(c: &mut Criterion) {
-    c.bench_function(&format!("create_and_destroy_set_of_{N}"), |b| {
-        b.iter(|| {
+fn create_and_destroy_set_of_n<const N: usize>(criterion: &mut Criterion) {
+    criterion.bench_function(&format!("create_and_destroy_set_of_{N}"), |bencher| {
+        bencher.iter(|| {
             for _ in 0..ITERATIONS {
                 create_set_of_n::<N>();
             }
@@ -60,9 +60,9 @@ fn create_and_destroy_set_of_n<const N: usize>(c: &mut Criterion) {
 // Benchmark performance of removing closed receivers from set.
 // This also includes the time for adding receivers,
 // as there is no way to measure the removing in isolation.
-fn add_and_remove_n_closed_receivers<const N: usize>(c: &mut Criterion) {
-    c.bench_function(&format!("add_and_remove_{N}_closed_receivers"), |b| {
-        b.iter(|| {
+fn add_and_remove_n_closed_receivers<const N: usize>(criterion: &mut Criterion) {
+    criterion.bench_function(&format!("add_and_remove_{N}_closed_receivers"), |bencher| {
+        bencher.iter(|| {
             for _ in 0..ITERATIONS {
                 // We could keep adding/removing senders to the same set,
                 // instead of creating a new one in each iteration.
