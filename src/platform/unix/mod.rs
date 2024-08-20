@@ -32,7 +32,7 @@ use std::hash::BuildHasherDefault;
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{Deref, RangeFrom};
+use std::ops::{Deref, DerefMut, RangeFrom};
 use std::os::fd::RawFd;
 use std::ptr;
 use std::slice;
@@ -864,6 +864,13 @@ impl Deref for OsIpcSharedMemory {
     #[inline]
     fn deref(&self) -> &[u8] {
         unsafe { slice::from_raw_parts(self.ptr, self.length) }
+    }
+}
+
+impl OsIpcSharedMemory {
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
     }
 }
 

@@ -898,6 +898,16 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        if self.ptr.is_null() && self.length > 0 {
+            panic!("attempted to access a consumed `OsIpcSharedMemory`")
+        }
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
+}
+
+impl OsIpcSharedMemory {
     unsafe fn from_raw_parts(ptr: *mut u8, length: usize) -> OsIpcSharedMemory {
         OsIpcSharedMemory { ptr, length }
     }
