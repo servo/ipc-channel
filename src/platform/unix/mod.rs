@@ -213,8 +213,8 @@ impl OsIpcSender {
     /// Some of it is reserved by the kernel for bookkeeping.
     fn get_system_sendbuf_size(&self) -> Result<usize, UnixError> {
         unsafe {
-            let mut socket_sendbuf_size: usize = 0;
-            let mut socket_sendbuf_size_len = mem::size_of::<usize>() as socklen_t;
+            let mut socket_sendbuf_size: c_int = 0;
+            let mut socket_sendbuf_size_len = mem::size_of::<c_int>() as socklen_t;
             if getsockopt(
                 self.fd.0,
                 libc::SOL_SOCKET,
@@ -225,7 +225,7 @@ impl OsIpcSender {
             {
                 return Err(UnixError::last());
             }
-            Ok(socket_sendbuf_size)
+            Ok(socket_sendbuf_size.try_into().unwrap())
         }
     }
 
