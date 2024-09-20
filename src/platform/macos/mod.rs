@@ -723,11 +723,11 @@ fn select(
             MACH_PORT_NULL,
         ) {
             MACH_RCV_TOO_LARGE => {
+                let max_trailer_size =
+                    mem::size_of::<mach_sys::mach_msg_max_trailer_t>() as mach_sys::mach_msg_size_t;
+                // the actual size gets written into msgh_size by the kernel
+                let mut actual_size = (*message).header.msgh_size + max_trailer_size;
                 loop {
-                    // the actual size gets written into msgh_size by the kernel
-                    let max_trailer_size = mem::size_of::<mach_sys::mach_msg_max_trailer_t>()
-                        as mach_sys::mach_msg_size_t;
-                    let actual_size = (*message).header.msgh_size + max_trailer_size;
                     allocated_buffer = Some(libc::malloc(actual_size as size_t));
                     setup_receive_buffer(
                         slice::from_raw_parts_mut(
@@ -748,6 +748,7 @@ fn select(
                     ) {
                         MACH_MSG_SUCCESS => break,
                         MACH_RCV_TOO_LARGE => {
+                            actual_size = (*message).header.msgh_size + max_trailer_size;
                             libc::free(allocated_buffer.unwrap() as *mut _);
                             continue;
                         },
