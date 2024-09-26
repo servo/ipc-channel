@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.18.2"
+version = "0.18.3"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
