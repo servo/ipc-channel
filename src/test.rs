@@ -12,8 +12,6 @@ use crate::ipc::IpcReceiver;
 use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use crate::router::{RouterProxy, ROUTER};
 use crossbeam_channel::{self, Sender};
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-use libc;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -33,7 +31,7 @@ use std::process::{self, Command, Stdio};
     target_os = "windows",
 )))]
 use std::ptr;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::thread;
 
 #[cfg(not(any(
@@ -122,7 +120,7 @@ pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::C
         .args(
             server_args
                 .iter()
-                .map(|&(ref name, ref val)| format!("channel_name-{}:{}", name, val)),
+                .map(|(name, val)| format!("channel_name-{}:{}", name, val)),
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -585,7 +583,7 @@ fn try_recv_timeout() {
 fn multiple_paths_to_a_sender() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
-    let person_and_sender = Arc::new((person.clone(), sub_tx));
+    let person_and_sender = Rc::new((person.clone(), sub_tx));
     let send_data = vec![
         person_and_sender.clone(),
         person_and_sender.clone(),
@@ -644,7 +642,7 @@ fn test_so_linger() {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct HasWeirdSerializer(Option<String>);
 
-thread_local! { static WEIRD_CHANNEL: RefCell<Option<IpcSender<HasWeirdSerializer>>> = RefCell::new(None) }
+thread_local! { static WEIRD_CHANNEL: RefCell<Option<IpcSender<HasWeirdSerializer>>> = const { RefCell::new(None) } }
 
 impl Serialize for HasWeirdSerializer {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

@@ -31,7 +31,6 @@ use std::ptr;
 use std::slice;
 use std::sync::RwLock;
 use std::time::Duration;
-use std::usize;
 
 mod mach_sys;
 
@@ -40,7 +39,7 @@ mod mach_sys;
 const SMALL_MESSAGE_SIZE: usize = 4096;
 
 /// A string to prepend to our bootstrap ports.
-static BOOTSTRAP_PREFIX: &'static str = "org.rust-lang.ipc-channel.";
+static BOOTSTRAP_PREFIX: &str = "org.rust-lang.ipc-channel.";
 
 const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const BOOTSTRAP_SUCCESS: kern_return_t = 0;
@@ -205,7 +204,7 @@ impl OsIpcReceiver {
                 mach_task_self(),
                 port,
                 MACH_PORT_LIMITS_INFO,
-                mem::transmute(&limits),
+                &limits as *const mach_port_limits_t as *mut i32,
                 1,
             )
         };
@@ -243,7 +242,7 @@ impl OsIpcReceiver {
         debug_assert!(port != MACH_PORT_NULL);
         let (right, acquired_right) =
             mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
-        debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
+        debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND);
         Ok(OsIpcSender::from_name(right))
     }
 
@@ -263,7 +262,7 @@ impl OsIpcReceiver {
 
             let (right, acquired_right) =
                 mach_port_extract_right(port, MACH_MSG_TYPE_MAKE_SEND as u32)?;
-            debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND as u32);
+            debug_assert!(acquired_right == MACH_MSG_TYPE_PORT_SEND);
 
             let mut os_result;
             let mut name;
@@ -396,7 +395,7 @@ impl<'a> SendData<'a> {
 
     fn inline_data(&self) -> &[u8] {
         match *self {
-            SendData::Inline(ref data) => data,
+            SendData::Inline(data) => data,
             SendData::OutOfLine(_) => &[],
         }
     }
@@ -442,7 +441,7 @@ impl Clone for OsIpcSender {
 impl OsIpcSender {
     fn from_name(port: mach_port_t) -> OsIpcSender {
         OsIpcSender {
-            port: port,
+            port,
             nosync_marker: PhantomData,
         }
     }
@@ -534,7 +533,7 @@ impl OsIpcSender {
                 let padding_count = Message::payload_padding(padding_start as usize);
                 // Zero out padding
                 padding_start.write_bytes(0, padding_count);
-                let data_size_dest = padding_start.offset(padding_count as isize) as *mut usize;
+                let data_size_dest = padding_start.add(padding_count) as *mut usize;
                 *data_size_dest = data_size;
 
                 let data_dest = data_size_dest.offset(1) as *mut u8;
@@ -628,7 +627,7 @@ impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet, MachError> {
         let port = mach_port_allocate(MACH_PORT_RIGHT_PORT_SET)?;
         Ok(OsIpcReceiverSet {
-            port: port,
+            port,
             ports: vec![],
         })
     }
@@ -796,7 +795,7 @@ fn select(
         let payload = if has_inline_data {
             let padding_start = has_inline_data_ptr.offset(1) as *mut u8;
             let padding_count = Message::payload_padding(padding_start as usize);
-            let payload_size_ptr = padding_start.offset(padding_count as isize) as *mut usize;
+            let payload_size_ptr = padding_start.add(padding_count) as *mut usize;
             let payload_size = *payload_size_ptr;
             let max_payload_size = message as usize + ((*message).header.msgh_size as usize)
                 - (shared_memory_descriptor as usize);
@@ -831,7 +830,7 @@ pub struct OsIpcOneShotServer {
 
 impl Drop for OsIpcOneShotServer {
     fn drop(&mut self) {
-        let _ = OsIpcReceiver::unregister_global_name(mem::replace(&mut self.name, String::new()));
+        let _ = OsIpcReceiver::unregister_global_name(std::mem::take(&mut self.name));
         deallocate_mach_port(self.registration_port);
     }
 }
@@ -842,7 +841,7 @@ impl OsIpcOneShotServer {
         let (registration_port, name) = receiver.register_bootstrap_name()?;
         Ok((
             OsIpcOneShotServer {
-                receiver: receiver,
+                receiver,
                 name: name.clone(),
                 registration_port,
             },
@@ -943,10 +942,7 @@ impl Deref for OsIpcSharedMemory {
 
 impl OsIpcSharedMemory {
     unsafe fn from_raw_parts(ptr: *mut u8, length: usize) -> OsIpcSharedMemory {
-        OsIpcSharedMemory {
-            ptr: ptr,
-            length: length,
-        }
+        OsIpcSharedMemory { ptr, length }
     }
 
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
@@ -978,7 +974,7 @@ unsafe fn allocate_vm_pages(length: usize) -> *mut u8 {
 }
 
 unsafe fn setup_receive_buffer(buffer: &mut [u8], port_name: mach_port_t) {
-    let message: *mut mach_msg_header_t = mem::transmute(&buffer[0]);
+    let message = buffer.as_mut_ptr() as *mut mach_msg_header_t;
     (*message).msgh_local_port = port_name;
     (*message).msgh_size = buffer.len() as u32
 }

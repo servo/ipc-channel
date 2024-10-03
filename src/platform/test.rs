@@ -161,7 +161,7 @@ fn medium_data() {
             received_channels,
             received_shared_memory_regions
         ),
-        (&data[..], vec![], vec![])
+        (data, vec![], vec![])
     );
 }
 
@@ -206,7 +206,7 @@ fn check_big_data(size: u32) {
             received_channels,
             received_shared_memory_regions
         ),
-        (&data[..], vec![], vec![])
+        (data, vec![], vec![])
     );
     thread.join().unwrap();
 }
@@ -241,7 +241,7 @@ fn big_data_with_sender_transfer() {
     let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(received_data.len(), data.len());
-    assert_eq!(&received_data[..], &data[..]);
+    assert_eq!(&received_data[..], data);
     assert_eq!(received_channels.len(), 1);
     assert_eq!(received_shared_memory_regions.len(), 0);
 
@@ -257,7 +257,7 @@ fn big_data_with_sender_transfer() {
             received_channels,
             received_shared_memory_regions
         ),
-        (&data[..], vec![], vec![])
+        (data, vec![], vec![])
     );
     thread.join().unwrap();
 }
@@ -464,7 +464,7 @@ fn concurrent_senders() {
                 received_channels,
                 received_shared_memory_regions
             ),
-            (&data[..], vec![], vec![])
+            (data, vec![], vec![])
         );
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
@@ -635,8 +635,8 @@ fn receiver_set_medium_data() {
         .map(|offset| (offset % 127) as u8 | 0x80)
         .collect();
 
-    tx0.send(&*data0, vec![], vec![]).unwrap();
-    tx1.send(&*data1, vec![], vec![]).unwrap();
+    tx0.send(&data0, vec![], vec![]).unwrap();
+    tx1.send(&data1, vec![], vec![]).unwrap();
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
@@ -673,11 +673,11 @@ fn receiver_set_big_data() {
     let (reference_data0, reference_data1) = (data0.clone(), data1.clone());
 
     let thread0 = thread::spawn(move || {
-        tx0.send(&*data0, vec![], vec![]).unwrap();
+        tx0.send(&data0, vec![], vec![]).unwrap();
         tx0 // Don't close just yet -- the receiver-side test code below doesn't expect that...
     });
     let thread1 = thread::spawn(move || {
-        tx1.send(&*data1, vec![], vec![]).unwrap();
+        tx1.send(&data1, vec![], vec![]).unwrap();
         tx1
     });
 
