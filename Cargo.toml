@@ -20,6 +20,7 @@ name = "ipc_receiver_set"
 harness = false
 
 [features]
+default = []
 force-inprocess = []
 memfd = ["sc"]
 async = ["futures", "futures-test"]

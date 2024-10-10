@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc;
+use crate::ipc::{self, IpcMessage};
 use bincode;
 use fnv::FnvHasher;
 use lazy_static::lazy_static;
@@ -155,24 +155,17 @@ impl OsIpcReceiver {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
+    pub fn recv(&self) -> Result<IpcMessage, UnixError> {
         recv(self.fd.get(), BlockingMode::Blocking)
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn try_recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
+    pub fn try_recv(&self) -> Result<IpcMessage, UnixError> {
         recv(self.fd.get(), BlockingMode::Nonblocking)
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn try_recv_timeout(
-        &self,
-        duration: Duration,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<IpcMessage, UnixError> {
         recv(self.fd.get(), BlockingMode::Timeout(duration))
     }
 }
@@ -552,12 +545,10 @@ impl OsIpcReceiverSet {
                 .clone();
             loop {
                 match recv(poll_entry.fd, BlockingMode::Nonblocking) {
-                    Ok((data, channels, shared_memory_regions)) => {
+                    Ok(ipc_message) => {
                         selection_results.push(OsIpcSelectionResult::DataReceived(
                             poll_entry.id,
-                            data,
-                            channels,
-                            shared_memory_regions,
+                            ipc_message,
                         ));
                     },
                     Err(err) if err.channel_is_closed() => {
@@ -589,28 +580,14 @@ impl OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ),
+    DataReceived(u64, IpcMessage),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(
-        self,
-    ) -> (
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ) {
+    pub fn unwrap(self) -> (u64, IpcMessage) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
-            },
+            OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
                 panic!(
                     "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
@@ -703,17 +680,7 @@ impl OsIpcOneShotServer {
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn accept(
-        self,
-    ) -> Result<
-        (
-            OsIpcReceiver,
-            Vec<u8>,
-            Vec<OsOpaqueIpcChannel>,
-            Vec<OsIpcSharedMemory>,
-        ),
-        UnixError,
-    > {
+    pub fn accept(self) -> Result<(OsIpcReceiver, IpcMessage), UnixError> {
         unsafe {
             let sockaddr: *mut sockaddr = ptr::null_mut();
             let sockaddr_len: *mut socklen_t = ptr::null_mut();
@@ -724,8 +691,8 @@ impl OsIpcOneShotServer {
             make_socket_lingering(client_fd)?;
 
             let receiver = OsIpcReceiver::from_fd(client_fd);
-            let (data, channels, shared_memory_regions) = receiver.recv()?;
-            Ok((receiver, data, channels, shared_memory_regions))
+            let ipc_message = receiver.recv()?;
+            Ok((receiver, ipc_message))
         }
     }
 }
@@ -990,10 +957,7 @@ enum BlockingMode {
 }
 
 #[allow(clippy::uninit_vec, clippy::type_complexity)]
-fn recv(
-    fd: c_int,
-    blocking_mode: BlockingMode,
-) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), UnixError> {
+fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError> {
     let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
 
     // First fragments begins with a header recording the total data length.
@@ -1041,7 +1005,11 @@ fn recv(
 
     if total_size == main_data_buffer.len() {
         // Fast path: no fragments.
-        return Ok((main_data_buffer, channels, shared_memory_regions));
+        return Ok(IpcMessage::new(
+            main_data_buffer,
+            channels,
+            shared_memory_regions,
+        ));
     }
 
     // Reassemble fragments.
@@ -1088,7 +1056,11 @@ fn recv(
         }
     }
 
-    Ok((main_data_buffer, channels, shared_memory_regions))
+    Ok(IpcMessage::new(
+        main_data_buffer,
+        channels,
+        shared_memory_regions,
+    ))
 }
 
 // https://github.com/servo/ipc-channel/issues/192

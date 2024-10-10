@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc;
+use crate::ipc::{self, IpcMessage};
 use bincode;
 use crossbeam_channel::{self, Receiver, RecvTimeoutError, Select, Sender, TryRecvError};
 use lazy_static::lazy_static;
@@ -54,7 +54,7 @@ lazy_static! {
     static ref ONE_SHOT_SERVERS: Mutex<HashMap<String, ServerRecord>> = Mutex::new(HashMap::new());
 }
 
-struct ChannelMessage(Vec<u8>, Vec<OsIpcChannel>, Vec<OsIpcSharedMemory>);
+struct ChannelMessage(IpcMessage);
 
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), ChannelError> {
     let (base_sender, base_receiver) = crossbeam_channel::unbounded::<ChannelMessage>();
@@ -89,28 +89,20 @@ impl OsIpcReceiver {
         }
     }
 
-    pub fn recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+    pub fn recv(&self) -> Result<IpcMessage, ChannelError> {
         let r = self.receiver.borrow();
         let r = r.as_ref().unwrap();
         match r.recv() {
-            Ok(ChannelMessage(d, c, s)) => {
-                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
-            },
+            Ok(ChannelMessage(ipc_message)) => Ok(ipc_message),
             Err(_) => Err(ChannelError::ChannelClosedError),
         }
     }
 
-    pub fn try_recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+    pub fn try_recv(&self) -> Result<IpcMessage, ChannelError> {
         let r = self.receiver.borrow();
         let r = r.as_ref().unwrap();
         match r.try_recv() {
-            Ok(ChannelMessage(d, c, s)) => {
-                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
-            },
+            Ok(ChannelMessage(ipc_message)) => Ok(ipc_message),
             Err(e) => match e {
                 TryRecvError::Empty => Err(ChannelError::ChannelEmpty),
                 TryRecvError::Disconnected => Err(ChannelError::ChannelClosedError),
@@ -118,16 +110,11 @@ impl OsIpcReceiver {
         }
     }
 
-    pub fn try_recv_timeout(
-        &self,
-        duration: Duration,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), ChannelError> {
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<IpcMessage, ChannelError> {
         let r = self.receiver.borrow();
         let r = r.as_ref().unwrap();
         match r.recv_timeout(duration) {
-            Ok(ChannelMessage(d, c, s)) => {
-                Ok((d, c.into_iter().map(OsOpaqueIpcChannel::new).collect(), s))
-            },
+            Ok(ChannelMessage(ipc_message)) => Ok(ipc_message),
             Err(e) => match e {
                 RecvTimeoutError::Timeout => Err(ChannelError::ChannelEmpty),
                 RecvTimeoutError::Disconnected => Err(ChannelError::ChannelClosedError),
@@ -170,10 +157,12 @@ impl OsIpcSender {
         ports: Vec<OsIpcChannel>,
         shared_memory_regions: Vec<OsIpcSharedMemory>,
     ) -> Result<(), ChannelError> {
+        let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
+        let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
         Ok(self
             .sender
             .borrow()
-            .send(ChannelMessage(data.to_vec(), ports, shared_memory_regions))
+            .send(ChannelMessage(ipc_message))
             .map_err(|_| ChannelError::BrokenPipeError)?)
     }
 }
@@ -220,16 +209,15 @@ impl OsIpcReceiverSet {
                 select.recv(&r);
             }
             let res = select.select();
-            let r_index = res.index();
-            let r_id = self.receiver_ids[r_index];
-            if let Ok(ChannelMessage(data, channels, shmems)) = res.recv(&borrows[r_index as usize])
-            {
-                let channels = channels.into_iter().map(OsOpaqueIpcChannel::new).collect();
+            let receiver_index = res.index();
+            let receiver_id = self.receiver_ids[receiver_index];
+            if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index as usize]) {
                 return Ok(vec![OsIpcSelectionResult::DataReceived(
-                    r_id, data, channels, shmems,
+                    receiver_id,
+                    ipc_message,
                 )]);
             } else {
-                Remove(r_index, r_id)
+                Remove(receiver_index, receiver_id)
             }
         };
         self.receivers.remove(r_index);
@@ -239,28 +227,14 @@ impl OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ),
+    DataReceived(u64, IpcMessage),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(
-        self,
-    ) -> (
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ) {
+    pub fn unwrap(self) -> (u64, IpcMessage) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
-            },
+            OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
                 panic!(
                     "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
@@ -295,17 +269,7 @@ impl OsIpcOneShotServer {
         ))
     }
 
-    pub fn accept(
-        self,
-    ) -> Result<
-        (
-            OsIpcReceiver,
-            Vec<u8>,
-            Vec<OsOpaqueIpcChannel>,
-            Vec<OsIpcSharedMemory>,
-        ),
-        ChannelError,
-    > {
+    pub fn accept(self) -> Result<(OsIpcReceiver, IpcMessage), ChannelError> {
         let record = ONE_SHOT_SERVERS
             .lock()
             .unwrap()
@@ -314,8 +278,8 @@ impl OsIpcOneShotServer {
             .clone();
         record.accept();
         ONE_SHOT_SERVERS.lock().unwrap().remove(&self.name).unwrap();
-        let (data, channels, shmems) = self.receiver.recv()?;
-        Ok((self.receiver, data, channels, shmems))
+        let ipc_message = self.receiver.recv()?;
+        Ok((self.receiver, ipc_message))
     }
 }
 

@@ -18,9 +18,7 @@ use std::sync::Mutex;
 use std::thread;
 
 use crate::ipc::OpaqueIpcReceiver;
-use crate::ipc::{
-    self, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcMessage,
-};
+use crate::ipc::{self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
@@ -215,4 +213,4 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<dyn FnMut(OpaqueIpcMessage) + Send>;
+pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
