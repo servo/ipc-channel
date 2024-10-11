@@ -99,8 +99,8 @@ impl Wait for libc::pid_t {
 pub fn get_channel_name_arg(which: &str) -> Option<String> {
     for arg in env::args() {
         let arg_str = &*format!("channel_name-{}:", which);
-        if arg.starts_with(arg_str) {
-            return Some(arg[arg_str.len()..].to_owned());
+        if let Some(arg) = arg.strip_prefix(arg_str) {
+            return Some(arg.to_owned());
         }
     }
     None
