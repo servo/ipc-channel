@@ -156,7 +156,7 @@ impl<'data> Message<'data> {
         }
 
         unsafe {
-            let ref header = *(bytes.as_ptr() as *const MessageHeader);
+            let header = &(*(bytes.as_ptr() as *const MessageHeader));
             if bytes.len() < header.total_message_bytes_needed() {
                 return None;
             }
@@ -250,12 +250,12 @@ impl serde::Serialize for OutOfBandMessage {
     where
         S: serde::Serializer,
     {
-        ((
+        (
             self.target_process_id,
             &self.channel_handles,
             &self.shmem_handles,
             &self.big_data_receiver_handle,
-        ))
+        )
             .serialize(serializer)
     }
 }
@@ -268,10 +268,10 @@ impl<'de> serde::Deserialize<'de> for OutOfBandMessage {
         let (target_process_id, channel_handles, shmem_handles, big_data_receiver_handle) =
             serde::Deserialize::deserialize(deserializer)?;
         Ok(OutOfBandMessage {
-            target_process_id: target_process_id,
-            channel_handles: channel_handles,
-            shmem_handles: shmem_handles,
-            big_data_receiver_handle: big_data_receiver_handle,
+            target_process_id,
+            channel_handles,
+            shmem_handles,
+            big_data_receiver_handle,
         })
     }
 }
@@ -281,7 +281,7 @@ fn make_pipe_id() -> Uuid {
 }
 
 fn make_pipe_name(pipe_id: &Uuid) -> CString {
-    CString::new(format!("\\\\.\\pipe\\rust-ipc-{}", pipe_id.to_string())).unwrap()
+    CString::new(format!("\\\\.\\pipe\\rust-ipc-{}", pipe_id)).unwrap()
 }
 
 /// Duplicate a given handle from this process to the target one, passing the
@@ -369,8 +369,8 @@ impl Default for WinHandle {
     }
 }
 
-const WINDOWS_APP_MODULE_NAME: &'static str = "api-ms-win-core-handle-l1-1-0";
-const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &'static str = "CompareObjectHandles";
+const WINDOWS_APP_MODULE_NAME: &str = "api-ms-win-core-handle-l1-1-0";
+const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &str = "CompareObjectHandles";
 
 lazy_static! {
     static ref WINDOWS_APP_MODULE_NAME_CSTRING: CString =
@@ -408,7 +408,7 @@ impl PartialEq for WinHandle {
 
 impl WinHandle {
     fn new(h: HANDLE) -> WinHandle {
-        WinHandle { h: h }
+        WinHandle { h }
     }
 
     fn invalid() -> WinHandle {
@@ -694,7 +694,7 @@ impl MessageReader {
                     overlapped.hEvent = CreateEventA(None, true, false, None)?;
                     Overlapped::new(overlapped)
                 })),
-                buf: mem::replace(&mut self.read_buf, vec![]),
+                buf: std::mem::take(&mut self.read_buf),
             }));
             let result = {
                 let async_data = self.r#async.as_mut().unwrap().alias_mut();
@@ -853,7 +853,7 @@ impl MessageReader {
             };
             let result = GetOverlappedResultEx(
                 self.r#async.as_ref().unwrap().alias().handle.as_raw(),
-                &mut ***self.r#async.as_mut().unwrap().alias_mut().ov.deref_mut(),
+                &***self.r#async.as_mut().unwrap().alias_mut().ov.deref(),
                 &mut nbytes,
                 timeout,
                 false,
@@ -993,7 +993,7 @@ impl MessageReader {
     ///
     /// It's only valid to call this as the one and only call after creating a MessageReader.
     fn read_raw_sized(mut self, size: usize) -> Result<Vec<u8>, WinIpcError> {
-        assert!(self.read_buf.len() == 0);
+        assert!(self.read_buf.is_empty());
 
         self.read_buf.reserve(size);
         while self.read_buf.len() < size {
@@ -1019,7 +1019,7 @@ impl MessageReader {
             };
         }
 
-        Ok(mem::replace(&mut self.read_buf, vec![]))
+        Ok(std::mem::take(&mut self.read_buf))
     }
 
     /// Get raw handle of the receive port.
@@ -1297,7 +1297,7 @@ impl OsIpcSender {
 
     fn from_handle(handle: WinHandle) -> OsIpcSender {
         OsIpcSender {
-            handle: handle,
+            handle,
             nosync_marker: PhantomData,
         }
     }
@@ -1384,7 +1384,7 @@ impl OsIpcSender {
         // We limit the max size we can send here; we can fix this
         // just by upping the header to be 2x u64 if we really want
         // to.
-        assert!(data.len() <= u32::max_value() as usize);
+        assert!(data.len() <= u32::MAX as usize);
 
         let (server_h, server_pid) = if !shared_memory_regions.is_empty() || !ports.is_empty() {
             self.get_pipe_server_process_handle_and_pid()?
@@ -1409,7 +1409,7 @@ impl OsIpcSender {
                         .push(raw_remote_handle.take_raw().0 as _);
                 },
                 OsIpcChannel::Receiver(r) => {
-                    if r.prepare_for_transfer()? == false {
+                    if !(r.prepare_for_transfer()?) {
                         panic!("Sending receiver with outstanding partial read buffer, noooooo!  What should even happen?");
                     }
 
@@ -1472,19 +1472,19 @@ impl OsIpcSender {
         }
 
         if big_data_sender.is_none() {
-            full_message.extend_from_slice(&*data);
-            full_message.extend_from_slice(&*oob_data);
+            full_message.extend_from_slice(data);
+            full_message.extend_from_slice(&oob_data);
             assert!(full_message.len() == full_in_band_len);
 
             // Write needs to be atomic, since otherwise concurrent sending
             // could result in parts of different messages getting intermixed,
             // and the receiver would not be able to extract the individual messages.
-            write_buf(&self.handle, &*full_message, AtomicMode::Atomic)?;
+            write_buf(&self.handle, &full_message, AtomicMode::Atomic)?;
         } else {
-            full_message.extend_from_slice(&*oob_data);
+            full_message.extend_from_slice(&oob_data);
             assert!(full_message.len() == full_in_band_len);
 
-            write_buf(&self.handle, &*full_message, AtomicMode::Atomic)?;
+            write_buf(&self.handle, &full_message, AtomicMode::Atomic)?;
             big_data_sender.unwrap().send_raw(data)?;
         }
 
@@ -1649,7 +1649,7 @@ impl OsIpcReceiverSet {
                 .readers
                 .iter()
                 .enumerate()
-                .find(|&(_, ref reader)| {
+                .find(|(_, reader)| {
                     let raw_handle = reader.r#async.as_ref().unwrap().alias().handle.as_raw();
                     raw_handle.0 as usize == completion_key
                 })
@@ -1704,7 +1704,7 @@ impl OsIpcReceiverSet {
             let mut closed = match result {
                 Ok(()) => false,
                 Err(WinIpcError::ChannelClosed) => true,
-                Err(err) => return Err(err.into()),
+                Err(err) => return Err(err),
             };
 
             if !closed {
@@ -1837,7 +1837,7 @@ impl Deref for OsIpcSharedMemory {
 impl OsIpcSharedMemory {
     fn new(length: usize) -> Result<OsIpcSharedMemory, WinError> {
         unsafe {
-            assert!(length < u32::max_value() as usize);
+            assert!(length < u32::MAX as usize);
             let (lhigh, llow) = (
                 length.checked_shr(32).unwrap_or(0) as u32,
                 (length & 0xffffffff) as u32,
@@ -1869,9 +1869,9 @@ impl OsIpcSharedMemory {
             }
 
             Ok(OsIpcSharedMemory {
-                handle: handle,
+                handle,
                 view_handle: address,
-                length: length,
+                length,
             })
         }
     }
@@ -1906,10 +1906,7 @@ impl OsIpcOneShotServer {
         let pipe_id = make_pipe_id();
         let pipe_name = make_pipe_name(&pipe_id);
         let receiver = OsIpcReceiver::new_named(&pipe_name)?;
-        Ok((
-            OsIpcOneShotServer { receiver: receiver },
-            pipe_id.to_string(),
-        ))
+        Ok((OsIpcOneShotServer { receiver }, pipe_id.to_string()))
     }
 
     pub fn accept(
@@ -1954,7 +1951,7 @@ impl Drop for OsOpaqueIpcChannel {
 
 impl OsOpaqueIpcChannel {
     fn new(handle: WinHandle) -> OsOpaqueIpcChannel {
-        OsOpaqueIpcChannel { handle: handle }
+        OsOpaqueIpcChannel { handle }
     }
 
     pub fn to_receiver(&mut self) -> OsIpcReceiver {

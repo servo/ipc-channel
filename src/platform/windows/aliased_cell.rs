@@ -151,7 +151,7 @@ mod tests {
     impl Mutator {
         unsafe fn new(addr: *mut [i32; 4]) -> Mutator {
             Mutator {
-                addr: addr,
+                addr,
                 ascended: false,
             }
         }
@@ -241,10 +241,7 @@ mod tests {
         unsafe {
             mutator.mutate();
         }
-        let new_value = unsafe {
-            drop(mutator);
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 10, 3, 7]);
     }
 
@@ -259,10 +256,7 @@ mod tests {
         unsafe {
             mutator.mutate();
         }
-        let new_value = unsafe {
-            drop(mutator);
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 17, 3, 7]);
     }
 
@@ -278,11 +272,8 @@ mod tests {
             mutator2.mutate();
         }
         let cell3 = cell2;
-        let mutator3 = mutator2;
-        let new_value = unsafe {
-            drop(mutator3);
-            *cell3.into_inner()
-        };
+        let _mutator3 = mutator2;
+        let new_value = unsafe { *cell3.into_inner() };
         assert_eq!(new_value, [1, 10, 3, 7]);
     }
 
@@ -299,10 +290,7 @@ mod tests {
         unsafe {
             mutator.mutate();
         }
-        let new_value = unsafe {
-            drop(mutator);
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 10, 3, 10]);
     }
 
@@ -319,11 +307,7 @@ mod tests {
         unsafe {
             mutator2.mutate();
         }
-        let new_value = unsafe {
-            drop(mutator1);
-            drop(mutator2);
-            *cell.into_inner()
-        };
+        let new_value = unsafe { *cell.into_inner() };
         assert_eq!(new_value, [1, 17, 3, 7]);
     }
 
