@@ -7,12 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// Most of this file won't compile without `windows-shared-memory-equality` feature on Windows since `PartialEq` won't be implemented for `IpcSharedMemory`.
-#![cfg(any(
-    not(target_os = "windows"),
-    all(target_os = "windows", feature = "windows-shared-memory-equality")
-))]
-
 use crate::platform::OsIpcSharedMemory;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use std::collections::HashMap;
