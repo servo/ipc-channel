@@ -24,7 +24,6 @@ force-inprocess = []
 memfd = ["sc"]
 async = ["futures", "futures-test"]
 win32-trace = []
-windows-shared-memory-equality = ["windows/Win32_System_LibraryLoader"]
 
 [dependencies]
 bincode = "1"

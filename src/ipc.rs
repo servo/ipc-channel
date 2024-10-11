@@ -541,17 +541,9 @@ impl IpcReceiverSet {
 /// let shmem = IpcSharedMemory::from_bytes(&data);
 /// tx.send(shmem.clone()).unwrap();
 /// # let rx_shmem = rx.recv().unwrap();
-/// # #[cfg(any(not(target_os = "windows"), all(target_os = "windows", feature = "windows-shared-memory-equality")))]
 /// # assert_eq!(shmem, rx_shmem);
 /// ```
-#[derive(Clone, Debug)]
-#[cfg_attr(
-    any(
-        not(target_os = "windows"),
-        all(target_os = "windows", feature = "windows-shared-memory-equality")
-    ),
-    derive(PartialEq)
-)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct IpcSharedMemory {
     /// None represents no data (empty slice)
     os_shared_memory: Option<OsIpcSharedMemory>,

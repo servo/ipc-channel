@@ -24,9 +24,9 @@ jobs:
           - { target: i686-pc-windows-msvc, os: windows-latest }
         features: ["", "force-inprocess", "async"]
         include:
-          - features: "windows-shared-memory-equality"
+          - features: ""
             platform: { target: x86_64-pc-windows-msvc, os: windows-latest }
-          - features: "windows-shared-memory-equality"
+          - features: ""
             platform: { target: i686-pc-windows-msvc, os: windows-latest }
           - features: "memfd"
             platform: { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }

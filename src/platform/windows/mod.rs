@@ -30,10 +30,10 @@ use windows::{
     core::{Error as WinError, PCSTR},
     Win32::{
         Foundation::{
-            CloseHandle, DuplicateHandle, GetLastError, DUPLICATE_CLOSE_SOURCE,
-            DUPLICATE_HANDLE_OPTIONS, DUPLICATE_SAME_ACCESS, ERROR_BROKEN_PIPE,
-            ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, ERROR_NOT_FOUND, ERROR_NO_DATA,
-            ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
+            CloseHandle, CompareObjectHandles, DuplicateHandle, GetLastError,
+            DUPLICATE_CLOSE_SOURCE, DUPLICATE_HANDLE_OPTIONS, DUPLICATE_SAME_ACCESS,
+            ERROR_BROKEN_PIPE, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, ERROR_NOT_FOUND,
+            ERROR_NO_DATA, ERROR_PIPE_CONNECTED, HANDLE, INVALID_HANDLE_VALUE, WAIT_TIMEOUT,
         },
         Storage::FileSystem::{
             CreateFileA, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED,
@@ -58,12 +58,6 @@ use windows::{
             },
         },
     },
-};
-
-#[cfg(feature = "windows-shared-memory-equality")]
-use windows::Win32::{
-    Foundation::BOOL,
-    System::LibraryLoader::{GetProcAddress, LoadLibraryA},
 };
 
 mod aliased_cell;
@@ -344,7 +338,7 @@ fn move_handle_to_process(
 
 #[derive(Debug)]
 struct WinHandle {
-    h: HANDLE,
+    handle: HANDLE,
 }
 
 unsafe impl Send for WinHandle {}
@@ -354,7 +348,7 @@ impl Drop for WinHandle {
     fn drop(&mut self) {
         unsafe {
             if self.is_valid() {
-                let result = CloseHandle(self.h);
+                let result = CloseHandle(self.handle);
                 assert!(result.is_ok() || thread::panicking());
             }
         }
@@ -364,69 +358,38 @@ impl Drop for WinHandle {
 impl Default for WinHandle {
     fn default() -> WinHandle {
         WinHandle {
-            h: INVALID_HANDLE_VALUE,
+            handle: INVALID_HANDLE_VALUE,
         }
     }
 }
 
-const WINDOWS_APP_MODULE_NAME: &str = "api-ms-win-core-handle-l1-1-0";
-const COMPARE_OBJECT_HANDLES_FUNCTION_NAME: &str = "CompareObjectHandles";
-
-lazy_static! {
-    static ref WINDOWS_APP_MODULE_NAME_CSTRING: CString =
-        CString::new(WINDOWS_APP_MODULE_NAME).unwrap();
-    static ref COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING: CString =
-        CString::new(COMPARE_OBJECT_HANDLES_FUNCTION_NAME).unwrap();
-}
-
-#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for WinHandle {
     fn eq(&self, other: &WinHandle) -> bool {
-        unsafe {
-            // Calling LoadLibraryA every time seems to be ok since libraries are refcounted and multiple calls won't produce multiple instances.
-            let module_handle = LoadLibraryA(PCSTR::from_raw(
-                WINDOWS_APP_MODULE_NAME_CSTRING.as_ptr() as *const u8,
-            ))
-            .unwrap_or_else(|e| panic!("Error loading library {}. {}", WINDOWS_APP_MODULE_NAME, e));
-            let proc = GetProcAddress(
-                module_handle,
-                PCSTR::from_raw(COMPARE_OBJECT_HANDLES_FUNCTION_NAME_CSTRING.as_ptr() as *const u8),
-            )
-            .unwrap_or_else(|| {
-                panic!(
-                    "Error calling GetProcAddress to use {}. {:?}",
-                    COMPARE_OBJECT_HANDLES_FUNCTION_NAME,
-                    WinError::from_win32()
-                )
-            });
-            let compare_object_handles: unsafe extern "stdcall" fn(HANDLE, HANDLE) -> BOOL =
-                std::mem::transmute(proc);
-            compare_object_handles(self.h, other.h).into()
-        }
+        unsafe { CompareObjectHandles(self.handle, other.handle).into() }
     }
 }
 
 impl WinHandle {
-    fn new(h: HANDLE) -> WinHandle {
-        WinHandle { h }
+    fn new(handle: HANDLE) -> WinHandle {
+        WinHandle { handle }
     }
 
     fn invalid() -> WinHandle {
         WinHandle {
-            h: INVALID_HANDLE_VALUE,
+            handle: INVALID_HANDLE_VALUE,
         }
     }
 
     fn is_valid(&self) -> bool {
-        self.h != INVALID_HANDLE_VALUE
+        self.handle != INVALID_HANDLE_VALUE
     }
 
     fn as_raw(&self) -> HANDLE {
-        self.h
+        self.handle
     }
 
     fn take_raw(&mut self) -> HANDLE {
-        mem::replace(&mut self.h, INVALID_HANDLE_VALUE)
+        mem::replace(&mut self.handle, INVALID_HANDLE_VALUE)
     }
 
     fn take(&mut self) -> WinHandle {
@@ -1095,7 +1058,6 @@ pub struct OsIpcReceiver {
     reader: RefCell<MessageReader>,
 }
 
-#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for OsIpcReceiver {
     fn eq(&self, other: &OsIpcReceiver) -> bool {
         self.reader.borrow().handle == other.reader.borrow().handle
@@ -1268,8 +1230,7 @@ impl OsIpcReceiver {
     }
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "windows-shared-memory-equality", derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub struct OsIpcSender {
     handle: WinHandle,
     // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
@@ -1817,7 +1778,6 @@ impl Clone for OsIpcSharedMemory {
     }
 }
 
-#[cfg(feature = "windows-shared-memory-equality")]
 impl PartialEq for OsIpcSharedMemory {
     fn eq(&self, other: &OsIpcSharedMemory) -> bool {
         self.handle == other.handle
@@ -1932,8 +1892,7 @@ pub enum OsIpcChannel {
     Receiver(OsIpcReceiver),
 }
 
-#[derive(Debug)]
-#[cfg_attr(feature = "windows-shared-memory-equality", derive(PartialEq))]
+#[derive(Debug, PartialEq)]
 pub struct OsOpaqueIpcChannel {
     handle: WinHandle,
 }

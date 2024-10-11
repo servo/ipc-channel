@@ -17,12 +17,7 @@ use std::cell::RefCell;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::env;
 use std::iter;
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios",
-    all(target_os = "windows", not(feature = "windows-shared-memory-equality"))
-)))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
 use std::process::{self, Command, Stdio};
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -108,12 +103,7 @@ pub fn get_channel_name_arg(which: &str) -> Option<String> {
 
 // Helper to get a channel_name argument passed in; used for the
 // cross-process spawn server tests.
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios",
-    all(target_os = "windows", not(feature = "windows-shared-memory-equality"))
-)))]
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
 pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
     Command::new(env::current_exe().unwrap())
         .arg(test_name)
@@ -484,10 +474,6 @@ fn shared_memory_slice() {
 }
 
 #[test]
-#[cfg(any(
-    not(target_os = "windows"),
-    all(target_os = "windows", feature = "windows-shared-memory-equality")
-))]
 fn shared_memory_object_equality() {
     let person = ("Patrick Walton".to_owned(), 29);
     let person_and_shared_memory = (person, IpcSharedMemory::from_byte(0xba, 1024 * 1024));
