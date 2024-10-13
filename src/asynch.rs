@@ -7,13 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc;
-use crate::ipc::IpcReceiver;
-use crate::ipc::IpcReceiverSet;
-use crate::ipc::IpcSelectionResult;
-use crate::ipc::IpcSender;
-use crate::ipc::OpaqueIpcMessage;
-use crate::ipc::OpaqueIpcReceiver;
+use crate::ipc::{
+    self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcReceiver,
+};
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::channel::mpsc::UnboundedSender;
 use futures::stream::FusedStream;
@@ -30,7 +26,7 @@ use std::sync::Mutex;
 use std::thread;
 
 /// A stream built from an IPC channel.
-pub struct IpcStream<T>(UnboundedReceiver<OpaqueIpcMessage>, PhantomData<T>);
+pub struct IpcStream<T>(UnboundedReceiver<IpcMessage>, PhantomData<T>);
 
 impl<T> Unpin for IpcStream<T> {}
 
@@ -38,7 +34,7 @@ impl<T> Unpin for IpcStream<T> {}
 struct Router {
     // Send `(ipc_recv, send)` to this router to add a route
     // from the IPC receiver to the sender.
-    add_route: UnboundedSender<(OpaqueIpcReceiver, UnboundedSender<OpaqueIpcMessage>)>,
+    add_route: UnboundedSender<(OpaqueIpcReceiver, UnboundedSender<IpcMessage>)>,
 
     // Wake up the routing thread.
     wakeup: Mutex<IpcSender<()>>,
@@ -52,7 +48,7 @@ lazy_static! {
         let (waker, wakee) = ipc::channel().expect("Failed to create IPC channel");
         thread::spawn(move || {
             let mut receivers = IpcReceiverSet::new().expect("Failed to create receiver set");
-            let mut senders = HashMap::<u64, UnboundedSender<OpaqueIpcMessage>>::new();
+            let mut senders = HashMap::<u64, UnboundedSender<IpcMessage>>::new();
             let _ = receivers.add(wakee);
             while let Ok(mut selections) = receivers.select() {
                 for selection in selections.drain(..) {

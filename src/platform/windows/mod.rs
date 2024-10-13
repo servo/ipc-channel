@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc;
+use crate::ipc::{self, IpcMessage};
 use bincode;
 use lazy_static::lazy_static;
 use serde;
@@ -855,10 +855,7 @@ impl MessageReader {
         }
     }
 
-    fn get_message(
-        &mut self,
-    ) -> Result<Option<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>)>, WinIpcError>
-    {
+    fn get_message(&mut self) -> Result<Option<IpcMessage>, WinIpcError> {
         // Never touch the buffer while it's still mutably aliased by the kernel!
         if self.r#async.is_some() {
             return Ok(None);
@@ -907,7 +904,7 @@ impl MessageReader {
                 shmems.len()
             );
             drain_bytes = Some(message.size());
-            result = Some((buf_data, channels, shmems));
+            result = Some(IpcMessage::new(buf_data, channels, shmems));
         } else {
             drain_bytes = None;
             result = None;
@@ -1110,10 +1107,7 @@ impl OsIpcReceiver {
     // This is only used for recv/try_recv/try_recv_timeout.  When this is added to an IpcReceiverSet, then
     // the implementation in select() is used.  It does much the same thing, but across multiple
     // channels.
-    fn receive_message(
-        &self,
-        mut blocking_mode: BlockingMode,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), WinIpcError> {
+    fn receive_message(&self, mut blocking_mode: BlockingMode) -> Result<IpcMessage, WinIpcError> {
         let mut reader = self.reader.borrow_mut();
         assert!(
             reader.entry_id.is_none(),
@@ -1124,8 +1118,8 @@ impl OsIpcReceiver {
         loop {
             // First, try to fetch a message, in case we have one pending
             // in the reader's receive buffer
-            if let Some((data, channels, shmems)) = reader.get_message()? {
-                return Ok((data, channels, shmems));
+            if let Some(ipc_message) = reader.get_message()? {
+                return Ok(ipc_message);
             }
 
             // Then, issue a read if we don't have one already in flight.
@@ -1145,24 +1139,17 @@ impl OsIpcReceiver {
         }
     }
 
-    pub fn recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), WinIpcError> {
+    pub fn recv(&self) -> Result<IpcMessage, WinIpcError> {
         win32_trace!("recv");
         self.receive_message(BlockingMode::Blocking)
     }
 
-    pub fn try_recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), WinIpcError> {
+    pub fn try_recv(&self) -> Result<IpcMessage, WinIpcError> {
         win32_trace!("try_recv");
         self.receive_message(BlockingMode::Nonblocking)
     }
 
-    pub fn try_recv_timeout(
-        &self,
-        duration: Duration,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), WinIpcError> {
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<IpcMessage, WinIpcError> {
         win32_trace!("try_recv_timeout");
         self.receive_message(BlockingMode::Timeout(duration))
     }
@@ -1454,12 +1441,7 @@ impl OsIpcSender {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ),
+    DataReceived(u64, IpcMessage),
     ChannelClosed(u64),
 }
 
@@ -1670,7 +1652,7 @@ impl OsIpcReceiverSet {
 
             if !closed {
                 // Drain as many messages as we can.
-                while let Some((data, channels, shmems)) = reader.get_message()? {
+                while let Some(ipc_message) = reader.get_message()? {
                     win32_trace!(
                         "[# {:?}] receiver {:?} ({}) got a message",
                         self.iocp.as_raw(),
@@ -1679,9 +1661,7 @@ impl OsIpcReceiverSet {
                     );
                     selection_results.push(OsIpcSelectionResult::DataReceived(
                         reader.entry_id.unwrap(),
-                        data,
-                        channels,
-                        shmems,
+                        ipc_message,
                     ));
                 }
                 win32_trace!(
@@ -1731,18 +1711,9 @@ impl OsIpcReceiverSet {
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(
-        self,
-    ) -> (
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ) {
+    pub fn unwrap(self) -> (u64, IpcMessage) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
-            },
+            OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
                 panic!(
                     "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
@@ -1869,21 +1840,11 @@ impl OsIpcOneShotServer {
         Ok((OsIpcOneShotServer { receiver }, pipe_id.to_string()))
     }
 
-    pub fn accept(
-        self,
-    ) -> Result<
-        (
-            OsIpcReceiver,
-            Vec<u8>,
-            Vec<OsOpaqueIpcChannel>,
-            Vec<OsIpcSharedMemory>,
-        ),
-        WinIpcError,
-    > {
+    pub fn accept(self) -> Result<(OsIpcReceiver, IpcMessage), WinIpcError> {
         let receiver = self.receiver;
         receiver.accept()?;
-        let (data, channels, shmems) = receiver.recv()?;
-        Ok((receiver, data, channels, shmems))
+        let ipc_message = receiver.recv()?;
+        Ok((receiver, ipc_message))
     }
 }
 

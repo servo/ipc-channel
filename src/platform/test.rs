@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::ipc::IpcMessage;
 use crate::platform::OsIpcSharedMemory;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use std::collections::HashMap;
@@ -42,15 +43,8 @@ fn simple() {
     let (tx, rx) = platform::channel().unwrap();
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
-    let (received_data, received_channels, received_shared_memory) = rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory
-        ),
-        (data, Vec::new(), Vec::new())
-    );
+    let ipc_message = rx.recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -61,19 +55,12 @@ fn sender_transfer() {
     super_tx
         .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
         .unwrap();
-    let (_, mut received_channels, _) = super_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let mut ipc_message = super_rx.recv().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_tx = ipc_message.os_ipc_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message = sub_rx.recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -84,19 +71,12 @@ fn receiver_transfer() {
     super_tx
         .send(data, vec![OsIpcChannel::Receiver(sub_rx)], vec![])
         .unwrap();
-    let (_, mut received_channels, _) = super_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_rx = received_channels.pop().unwrap().to_receiver();
+    let mut ipc_message = super_rx.recv().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_rx = ipc_message.os_ipc_channels.pop().unwrap().to_receiver();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message = sub_rx.recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -112,34 +92,18 @@ fn multisender_transfer() {
             vec![],
         )
         .unwrap();
-    let (_, mut received_channels, _) = super_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 2);
+    let mut ipc_message1 = super_rx.recv().unwrap();
+    assert_eq!(ipc_message1.os_ipc_channels.len(), 2);
 
-    let sub0_tx = received_channels.remove(0).to_sender();
+    let sub0_tx = ipc_message1.os_ipc_channels.remove(0).to_sender();
     sub0_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_subchannels, received_shared_memory_regions) =
-        sub0_rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_subchannels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message2 = sub0_rx.recv().unwrap();
+    assert_eq!(ipc_message2, IpcMessage::from_data(data.to_vec()));
 
-    let sub1_tx = received_channels.remove(0).to_sender();
+    let sub1_tx = ipc_message1.os_ipc_channels.remove(0).to_sender();
     sub1_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_subchannels, received_shared_memory_regions) =
-        sub1_rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_subchannels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message3 = sub1_rx.recv().unwrap();
+    assert_eq!(ipc_message3, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -148,15 +112,8 @@ fn medium_data() {
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message = rx.recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -168,19 +125,12 @@ fn medium_data_with_sender_transfer() {
     super_tx
         .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
         .unwrap();
-    let (_, mut received_channels, _) = super_rx.recv().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels.pop().unwrap().to_sender();
+    let mut ipc_message = super_rx.recv().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_tx = ipc_message.os_ipc_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message = sub_rx.recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 fn check_big_data(size: u32) {
@@ -190,18 +140,11 @@ fn check_big_data(size: u32) {
         let data: &[u8] = &data[..];
         tx.send(data, vec![], vec![]).unwrap();
     });
-    let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
+    let ipc_message = rx.recv().unwrap();
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    assert_eq!(received_data.len(), data.len());
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message.data.len(), data.len());
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     thread.join().unwrap();
 }
 
@@ -230,29 +173,21 @@ fn big_data_with_sender_transfer() {
             .send(data, vec![OsIpcChannel::Sender(sub_tx)], vec![])
             .unwrap();
     });
-    let (received_data, mut received_channels, received_shared_memory_regions) =
-        super_rx.recv().unwrap();
+    let mut ipc_message = super_rx.recv().unwrap();
     let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    assert_eq!(received_data.len(), data.len());
-    assert_eq!(&received_data[..], data);
-    assert_eq!(received_channels.len(), 1);
-    assert_eq!(received_shared_memory_regions.len(), 0);
+    assert_eq!(ipc_message.data.len(), data.len());
+    assert_eq!(&ipc_message.data[..], data);
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
     let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    let sub_tx = received_channels[0].to_sender();
+    let sub_tx = ipc_message.os_ipc_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) = sub_rx.recv().unwrap();
-    assert_eq!(received_data.len(), data.len());
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let ipc_message = sub_rx.recv().unwrap();
+    assert_eq!(ipc_message.data.len(), data.len());
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     thread.join().unwrap();
 }
 
@@ -265,29 +200,24 @@ fn with_n_fds(n: usize, size: usize) {
 
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     super_tx.send(&data[..], sender_fds, vec![]).unwrap();
-    let (received_data, received_channels, received_shared_memory_regions) =
-        super_rx.recv().unwrap();
+    let ipc_message = super_rx.recv().unwrap();
 
-    assert_eq!(received_data.len(), data.len());
-    assert_eq!(&received_data[..], &data[..]);
-    assert_eq!(received_channels.len(), receivers.len());
-    assert_eq!(received_shared_memory_regions.len(), 0);
+    assert_eq!(ipc_message.data.len(), data.len());
+    assert_eq!(&ipc_message.data[..], &data[..]);
+    assert_eq!(ipc_message.os_ipc_channels.len(), receivers.len());
+    assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
     let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
-    for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter()) {
+    for (mut sender_fd, sub_rx) in ipc_message
+        .os_ipc_channels
+        .into_iter()
+        .zip(receivers.into_iter())
+    {
         let sub_tx = sender_fd.to_sender();
-        sub_tx.send(&data[..], vec![], vec![]).unwrap();
-        let (received_data, received_channels, received_shared_memory_regions) =
-            sub_rx.recv().unwrap();
-        assert_eq!(received_data.len(), data.len());
-        assert_eq!(
-            (
-                &received_data[..],
-                received_channels,
-                received_shared_memory_regions
-            ),
-            (&data[..], vec![], vec![])
-        );
+        sub_tx.send(&data, vec![], vec![]).unwrap();
+        let ipc_message = sub_rx.recv().unwrap();
+        assert_eq!(ipc_message.data.len(), data.len());
+        assert_eq!(ipc_message, IpcMessage::from_data(data.clone()));
     }
 }
 
@@ -384,34 +314,28 @@ macro_rules! create_big_data_with_n_fds {
                 let data: &[u8] = &data[..];
                 super_tx.send(data, sender_fds, vec![]).unwrap();
             });
-            let (received_data, received_channels, received_shared_memory_regions) =
-                super_rx.recv().unwrap();
+            let ipc_message = super_rx.recv().unwrap();
             thread.join().unwrap();
 
             let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
-            assert_eq!(received_data.len(), data.len());
-            assert_eq!(&received_data[..], &data[..]);
-            assert_eq!(received_channels.len(), receivers.len());
-            assert_eq!(received_shared_memory_regions.len(), 0);
+            assert_eq!(ipc_message.data.len(), data.len());
+            assert_eq!(&ipc_message.data[..], &data[..]);
+            assert_eq!(ipc_message.os_ipc_channels.len(), receivers.len());
+            assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
             let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
             let data: &[u8] = &data[..];
-            for (mut sender_fd, sub_rx) in received_channels.into_iter().zip(receivers.into_iter())
+            for (mut sender_fd, sub_rx) in ipc_message
+                .os_ipc_channels
+                .into_iter()
+                .zip(receivers.into_iter())
             {
                 let sub_tx = sender_fd.to_sender();
                 sub_tx.send(data, vec![], vec![]).unwrap();
-                let (received_data, received_channels, received_shared_memory_regions) =
-                    sub_rx.recv().unwrap();
-                assert_eq!(received_data.len(), data.len());
-                assert_eq!(
-                    (
-                        &received_data[..],
-                        received_channels,
-                        received_shared_memory_regions
-                    ),
-                    (&data[..], vec![], vec![])
-                );
+                let ipc_message = sub_rx.recv().unwrap();
+                assert_eq!(ipc_message.data.len(), data.len());
+                assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
             }
         }
     };
@@ -444,22 +368,15 @@ fn concurrent_senders() {
 
     let mut received_vals: Vec<u8> = vec![];
     for _ in 0..num_senders {
-        let (received_data, received_channels, received_shared_memory_regions) = rx.recv().unwrap();
-        let val = received_data[0] >> 4;
+        let ipc_message = rx.recv().unwrap();
+        let val = ipc_message.data[0] >> 4;
         received_vals.push(val);
         let data: Vec<u8> = (0..1024 * 1024)
             .map(|j| (j % 13) as u8 | val << 4)
             .collect();
         let data: &[u8] = &data[..];
-        assert_eq!(received_data.len(), data.len());
-        assert_eq!(
-            (
-                &received_data[..],
-                received_channels,
-                received_shared_memory_regions
-            ),
-            (data, vec![], vec![])
-        );
+        assert_eq!(ipc_message.data.len(), data.len());
+        assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -480,7 +397,7 @@ fn receiver_set() {
 
     let data: &[u8] = b"1234567";
     tx0.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) = rx_set
+    let (received_id, ipc_message) = rx_set
         .select()
         .unwrap()
         .into_iter()
@@ -488,10 +405,10 @@ fn receiver_set() {
         .unwrap()
         .unwrap();
     assert_eq!(received_id, rx0_id);
-    assert_eq!(received_data, data);
+    assert_eq!(ipc_message.data, data);
 
     tx1.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) = rx_set
+    let (received_id, ipc_message) = rx_set
         .select()
         .unwrap()
         .into_iter()
@@ -499,15 +416,15 @@ fn receiver_set() {
         .unwrap()
         .unwrap();
     assert_eq!(received_id, rx1_id);
-    assert_eq!(received_data, data);
+    assert_eq!(ipc_message.data, data);
 
     tx0.send(data, vec![], vec![]).unwrap();
     tx1.send(data, vec![], vec![]).unwrap();
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
-            let (received_id, received_data, _, _) = result.unwrap();
-            assert_eq!(received_data, data);
+            let (received_id, ipc_message) = result.unwrap();
+            assert_eq!(ipc_message.data, data);
             assert!(received_id == rx0_id || received_id == rx1_id);
             if received_id == rx0_id {
                 assert!(!received0);
@@ -541,17 +458,17 @@ fn receiver_set_eintr() {
             // Send the result of the select back to the parent
             let result = rx_set.select().unwrap();
             let mut result_iter = result.into_iter();
-            let (id, data, _, _) = result_iter.next().unwrap().unwrap();
+            let (id, ipc_message) = result_iter.next().unwrap().unwrap();
             assert_eq!(rx_id, id);
-            assert_eq!(b"Test".as_ref(), &*data);
+            assert_eq!(b"Test".as_ref(), &*ipc_message.data);
             assert!(result_iter.next().is_none());
             tx1.send(b"Success!", vec![], vec![]).unwrap();
         })
     };
     // Wait until the child is ready
-    let (server, res, mut channels, _) = server.accept().unwrap();
-    assert!(res == b" Ready! ");
-    let tx1 = channels.first_mut().unwrap().to_sender();
+    let (server, mut ipc_message) = server.accept().unwrap();
+    assert!(ipc_message.data == b" Ready! ");
+    let tx1 = ipc_message.os_ipc_channels.first_mut().unwrap().to_sender();
     unsafe {
         kill(child_pid, SIGSTOP);
         thread::sleep(Duration::from_millis(42));
@@ -559,8 +476,8 @@ fn receiver_set_eintr() {
     }
     // The interrupt shouldn't affect the following send
     tx1.send(b"Test", vec![], vec![]).unwrap();
-    let (res, _, _) = server.recv().unwrap();
-    assert!(res == b"Success!");
+    let ipc_message = server.recv().unwrap();
+    assert!(ipc_message.data == b"Success!");
     child_pid.wait();
 }
 
@@ -572,7 +489,7 @@ fn receiver_set_empty() {
 
     let data: &[u8] = b"";
     tx.send(data, vec![], vec![]).unwrap();
-    let (received_id, received_data, _, _) = rx_set
+    let (received_id, ipc_message) = rx_set
         .select()
         .unwrap()
         .into_iter()
@@ -580,7 +497,7 @@ fn receiver_set_empty() {
         .unwrap()
         .unwrap();
     assert_eq!(received_id, rx_id);
-    assert!(received_data.is_empty());
+    assert!(ipc_message.data.is_empty());
 }
 
 #[test]
@@ -634,15 +551,15 @@ fn receiver_set_medium_data() {
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
-            let (received_id, mut received_data, _, _) = result.unwrap();
-            received_data.truncate(65536);
+            let (received_id, mut ipc_message) = result.unwrap();
+            ipc_message.data.truncate(65536);
             assert!(received_id == rx0_id || received_id == rx1_id);
             if received_id == rx0_id {
-                assert_eq!(received_data, data0);
+                assert_eq!(ipc_message.data, data0);
                 assert!(!received0);
                 received0 = true;
             } else if received_id == rx1_id {
-                assert_eq!(received_data, data1);
+                assert_eq!(ipc_message.data, data1);
                 assert!(!received1);
                 received1 = true;
             }
@@ -678,17 +595,17 @@ fn receiver_set_big_data() {
     let (mut received0, mut received1) = (false, false);
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
-            let (received_id, mut received_data, _, _) = result.unwrap();
-            received_data.truncate(1024 * 1024);
+            let (received_id, mut ipc_message) = result.unwrap();
+            ipc_message.data.truncate(1024 * 1024);
             assert!(received_id == rx0_id || received_id == rx1_id);
             if received_id == rx0_id {
-                assert_eq!(received_data.len(), reference_data0.len());
-                assert_eq!(received_data, reference_data0);
+                assert_eq!(ipc_message.data.len(), reference_data0.len());
+                assert_eq!(ipc_message.data, reference_data0);
                 assert!(!received0);
                 received0 = true;
             } else if received_id == rx1_id {
-                assert_eq!(received_data.len(), reference_data1.len());
-                assert_eq!(received_data, reference_data1);
+                assert_eq!(ipc_message.data.len(), reference_data1.len());
+                assert_eq!(ipc_message.data, reference_data1);
                 assert!(!received1);
                 received1 = true;
             }
@@ -733,13 +650,13 @@ fn receiver_set_concurrent() {
     while !receiver_records.is_empty() {
         for result in rx_set.select().unwrap().into_iter() {
             match result {
-                platform::OsIpcSelectionResult::DataReceived(rx_id, data, _, _) => {
+                platform::OsIpcSelectionResult::DataReceived(rx_id, ipc_message) => {
                     let &mut (ref reference_data, chan_index, ref mut msg_index) =
                         receiver_records.get_mut(&rx_id).unwrap();
                     let msg_size = (*msg_index * 99991 + chan_index * 90001) % max_msg_size;
                     let msg_size = msg_size & !3;
-                    assert_eq!(data.len(), msg_size);
-                    assert_eq!(&data[..], &reference_data[..msg_size]);
+                    assert_eq!(ipc_message.data.len(), msg_size);
+                    assert_eq!(&ipc_message.data[..], &reference_data[..msg_size]);
                     *msg_index += 1;
                 },
                 platform::OsIpcSelectionResult::ChannelClosed(rx_id) => {
@@ -766,16 +683,8 @@ fn server_accept_first() {
         tx.send(data, vec![], vec![]).unwrap();
     });
 
-    let (_, received_data, received_channels, received_shared_memory_regions) =
-        server.accept().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let (_, ipc_message) = server.accept().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -789,17 +698,9 @@ fn server_connect_first() {
     });
 
     thread::sleep(Duration::from_millis(30));
-    let (_, mut received_data, received_channels, received_shared_memory_regions) =
-        server.accept().unwrap();
-    received_data.truncate(7);
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    let (_, mut ipc_message) = server.accept().unwrap();
+    ipc_message.data.truncate(7);
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -820,17 +721,9 @@ fn cross_process_spawn() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let mut child_pid = spawn_server("cross_process_spawn", &[("server", &*name)]);
 
-    let (_, received_data, received_channels, received_shared_memory_regions) =
-        server.accept().unwrap();
+    let (_, ipc_message) = server.accept().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[cfg(not(any(
@@ -851,17 +744,9 @@ fn cross_process_fork() {
         })
     };
 
-    let (_, received_data, received_channels, received_shared_memory_regions) =
-        server.accept().unwrap();
+    let (_, ipc_message) = server.accept().unwrap();
     child_pid.wait();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -887,24 +772,16 @@ fn cross_process_sender_transfer_spawn() {
     let (server, name) = OsIpcOneShotServer::new().unwrap();
     let mut child_pid = spawn_server("cross_process_sender_transfer_spawn", &[("server", &*name)]);
 
-    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels[0].to_sender();
+    let (super_rx, mut ipc_message) = server.accept().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_tx = ipc_message.os_ipc_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
     let data: &[u8] = b"bar";
-    let (received_data, received_channels, received_shared_memory_regions) =
-        super_rx.recv().unwrap();
+    let ipc_message = super_rx.recv().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[cfg(not(any(
@@ -931,24 +808,16 @@ fn cross_process_sender_transfer_fork() {
         })
     };
 
-    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels[0].to_sender();
+    let (super_rx, mut ipc_message) = server.accept().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_tx = ipc_message.os_ipc_channels[0].to_sender();
     let data: &[u8] = b"baz";
     sub_tx.send(data, vec![], vec![]).unwrap();
 
     let data: &[u8] = b"bar";
-    let (received_data, received_channels, received_shared_memory_regions) =
-        super_rx.recv().unwrap();
+    let ipc_message = super_rx.recv().unwrap();
     child_pid.wait();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
 }
 
 #[test]
@@ -1033,10 +902,16 @@ fn shared_memory() {
     let data: &[u8] = b"1234567";
     let shmem_data = OsIpcSharedMemory::from_byte(0xba, 1024 * 1024);
     tx.send(data, vec![], vec![shmem_data]).unwrap();
-    let (received_data, received_channels, received_shared_memory) = rx.recv().unwrap();
-    assert_eq!((&received_data[..], received_channels), (data, Vec::new()));
-    assert_eq!(received_shared_memory[0].len(), 1024 * 1024);
-    assert!(received_shared_memory[0].iter().all(|byte| *byte == 0xba));
+    let ipc_message = rx.recv().unwrap();
+    assert_eq!(&ipc_message.data, data);
+    assert!(&ipc_message.os_ipc_channels.is_empty());
+    assert_eq!(
+        ipc_message.os_ipc_shared_memory_regions[0].len(),
+        1024 * 1024
+    );
+    assert!(ipc_message.os_ipc_shared_memory_regions[0]
+        .iter()
+        .all(|byte| *byte == 0xba));
 }
 
 #[test]
@@ -1052,15 +927,8 @@ fn try_recv() {
     assert!(rx.try_recv().is_err());
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
-    let (received_data, received_channels, received_shared_memory) = rx.try_recv().unwrap();
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory
-        ),
-        (data, Vec::new(), Vec::new())
-    );
+    let ipc_message = rx.try_recv().unwrap();
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     assert!(rx.try_recv().is_err());
 }
 
@@ -1128,18 +996,11 @@ fn try_recv_large() {
         result.is_err()
     } {}
     thread.join().unwrap();
-    let (received_data, received_channels, received_shared_memory) = result.unwrap();
+    let ipc_message = result.unwrap();
 
     let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory
-        ),
-        (data, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     assert!(rx.try_recv().is_err());
 }
 
@@ -1201,21 +1062,14 @@ fn try_recv_large_delayed() {
             result = rx.try_recv();
             result.is_err()
         } {}
-        let (received_data, received_channels, received_shared_memory) = result.unwrap();
+        let ipc_message = result.unwrap();
 
-        let val = received_data[0] >> 4;
+        let val = ipc_message.data[0] >> 4;
         received_vals.push(val);
         let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | val << 4).collect();
         let data: &[u8] = &data[..];
-        assert_eq!(received_data.len(), data.len());
-        assert_eq!(
-            (
-                &received_data[..],
-                received_channels,
-                received_shared_memory
-            ),
-            (data, vec![], vec![])
-        );
+        assert_eq!(ipc_message.data.len(), data.len());
+        assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -1264,21 +1118,21 @@ fn cross_process_two_step_transfer_spawn() {
             .unwrap();
 
         // get two_rx from the other process
-        let (_, mut received_channels, _) = sub_rx.recv().unwrap();
-        assert_eq!(received_channels.len(), 1);
-        let two_rx = received_channels[0].to_receiver();
+        let mut ipc_message = sub_rx.recv().unwrap();
+        assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+        let two_rx = ipc_message.os_ipc_channels[0].to_receiver();
 
         // get one_rx from two_rx's buffer
-        let (_, mut received_channels, _) = two_rx.recv().unwrap();
-        assert_eq!(received_channels.len(), 1);
-        let one_rx = received_channels[0].to_receiver();
+        let mut ipc_message = two_rx.recv().unwrap();
+        assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+        let one_rx = ipc_message.os_ipc_channels[0].to_receiver();
 
         // get a cookie from one_rx
-        let (data, _, _) = one_rx.recv().unwrap();
-        assert_eq!(&data[..], cookie);
+        let ipc_message = one_rx.recv().unwrap();
+        assert_eq!(&ipc_message.data[..], cookie);
 
         // finally, send a cookie back
-        super_tx.send(&data, vec![], vec![]).unwrap();
+        super_tx.send(&ipc_message.data, vec![], vec![]).unwrap();
 
         // terminate
         unsafe {
@@ -1306,9 +1160,9 @@ fn cross_process_two_step_transfer_spawn() {
     );
 
     // The other process will have sent us a transmit channel in received channels
-    let (super_rx, _, mut received_channels, _) = server.accept().unwrap();
-    assert_eq!(received_channels.len(), 1);
-    let sub_tx = received_channels[0].to_sender();
+    let (super_rx, mut ipc_message) = server.accept().unwrap();
+    assert_eq!(ipc_message.os_ipc_channels.len(), 1);
+    let sub_tx = ipc_message.os_ipc_channels[0].to_sender();
 
     // Send the outer payload channel, so the server can use it to
     // retrieve the inner payload and the cookie
@@ -1317,16 +1171,8 @@ fn cross_process_two_step_transfer_spawn() {
         .unwrap();
 
     // Then we wait for the cookie to make its way back to us
-    let (received_data, received_channels, received_shared_memory_regions) =
-        super_rx.recv().unwrap();
+    let ipc_message = super_rx.recv().unwrap();
     let child_exit_code = child_pid.wait().expect("failed to wait on child");
     assert!(child_exit_code.success());
-    assert_eq!(
-        (
-            &received_data[..],
-            received_channels,
-            received_shared_memory_regions
-        ),
-        (cookie, vec![], vec![])
-    );
+    assert_eq!(ipc_message, IpcMessage::from_data(cookie.to_vec()));
 }

@@ -12,7 +12,7 @@ use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
-use crate::ipc;
+use crate::ipc::{self, IpcMessage};
 
 use bincode;
 use lazy_static::lazy_static;
@@ -327,31 +327,22 @@ impl OsIpcReceiver {
     fn recv_with_blocking_mode(
         &self,
         blocking_mode: BlockingMode,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
+    ) -> Result<IpcMessage, MachError> {
         select(self.port.get(), blocking_mode).and_then(|result| match result {
-            OsIpcSelectionResult::DataReceived(_, data, channels, shared_memory_regions) => {
-                Ok((data, channels, shared_memory_regions))
-            },
+            OsIpcSelectionResult::DataReceived(_, ipc_message) => Ok(ipc_message),
             OsIpcSelectionResult::ChannelClosed(_) => Err(MachError::from(MACH_NOTIFY_NO_SENDERS)),
         })
     }
 
-    pub fn recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
+    pub fn recv(&self) -> Result<IpcMessage, MachError> {
         self.recv_with_blocking_mode(BlockingMode::Blocking)
     }
 
-    pub fn try_recv(
-        &self,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
+    pub fn try_recv(&self) -> Result<IpcMessage, MachError> {
         self.recv_with_blocking_mode(BlockingMode::Nonblocking)
     }
 
-    pub fn try_recv_timeout(
-        &self,
-        duration: Duration,
-    ) -> Result<(Vec<u8>, Vec<OsOpaqueIpcChannel>, Vec<OsIpcSharedMemory>), MachError> {
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<IpcMessage, MachError> {
         self.recv_with_blocking_mode(BlockingMode::Timeout(duration))
     }
 }
@@ -654,33 +645,16 @@ impl Drop for OsIpcReceiverSet {
 }
 
 pub enum OsIpcSelectionResult {
-    DataReceived(
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ),
+    DataReceived(u64, IpcMessage),
     ChannelClosed(u64),
 }
 
 impl OsIpcSelectionResult {
-    pub fn unwrap(
-        self,
-    ) -> (
-        u64,
-        Vec<u8>,
-        Vec<OsOpaqueIpcChannel>,
-        Vec<OsIpcSharedMemory>,
-    ) {
+    pub fn unwrap(self) -> (u64, IpcMessage) {
         match self {
-            OsIpcSelectionResult::DataReceived(id, data, channels, shared_memory_regions) => {
-                (id, data, channels, shared_memory_regions)
-            },
+            OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!(
-                    "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
-                    id
-                )
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!")
             },
         }
     }
@@ -815,9 +789,7 @@ fn select(
 
         Ok(OsIpcSelectionResult::DataReceived(
             local_port as u64,
-            payload,
-            ports,
-            shared_memory_regions,
+            IpcMessage::new(payload, ports, shared_memory_regions),
         ))
     }
 }
@@ -849,24 +821,9 @@ impl OsIpcOneShotServer {
         ))
     }
 
-    pub fn accept(
-        self,
-    ) -> Result<
-        (
-            OsIpcReceiver,
-            Vec<u8>,
-            Vec<OsOpaqueIpcChannel>,
-            Vec<OsIpcSharedMemory>,
-        ),
-        MachError,
-    > {
-        let (bytes, channels, shared_memory_regions) = self.receiver.recv()?;
-        Ok((
-            self.receiver.consume(),
-            bytes,
-            channels,
-            shared_memory_regions,
-        ))
+    pub fn accept(self) -> Result<(OsIpcReceiver, IpcMessage), MachError> {
+        let ipc_message = self.receiver.recv()?;
+        Ok((self.receiver.consume(), ipc_message))
     }
 }
 
