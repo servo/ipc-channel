@@ -12,6 +12,7 @@
 //! `IpcReceiver<T>`s. The router will then either call the appropriate callback or route the
 //! message to a crossbeam `Sender<T>` or `Receiver<T>`. You should use the global `ROUTER` to
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
+
 use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -69,6 +70,23 @@ impl RouterProxy {
             .send(RouterMsg::AddRoute(receiver, callback))
             .unwrap();
         comm.wakeup_sender.send(()).unwrap();
+    }
+
+    /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
+    /// to the router.
+    ///
+    /// Unlike [add_route](Self::add_route) this method is strongly typed and guarantees
+    /// that the `receiver` and the `callback` use the same message type.
+    pub fn add_typed_route<T>(&self, receiver: IpcReceiver<T>, mut callback: TypedRouterHandler<T>)
+    where
+        T: Serialize + for<'de> Deserialize<'de> + 'static,
+    {
+        // Before passing the message on to the callback, turn it into the appropriate type
+        let modified_callback = move |msg: IpcMessage| {
+            let typed_message = msg.to::<T>().unwrap();
+            callback(typed_message)
+        };
+        self.add_route(receiver.to_opaque(), Box::new(modified_callback));
     }
 
     /// Send a shutdown message to the router containing a ACK sender,
@@ -214,3 +232,6 @@ enum RouterMsg {
 
 /// Function to call when a new event is received from the corresponding receiver.
 pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
+
+/// Like [RouterHandler] but includes the type that will be passed to the callback
+pub type TypedRouterHandler<T> = Box<dyn FnMut(T) + Send>;
