@@ -360,6 +360,16 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        if self.ptr.is_null() {
+            panic!("attempted to access a consumed `OsIpcSharedMemory`")
+        }
+        unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
+    }
+}
+
+impl OsIpcSharedMemory {
     pub fn from_byte(byte: u8, length: usize) -> OsIpcSharedMemory {
         let mut v = Arc::new(vec![byte; length]);
         OsIpcSharedMemory {
