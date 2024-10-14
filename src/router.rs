@@ -121,9 +121,9 @@ impl RouterProxy {
     ) where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        self.add_route(
-            ipc_receiver.to_opaque(),
-            Box::new(move |message| drop(crossbeam_sender.send(message.to::<T>().unwrap()))),
+        self.add_typed_route(
+            ipc_receiver,
+            Box::new(move |message| drop(crossbeam_sender.send(message))),
         )
     }
 
