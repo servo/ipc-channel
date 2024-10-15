@@ -284,6 +284,21 @@ fn router_simple_global() {
     let received_person = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_person, person);
 
+    // Try the same, with a strongly typed route
+    let message: usize = 42;
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(message.clone()).unwrap();
+
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
+    ROUTER.add_typed_route(
+        rx,
+        Box::new(move |message| {
+            callback_fired_sender.send(message).unwrap();
+        }),
+    );
+    let received_message = callback_fired_receiver.recv().unwrap();
+    assert_eq!(received_message, message);
+
     // Now shutdown the router.
     ROUTER.shutdown();
 
