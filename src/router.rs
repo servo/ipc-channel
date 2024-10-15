@@ -62,7 +62,7 @@ impl RouterProxy {
     ///
     /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
     /// mismatches between the receiver and callback types.
-    #[deprecated(since = "0.19", note = "please use 'add_typed_route' instead")]
+    #[deprecated(since = "0.19.0", note = "please use 'add_typed_route' instead")]
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
