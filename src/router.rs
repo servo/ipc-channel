@@ -59,6 +59,10 @@ impl RouterProxy {
 
     /// Add a new (receiver, callback) pair to the router, and send a wakeup message
     /// to the router.
+    ///
+    /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
+    /// mismatches between the receiver and callback types.
+    #[deprecated(since = "0.19", note = "please use 'add_typed_route' instead")]
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
@@ -86,6 +90,8 @@ impl RouterProxy {
             let typed_message = msg.to::<T>();
             callback(typed_message)
         };
+
+        #[allow(deprecated)]
         self.add_route(receiver.to_opaque(), Box::new(modified_callback));
     }
 
