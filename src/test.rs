@@ -293,7 +293,7 @@ fn router_simple_global() {
     ROUTER.add_typed_route(
         rx,
         Box::new(move |message| {
-            callback_fired_sender.send(message).unwrap();
+            callback_fired_sender.send(message.unwrap()).unwrap();
         }),
     );
     let received_message = callback_fired_receiver.recv().unwrap();

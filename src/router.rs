@@ -83,7 +83,7 @@ impl RouterProxy {
     {
         // Before passing the message on to the callback, turn it into the appropriate type
         let modified_callback = move |msg: IpcMessage| {
-            let typed_message = msg.to::<T>().unwrap();
+            let typed_message = msg.to::<T>();
             callback(typed_message)
         };
         self.add_route(receiver.to_opaque(), Box::new(modified_callback));
@@ -123,7 +123,7 @@ impl RouterProxy {
     {
         self.add_typed_route(
             ipc_receiver,
-            Box::new(move |message| drop(crossbeam_sender.send(message))),
+            Box::new(move |message| drop(crossbeam_sender.send(message.unwrap()))),
         )
     }
 
@@ -234,4 +234,4 @@ enum RouterMsg {
 pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
 /// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(T) + Send>;
+pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
