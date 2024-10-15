@@ -665,9 +665,9 @@ impl IpcSelectionResult {
 /// [to]: #method.to
 #[derive(PartialEq)]
 pub struct IpcMessage {
-    pub data: Vec<u8>,
-    pub os_ipc_channels: Vec<OsOpaqueIpcChannel>,
-    pub os_ipc_shared_memory_regions: Vec<OsIpcSharedMemory>,
+    pub(crate) data: Vec<u8>,
+    pub(crate) os_ipc_channels: Vec<OsOpaqueIpcChannel>,
+    pub(crate) os_ipc_shared_memory_regions: Vec<OsIpcSharedMemory>,
 }
 
 impl IpcMessage {
