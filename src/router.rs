@@ -59,6 +59,10 @@ impl RouterProxy {
 
     /// Add a new (receiver, callback) pair to the router, and send a wakeup message
     /// to the router.
+    ///
+    /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
+    /// mismatches between the receiver and callback types.
+    #[deprecated(since = "0.19.0", note = "please use 'add_typed_route' instead")]
     pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
@@ -83,9 +87,11 @@ impl RouterProxy {
     {
         // Before passing the message on to the callback, turn it into the appropriate type
         let modified_callback = move |msg: IpcMessage| {
-            let typed_message = msg.to::<T>().unwrap();
+            let typed_message = msg.to::<T>();
             callback(typed_message)
         };
+
+        #[allow(deprecated)]
         self.add_route(receiver.to_opaque(), Box::new(modified_callback));
     }
 
@@ -123,7 +129,7 @@ impl RouterProxy {
     {
         self.add_typed_route(
             ipc_receiver,
-            Box::new(move |message| drop(crossbeam_sender.send(message))),
+            Box::new(move |message| drop(crossbeam_sender.send(message.unwrap()))),
         )
     }
 
@@ -234,4 +240,4 @@ enum RouterMsg {
 pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
 /// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(T) + Send>;
+pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;

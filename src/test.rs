@@ -275,6 +275,7 @@ fn router_simple_global() {
     tx.send(person.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
+    #[allow(deprecated)]
     ROUTER.add_route(
         rx.to_opaque(),
         Box::new(move |person| {
@@ -293,7 +294,7 @@ fn router_simple_global() {
     ROUTER.add_typed_route(
         rx,
         Box::new(move |message| {
-            callback_fired_sender.send(message).unwrap();
+            callback_fired_sender.send(message.unwrap()).unwrap();
         }),
     );
     let received_message = callback_fired_receiver.recv().unwrap();
@@ -308,10 +309,10 @@ fn router_simple_global() {
     tx.send(person.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
-    ROUTER.add_route(
-        rx.to_opaque(),
+    ROUTER.add_typed_route(
+        rx,
         Box::new(move |person| {
-            callback_fired_sender.send(person.to().unwrap()).unwrap();
+            callback_fired_sender.send(person.unwrap()).unwrap();
         }),
     );
 
@@ -389,8 +390,8 @@ fn router_drops_callbacks_on_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(
-        rx0.to_opaque(),
+    router.add_typed_route(
+        rx0,
         Box::new(move |_| {
             let _ = &dropper;
         }),
@@ -416,8 +417,8 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
     let dropper = Dropper { sender: drop_tx };
 
     let router = RouterProxy::new();
-    router.add_route(
-        rx0.to_opaque(),
+    router.add_typed_route(
+        rx0,
         Box::new(move |_| {
             let _ = &dropper;
         }),
@@ -441,9 +442,9 @@ fn router_big_data() {
     let (callback_fired_sender, callback_fired_receiver) =
         crossbeam_channel::unbounded::<Vec<Person>>();
     let router = RouterProxy::new();
-    router.add_route(
-        rx.to_opaque(),
-        Box::new(move |people| callback_fired_sender.send(people.to().unwrap()).unwrap()),
+    router.add_typed_route(
+        rx,
+        Box::new(move |people| callback_fired_sender.send(people.unwrap()).unwrap()),
     );
     let received_people = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_people, people);
