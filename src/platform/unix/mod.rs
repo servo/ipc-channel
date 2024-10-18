@@ -716,7 +716,33 @@ fn make_socket_lingering(sockfd: c_int) -> Result<(), UnixError> {
         )
     };
     if err < 0 {
-        return Err(UnixError::last());
+        let error = UnixError::last();
+        if let UnixError::Errno(libc::EINVAL) = error {
+            // If the other side of the connection is already closed, POSIX.1-2024 (and earlier
+            // versions) require that setsockopt return EINVAL [1]. This is a bit unfortunate
+            // because SO_LINGER for a closed socket is logically a no-op, which is why some OSes
+            // like Linux don't follow this part of the spec. But other OSes like illumos do return
+            // EINVAL here.
+            //
+            // SO_LINGER is widely understood and EINVAL should not occur for any other reason, so
+            // accept those errors.
+            //
+            // Another option would be to call make_socket_lingering on the initial socket created
+            // by libc::socket, but whether accept inherits a particular option is
+            // implementation-defined [2]. This means that special-casing EINVAL is the most
+            // portable thing to do.
+            //
+            // [1] https://pubs.opengroup.org/onlinepubs/9799919799/functions/setsockopt.html:
+            //     "[EINVAL] The specified option is invalid at the specified socket level or the
+            //     socket has been shut down."
+            //
+            // [2] https://pubs.opengroup.org/onlinepubs/9799919799/functions/accept.html: "It is
+            //     implementation-defined which socket options, if any, on the accepted socket will
+            //     have a default value determined by a value previously customized by setsockopt()
+            //     on socket, rather than the default value used for other new sockets."
+        } else {
+            return Err(error);
+        }
     }
     Ok(())
 }
