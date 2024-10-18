@@ -108,7 +108,9 @@ fn multisender_transfer() {
 
 #[test]
 fn medium_data() {
-    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..get_max_fragment_size())
+        .map(|i| (i % 251) as u8)
+        .collect();
     let data: &[u8] = &data[..];
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
@@ -118,7 +120,9 @@ fn medium_data() {
 
 #[test]
 fn medium_data_with_sender_transfer() {
-    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..get_max_fragment_size())
+        .map(|i| (i % 251) as u8)
+        .collect();
     let data: &[u8] = &data[..];
     let (super_tx, super_rx) = platform::channel().unwrap();
     let (sub_tx, sub_rx) = platform::channel().unwrap();
@@ -181,7 +185,9 @@ fn big_data_with_sender_transfer() {
     assert_eq!(ipc_message.os_ipc_channels.len(), 1);
     assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
-    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..get_max_fragment_size())
+        .map(|i| (i % 251) as u8)
+        .collect();
     let data: &[u8] = &data[..];
     let sub_tx = ipc_message.os_ipc_channels[0].to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
@@ -207,7 +213,9 @@ fn with_n_fds(n: usize, size: usize) {
     assert_eq!(ipc_message.os_ipc_channels.len(), receivers.len());
     assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
-    let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..get_max_fragment_size())
+        .map(|i| (i % 251) as u8)
+        .collect();
     for (mut sender_fd, sub_rx) in ipc_message
         .os_ipc_channels
         .into_iter()
@@ -224,7 +232,12 @@ fn with_n_fds(n: usize, size: usize) {
 // These tests only apply to platforms that need fragmentation.
 #[cfg(all(
     not(feature = "force-inprocess"),
-    any(target_os = "linux", target_os = "freebsd", target_os = "windows")
+    any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "illumos",
+        target_os = "windows",
+    )
 ))]
 mod fragment_tests {
     use super::with_n_fds;
@@ -324,7 +337,9 @@ macro_rules! create_big_data_with_n_fds {
             assert_eq!(ipc_message.os_ipc_channels.len(), receivers.len());
             assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
-            let data: Vec<u8> = (0..65536).map(|i| (i % 251) as u8).collect();
+            let data: Vec<u8> = (0..get_max_fragment_size())
+                .map(|i| (i % 251) as u8)
+                .collect();
             let data: &[u8] = &data[..];
             for (mut sender_fd, sub_rx) in ipc_message
                 .os_ipc_channels
@@ -541,8 +556,10 @@ fn receiver_set_medium_data() {
     let rx0_id = rx_set.add(rx0).unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
-    let data0: Vec<u8> = (0..65536).map(|offset| (offset % 127) as u8).collect();
-    let data1: Vec<u8> = (0..65536)
+    let data0: Vec<u8> = (0..get_max_fragment_size())
+        .map(|offset| (offset % 127) as u8)
+        .collect();
+    let data1: Vec<u8> = (0..get_max_fragment_size())
         .map(|offset| (offset % 127) as u8 | 0x80)
         .collect();
 
@@ -552,7 +569,7 @@ fn receiver_set_medium_data() {
     while !received0 || !received1 {
         for result in rx_set.select().unwrap().into_iter() {
             let (received_id, mut ipc_message) = result.unwrap();
-            ipc_message.data.truncate(65536);
+            ipc_message.data.truncate(get_max_fragment_size());
             assert!(received_id == rx0_id || received_id == rx1_id);
             if received_id == rx0_id {
                 assert_eq!(ipc_message.data, data0);
@@ -1175,4 +1192,9 @@ fn cross_process_two_step_transfer_spawn() {
     let child_exit_code = child_pid.wait().expect("failed to wait on child");
     assert!(child_exit_code.success());
     assert_eq!(ipc_message, IpcMessage::from_data(cookie.to_vec()));
+}
+
+fn get_max_fragment_size() -> usize {
+    // Some platforms have a very large max fragment size, so cap it to a reasonable value.
+    OsIpcSender::get_max_fragment_size().min(65536)
 }
