@@ -1766,6 +1766,14 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        assert!(!self.view_handle.Value.is_null() && self.handle.is_valid());
+        unsafe { slice::from_raw_parts_mut(self.view_handle.Value as _, self.length) }
+    }
+}
+
+impl OsIpcSharedMemory {
     fn new(length: usize) -> Result<OsIpcSharedMemory, WinError> {
         unsafe {
             assert!(length < u32::MAX as usize);
