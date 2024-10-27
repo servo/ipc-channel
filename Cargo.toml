@@ -22,7 +22,7 @@ harness = false
 [features]
 default = []
 force-inprocess = []
-memfd = ["sc"]
+memfd = []
 async = ["futures", "futures-test"]
 win32-trace = []
 
@@ -33,14 +33,13 @@ fnv = "1.0.3"
 futures = { version = "0.3", optional = true }
 futures-test = { version = "0.3", optional = true }
 lazy_static = "1"
-libc = "0.2.12"
+libc = "0.2.161"
 rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd"))'.dependencies]
 mio = { version = "1.0", features = ["os-ext"] }
-sc = { version = "0.2.2", optional = true }
 tempfile = "3.4"
 
 [dev-dependencies]

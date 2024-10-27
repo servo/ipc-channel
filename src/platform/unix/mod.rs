@@ -11,21 +11,22 @@ use crate::ipc::{self, IpcMessage};
 use bincode;
 use fnv::FnvHasher;
 use lazy_static::lazy_static;
-use libc::{self, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET};
+use libc::{
+    self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
+    PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
+};
 use libc::{c_char, c_int, c_void, getsockopt, SO_LINGER, S_IFMT, S_IFSOCK};
-use libc::{iovec, mode_t, msghdr, off_t, recvmsg, sendmsg};
+use libc::{iovec, msghdr, off_t, recvmsg, sendmsg};
 use libc::{sa_family_t, setsockopt, size_t, sockaddr, sockaddr_un, socketpair, socklen_t};
 use libc::{EAGAIN, EWOULDBLOCK};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
-#[cfg(all(feature = "memfd", target_os = "linux"))]
-use sc::syscall;
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::error::Error as StdError;
-use std::ffi::CString;
+use std::ffi::{c_uint, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
 use std::io;
@@ -42,8 +43,6 @@ use std::time::{Duration, UNIX_EPOCH};
 use tempfile::{Builder, TempDir};
 
 const MAX_FDS_IN_CMSG: u32 = 64;
-
-const SCM_RIGHTS: c_int = 0x01;
 
 // The value Linux returns for SO_SNDBUF
 // is not the size we are actually allowed to use...
@@ -281,15 +280,16 @@ impl OsIpcSender {
             len: usize,
         ) -> Result<(), UnixError> {
             let result = unsafe {
-                let cmsg_length = mem::size_of_val(fds);
+                let cmsg_length = mem::size_of_val(fds) as c_uint;
                 let (cmsg_buffer, cmsg_space) = if cmsg_length > 0 {
-                    let cmsg_buffer = libc::malloc(CMSG_SPACE(cmsg_length)) as *mut cmsghdr;
+                    let cmsg_buffer =
+                        libc::malloc(CMSG_SPACE(cmsg_length) as usize) as *mut cmsghdr;
                     if cmsg_buffer.is_null() {
                         return Err(UnixError::last());
                     }
                     (*cmsg_buffer).cmsg_len = CMSG_LEN(cmsg_length) as MsgControlLen;
                     (*cmsg_buffer).cmsg_level = libc::SOL_SOCKET;
-                    (*cmsg_buffer).cmsg_type = SCM_RIGHTS;
+                    (*cmsg_buffer).cmsg_type = libc::SCM_RIGHTS;
 
                     ptr::copy_nonoverlapping(
                         fds.as_ptr(),
@@ -1017,7 +1017,10 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
         let channel_length = if cmsg_length == 0 {
             0
         } else {
-            (cmsg.cmsg_len() - CMSG_ALIGN(mem::size_of::<cmsghdr>())) / mem::size_of::<c_int>()
+            // The control header is followed by an array of FDs. The size of the control header is
+            // determined by CMSG_SPACE. (On Linux this would the same as CMSG_ALIGN, but that isn't
+            // exposed by libc. CMSG_SPACE(0) is the portable version of that.)
+            (cmsg.cmsg_len() - CMSG_SPACE(0) as size_t) / mem::size_of::<c_int>()
         };
         for index in 0..channel_length {
             let fd = *cmsg_fds.add(index);
@@ -1122,7 +1125,7 @@ fn create_shmem(name: CString, length: usize) -> c_int {
 #[cfg(all(feature = "memfd", target_os = "linux"))]
 fn create_shmem(name: CString, length: usize) -> c_int {
     unsafe {
-        let fd = memfd_create(name.as_ptr(), libc::MFD_CLOEXEC as usize);
+        let fd = libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC);
         assert!(fd >= 0);
         assert!(libc::ftruncate(fd, length as off_t) == 0);
         fd
@@ -1146,8 +1149,8 @@ impl Drop for UnixCmsg {
 
 impl UnixCmsg {
     unsafe fn new(iovec: &mut [iovec]) -> Result<UnixCmsg, UnixError> {
-        let cmsg_length = CMSG_SPACE(MAX_FDS_IN_CMSG as usize * mem::size_of::<c_int>());
-        let cmsg_buffer = libc::malloc(cmsg_length) as *mut cmsghdr;
+        let cmsg_length = CMSG_SPACE(MAX_FDS_IN_CMSG * (mem::size_of::<c_int>() as c_uint));
+        let cmsg_buffer = libc::malloc(cmsg_length as usize) as *mut cmsghdr;
         if cmsg_buffer.is_null() {
             return Err(UnixError::last());
         }
@@ -1165,17 +1168,7 @@ impl UnixCmsg {
                 }
             },
             BlockingMode::Timeout(duration) => {
-                #[cfg(target_os = "linux")]
-                const POLLRDHUP: libc::c_short = libc::POLLRDHUP;
-
-                // It's rather unfortunate that Rust's libc doesn't know that
-                // FreeBSD has POLLRDHUP, but in the mean time we can add
-                // the value ourselves.
-                // https://cgit.freebsd.org/src/tree/sys/sys/poll.h#n72
-                #[cfg(target_os = "freebsd")]
-                const POLLRDHUP: libc::c_short = 0x4000;
-
-                let events = libc::POLLIN | libc::POLLPRI | POLLRDHUP;
+                let events = libc::POLLIN | libc::POLLPRI | libc::POLLRDHUP;
 
                 let mut fd = [libc::pollfd {
                     fd,
@@ -1224,64 +1217,6 @@ fn is_socket(fd: c_int) -> bool {
         if libc::fstat(fd, st.as_mut_ptr()) != 0 {
             return false;
         }
-        S_ISSOCK(st.assume_init().st_mode as mode_t)
+        (st.assume_init().st_mode & S_IFMT) == S_IFSOCK
     }
-}
-
-// FFI stuff follows:
-
-#[cfg(all(feature = "memfd", target_os = "linux"))]
-unsafe fn memfd_create(name: *const c_char, flags: usize) -> c_int {
-    syscall!(MEMFD_CREATE, name, flags) as c_int
-}
-
-#[allow(non_snake_case)]
-fn CMSG_LEN(length: size_t) -> size_t {
-    CMSG_ALIGN(mem::size_of::<cmsghdr>()) + length
-}
-
-#[allow(non_snake_case)]
-unsafe fn CMSG_DATA(cmsg: *mut cmsghdr) -> *mut c_void {
-    (cmsg as *mut libc::c_uchar).add(CMSG_ALIGN(mem::size_of::<cmsghdr>())) as *mut c_void
-}
-
-#[allow(non_snake_case)]
-fn CMSG_ALIGN(length: size_t) -> size_t {
-    (length + mem::size_of::<size_t>() - 1) & !(mem::size_of::<size_t>() - 1)
-}
-
-#[allow(non_snake_case)]
-fn CMSG_SPACE(length: size_t) -> size_t {
-    CMSG_ALIGN(length) + CMSG_ALIGN(mem::size_of::<cmsghdr>())
-}
-
-#[allow(non_snake_case)]
-fn S_ISSOCK(mode: mode_t) -> bool {
-    (mode & S_IFMT) == S_IFSOCK
-}
-
-#[cfg(target_env = "gnu")]
-#[repr(C)]
-struct cmsghdr {
-    cmsg_len: MsgControlLen,
-    cmsg_level: c_int,
-    cmsg_type: c_int,
-}
-
-#[cfg(not(target_env = "gnu"))]
-#[repr(C)]
-struct cmsghdr {
-    #[cfg(target_endian = "big")]
-    __pad1: c_int,
-    cmsg_len: MsgControlLen,
-    #[cfg(target_endian = "little")]
-    __pad1: c_int,
-    cmsg_level: c_int,
-    cmsg_type: c_int,
-}
-
-#[repr(C)]
-struct linger {
-    l_onoff: c_int,
-    l_linger: c_int,
 }
