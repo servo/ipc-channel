@@ -545,6 +545,24 @@ impl Deref for IpcSharedMemory {
     }
 }
 
+impl IpcSharedMemory {
+    /// Returns a mutable reference to the deref of this [`IpcSharedMemory`].
+    ///
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// User can achieve this by not cloning [`IpcSharedMemory`]
+    /// and serializing/deserializing only once.
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        if let Some(os_shared_memory) = &mut self.os_shared_memory {
+            os_shared_memory.deref_mut()
+        } else {
+            &mut []
+        }
+    }
+}
+
 impl<'de> Deserialize<'de> for IpcSharedMemory {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

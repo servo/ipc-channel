@@ -19,6 +19,10 @@ harness = false
 name = "ipc_receiver_set"
 harness = false
 
+[[bench]]
+name = "ipc_shared_mem"
+harness = false
+
 [features]
 default = []
 force-inprocess = []
