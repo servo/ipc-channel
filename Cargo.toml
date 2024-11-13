@@ -37,7 +37,7 @@ fnv = "1.0.3"
 futures = { version = "0.3", optional = true }
 futures-test = { version = "0.3", optional = true }
 lazy_static = "1"
-libc = "0.2.161"
+libc = "0.2.162"
 rand = "0.8"
 serde = { version = "1.0", features = ["rc"] }
 uuid = { version = "1", features = ["v4"] }

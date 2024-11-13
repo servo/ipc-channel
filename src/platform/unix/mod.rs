@@ -32,7 +32,7 @@ use std::hash::BuildHasherDefault;
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
-use std::ops::{Deref, DerefMut, RangeFrom};
+use std::ops::{Deref, RangeFrom};
 use std::os::fd::RawFd;
 use std::ptr;
 use std::slice;
@@ -54,9 +54,9 @@ const SOCK_FLAGS: c_int = libc::SOCK_CLOEXEC;
 #[cfg(not(any(target_os = "linux", target_os = "illumos")))]
 const SOCK_FLAGS: c_int = 0;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "illumos"))]
 const RECVMSG_FLAGS: c_int = libc::MSG_CMSG_CLOEXEC;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "illumos")))]
 const RECVMSG_FLAGS: c_int = 0;
 
 #[cfg(target_env = "gnu")]
