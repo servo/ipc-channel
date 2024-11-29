@@ -26,7 +26,6 @@ harness = false
 [features]
 default = []
 force-inprocess = []
-memfd = []
 async = ["futures", "futures-test"]
 win32-trace = []
 
