@@ -33,11 +33,7 @@
     target_os = "android",
     target_os = "ios"
 ))]
-#[cfg(all(
-    feature = "memfd",
-    not(feature = "force-inprocess"),
-    target_os = "linux"
-))]
+#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
 #[cfg(feature = "async")]
 use futures;
 
