@@ -19,12 +19,6 @@
 //! The `inprocess` backend is a dummy back-end, that behaves like the real ones,
 //! but doesn't actually work between processes.
 //!
-//! ## `memfd`
-//!
-//! Use [memfd_create] to back [OsIpcSharedMemory] on Linux. [memfd_create] was
-//! introduced in kernel version 3.17. __WARNING:__ Enabling this feature with kernel
-//! version less than 3.17 will cause panics on any use of [IpcSharedMemory].
-//!
 //! ## `unstable`
 //!
 //! [IpcReceiver]: ipc/struct.IpcReceiver.html
@@ -32,7 +26,6 @@
 //! [IpcReceiverSet]: ipc/struct.IpcReceiverSet.html
 //! [IpcSharedMemory]: ipc/struct.IpcSharedMemory.html
 //! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
-//! [memfd_create]: http://man7.org/linux/man-pages/man2/memfd_create.2.html
 
 #[cfg(any(
     feature = "force-inprocess",
@@ -40,11 +33,7 @@
     target_os = "android",
     target_os = "ios"
 ))]
-#[cfg(all(
-    feature = "memfd",
-    not(feature = "force-inprocess"),
-    target_os = "linux"
-))]
+#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
 #[cfg(feature = "async")]
 use futures;
 

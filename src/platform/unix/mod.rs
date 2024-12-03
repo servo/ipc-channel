@@ -1120,29 +1120,11 @@ fn new_msghdr(iovec: &mut [iovec], cmsg_buffer: *mut cmsghdr, cmsg_space: MsgCon
     msghdr
 }
 
-#[cfg(not(all(target_os = "linux", feature = "memfd")))]
-fn create_shmem(name: CString, length: usize) -> c_int {
-    unsafe {
-        // NB: the FreeBSD man page for shm_unlink states that it requires
-        // write permissions, but testing shows that read-write is required.
-        let fd = libc::shm_open(
-            name.as_ptr(),
-            libc::O_CREAT | libc::O_RDWR | libc::O_EXCL,
-            0o600,
-        );
-        assert!(fd >= 0);
-        assert!(libc::shm_unlink(name.as_ptr()) == 0);
-        assert!(libc::ftruncate(fd, length as off_t) == 0);
-        fd
-    }
-}
-
-#[cfg(all(feature = "memfd", target_os = "linux"))]
 fn create_shmem(name: CString, length: usize) -> c_int {
     unsafe {
         let fd = libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC);
         assert!(fd >= 0);
-        assert!(libc::ftruncate(fd, length as off_t) == 0);
+        assert_eq!(libc::ftruncate(fd, length as off_t), 0);
         fd
     }
 }
