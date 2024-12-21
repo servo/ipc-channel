@@ -689,6 +689,13 @@ fn test_reentrant() {
 }
 
 #[test]
+fn clone_sender_after_receiver_dropped() {
+    let (tx, rx) = ipc::channel::<u32>().unwrap();
+    drop(rx);
+    let _tx2 = tx.clone();
+}
+
+#[test]
 fn transfer_closed_sender() {
     let (main_tx, main_rx) = ipc::channel().unwrap();
     let (transfer_tx, _) = ipc::channel::<()>().unwrap();
