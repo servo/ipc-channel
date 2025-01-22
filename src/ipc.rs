@@ -353,6 +353,10 @@ where
 {
     /// Create an [IpcSender] connected to a previously defined [IpcOneShotServer].
     ///
+    /// This function should not be called more than once per [IpcOneShotServer],
+    /// otherwise the behaviour is unpredictable.
+    /// See [issue 378](https://github.com/servo/ipc-channel/issues/378) for details.
+    ///
     /// [IpcSender]: struct.IpcSender.html
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
     pub fn connect(name: String) -> Result<IpcSender<T>, io::Error> {
