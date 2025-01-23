@@ -359,7 +359,7 @@ where
     ///
     /// [IpcSender]: struct.IpcSender.html
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
-    #[deprecated(since="0.20.0", note="please use `new_with_connector` instead")]
+    #[deprecated(since = "0.20.0", note = "please use `new_with_connector` instead")]
     pub fn connect(name: String) -> Result<IpcSender<T>, io::Error> {
         Ok(IpcSender {
             os_sender: OsIpcSender::connect(name)?,
@@ -876,7 +876,7 @@ impl<T> IpcOneShotServer<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
-    #[deprecated(since="0.20.0", note="please use `new_with_connector` instead")]
+    #[deprecated(since = "0.20.0", note = "please use `new_with_connector` instead")]
     pub fn new() -> Result<(IpcOneShotServer<T>, String), io::Error> {
         let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((
@@ -900,7 +900,6 @@ where
                 phantom: PhantomData,
             },
         ))
-
     }
 
     pub fn accept(self) -> Result<(IpcReceiver<T>, T), bincode::Error> {
