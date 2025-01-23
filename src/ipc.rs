@@ -359,6 +359,7 @@ where
     ///
     /// [IpcSender]: struct.IpcSender.html
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
+    #[deprecated(since="0.20.0", note="please use `new_with_connector` instead")]
     pub fn connect(name: String) -> Result<IpcSender<T>, io::Error> {
         Ok(IpcSender {
             os_sender: OsIpcSender::connect(name)?,
@@ -875,6 +876,7 @@ impl<T> IpcOneShotServer<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
+    #[deprecated(since="0.20.0", note="please use `new_with_connector` instead")]
     pub fn new() -> Result<(IpcOneShotServer<T>, String), io::Error> {
         let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((
@@ -886,6 +888,21 @@ where
         ))
     }
 
+    pub fn new_with_connector() -> Result<(IpcOneShotServer<T>, IpcConnector<T>), io::Error> {
+        let (os_server, name) = OsIpcOneShotServer::new()?;
+        Ok((
+            IpcOneShotServer {
+                os_server,
+                phantom: PhantomData,
+            },
+            IpcConnector {
+                name,
+                phantom: PhantomData,
+            },
+        ))
+
+    }
+
     pub fn accept(self) -> Result<(IpcReceiver<T>, T), bincode::Error> {
         let (os_receiver, ipc_message) = self.os_server.accept()?;
         Ok((
@@ -895,6 +912,25 @@ where
             },
             ipc_message.to()?,
         ))
+    }
+}
+
+/// A means of connecting to an [IpcOneShotServer].
+/// [IpcOneShotServer]: struct.IpcOneShotServer.html
+pub struct IpcConnector<T> {
+    name: String,
+    phantom: PhantomData<T>,
+}
+
+impl<T> IpcConnector<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    pub fn connect(self) -> Result<IpcSender<T>, io::Error> {
+        Ok(IpcSender {
+            os_sender: OsIpcSender::connect(self.name)?,
+            phantom: PhantomData,
+        })
     }
 }
 
