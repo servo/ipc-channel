@@ -272,10 +272,10 @@ fn cross_process_embedded_senders_fork() {
     target_os = "ios"
 )))]
 #[test]
-fn cross_process_embedded_senders_fork_with_connector() {
+fn cross_process_embedded_senders_fork_with_channels() {
     let person = ("Patrick Walton".to_owned(), 29);
-    let (server0, tx0) = IpcOneShotServer::new_with_sender().unwrap();
-    let (server2, tx2) = IpcOneShotServer::new_with_sender().unwrap();
+    let (tx0, rx0) = ipc::channel().unwrap();
+    let (tx2, rx2) = ipc::channel().unwrap();
     let child_pid = unsafe {
         fork(|| {
             let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
@@ -284,9 +284,9 @@ fn cross_process_embedded_senders_fork_with_connector() {
             tx2.send(person.clone()).unwrap();
         })
     };
-    let (_, tx1): (_, IpcSender<Person>) = server0.accept().unwrap();
+    let tx1 = rx0.recv().unwrap();
     tx1.send(person.clone()).unwrap();
-    let (_, received_person): (_, Person) = server2.accept().unwrap();
+    let received_person : Person = rx2.recv().unwrap();
     child_pid.wait();
     assert_eq!(received_person, person);
 }

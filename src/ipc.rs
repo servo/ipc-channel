@@ -359,7 +359,7 @@ where
     ///
     /// [IpcSender]: struct.IpcSender.html
     /// [IpcOneShotServer]: struct.IpcOneShotServer.html
-    #[deprecated(since="0.20.0", note="please use `new_with_sender` instead")]
+    #[deprecated(since="0.20.0", note="please use `ipc::channel` instead")]
     pub fn connect(name: String) -> Result<IpcSender<T>, io::Error> {
         Ok(IpcSender {
             os_sender: OsIpcSender::connect(name)?,
@@ -867,6 +867,7 @@ impl Serialize for OpaqueIpcReceiver {
 /// assert_eq!(data, vec![0x48, 0x65, 0x6b, 0x6b, 0x6f, 0x00]);
 /// ```
 /// [IpcSender]: struct.IpcSender.html
+#[deprecated(since="0.20.0", note="please use `ipc::channel` instead")]
 pub struct IpcOneShotServer<T> {
     os_server: OsIpcOneShotServer,
     phantom: PhantomData<T>,
@@ -876,7 +877,7 @@ impl<T> IpcOneShotServer<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
-    #[deprecated(since="0.20.0", note="please use `new_with_sender` instead")]
+    #[deprecated(since="0.20.0", note="please use `ipc::channel` instead")]
     pub fn new() -> Result<(IpcOneShotServer<T>, String), io::Error> {
         let (os_server, name) = OsIpcOneShotServer::new()?;
         Ok((
@@ -885,20 +886,6 @@ where
                 phantom: PhantomData,
             },
             name,
-        ))
-    }
-
-    pub fn new_with_sender() -> Result<(IpcOneShotServer<T>, IpcSender<T>), io::Error> {
-        let (os_server, name) = OsIpcOneShotServer::new()?;
-        Ok((
-            IpcOneShotServer {
-                os_server,
-                phantom: PhantomData,
-            },
-            IpcSender {
-                os_sender: OsIpcSender::connect(name)?,
-                phantom: PhantomData,
-            },
         ))
     }
 
