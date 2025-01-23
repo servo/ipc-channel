@@ -274,15 +274,13 @@ fn cross_process_embedded_senders_fork() {
 #[test]
 fn cross_process_embedded_senders_fork_with_connector() {
     let person = ("Patrick Walton".to_owned(), 29);
-    let (server0, server0_connector) = IpcOneShotServer::new_with_connector().unwrap();
-    let (server2, server2_connector) = IpcOneShotServer::new_with_connector().unwrap();
+    let (server0, tx0) = IpcOneShotServer::new_with_sender().unwrap();
+    let (server2, tx2) = IpcOneShotServer::new_with_sender().unwrap();
     let child_pid = unsafe {
         fork(|| {
             let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
-            let tx0 = server0_connector.connect().unwrap();
             tx0.send(tx1).unwrap();
             rx1.recv().unwrap();
-            let tx2: IpcSender<Person> = server2_connector.connect().unwrap();
             tx2.send(person.clone()).unwrap();
         })
     };
