@@ -7,7 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use ipc_channel::ipc::IpcOneShotServer;
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::{env, process};
 
 // These integration tests may be run on their own by issuing:
@@ -15,6 +17,7 @@ use std::{env, process};
 
 /// Test spawing a process which then acts as a client to a
 /// one-shot server in the parent process.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn spawn_one_shot_server_client() {
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_client_test_helper").to_string();
