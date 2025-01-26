@@ -833,7 +833,8 @@ impl Serialize for OpaqueIpcReceiver {
     }
 }
 
-/// A server associated with a given name.
+/// A server associated with a given name. The server is "one-shot" because
+/// it accepts only one connect request from a client.
 ///
 /// # Examples
 ///

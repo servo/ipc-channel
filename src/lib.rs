@@ -7,10 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! An implementation of the Rust channel API over process boundaries. Under the
-//! hood, this API uses Mach ports on Mac and file descriptor passing over Unix
-//! sockets on Linux. The serde library is used to serialize values for transport
-//! over the wire.
+#![doc = include_str!("../README.md")]
 //!
 //! # Features
 //! ## `force-inprocess`
@@ -18,14 +15,6 @@
 //! Force the `inprocess` backend to be used instead of the OS specific backend.
 //! The `inprocess` backend is a dummy back-end, that behaves like the real ones,
 //! but doesn't actually work between processes.
-//!
-//! ## `unstable`
-//!
-//! [IpcReceiver]: ipc/struct.IpcReceiver.html
-//! [IpcSender]: ipc/struct.IpcSender.html
-//! [IpcReceiverSet]: ipc/struct.IpcReceiverSet.html
-//! [IpcSharedMemory]: ipc/struct.IpcSharedMemory.html
-//! [OsIpcSharedMemory]: platform/struct.OsIpcSharedMemory.html
 
 #[cfg(any(
     feature = "force-inprocess",
