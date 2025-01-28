@@ -17,7 +17,6 @@ The easiest way to make your types implement `Serialize` and `Deserialize` is to
 
 ## Semantic differences from Rust channels
 
-* Rust channels are MPSC (multi-producer, single-consumer) whereas ipc-channels are SPSC (single-producer, single-consumer).
 * Rust channels can be either unbounded or bounded whereas ipc-channels are always unbounded and `send()` never blocks.
 * Rust channels do not consume OS IPC resources whereas ipc-channels consume IPC resources such as sockets, file descriptors, shared memory segments, named pipes, and such like, depending on the OS.
 * Rust channels transfer ownership of messages whereas ipc-channels serialize and deserialize messages.
