@@ -33,7 +33,36 @@ The server process calls `accept()` on the server to accept connect requests fro
 
 So, in order to bootstrap an IPC channel between processes, you create an instance of the `IpcOneShotServer` type, pass the resultant server name into the client process (perhaps via an environment variable or command line flag), and connect to the server in the client. See `spawn_one_shot_server_client()` in `integration_test.rs` for an example of how to do this using a command to spawn the client process and `cross_process_embedded_senders_fork()` in `test.rs` for an example of how to do this using Unix `fork()`[^fork] to create the client process.
 
- ## Implementation overview
+## Testing
+
+To run the tests, issue:
+
+~~~not_rust
+cargo test
+~~~
+
+Some tests are platform dependent, so for completeness it would be necessary to run the tests on all platforms:
+
+* iOS
+* macOS†
+* Unix variants:
+  * Android
+  * FreeBD
+  * Illumos
+  * Linux (Ubuntu†)
+  * OpenBSD
+* WASI
+* Windows†
+
+The platforms marked † are covered by CI.
+
+To run the benchmarks, issue:
+
+~~~not_rust
+cargo bench
+~~~
+
+## Implementation overview
 
 `ipc-channel` is implemented in terms of native IPC primitives: file descriptor passing over Unix sockets on Unix variants, Mach ports on macOS, and named pipes on Windows.
 
