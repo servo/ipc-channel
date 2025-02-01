@@ -58,9 +58,9 @@ The platforms marked † are covered by CI.
 
 To run the benchmarks, issue:
 
-~~~not_rust
+```console
 cargo bench
-~~~
+```
 
 ## Implementation overview
 
