@@ -37,9 +37,9 @@ So, in order to bootstrap an IPC channel between processes, you create an instan
 
 To run the tests, issue:
 
-~~~not_rust
+```console
 cargo test
-~~~
+```
 
 Some tests are platform dependent, so for completeness it would be necessary to run the tests on all platforms:
 
