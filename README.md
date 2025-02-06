@@ -47,7 +47,7 @@ Some tests are platform dependent, so for completeness it would be necessary to 
 * macOS†
 * Unix variants:
   * Android
-  * FreeBD
+  * FreeBSD
   * Illumos
   * Linux (Ubuntu†)
   * OpenBSD
