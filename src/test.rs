@@ -706,9 +706,9 @@ fn transfer_closed_sender() {
 #[cfg(feature = "async")]
 #[test]
 fn test_receiver_stream() {
-    use futures::task::Context;
-    use futures::task::Poll;
-    use futures::Stream;
+    use futures_core::task::Context;
+    use futures_core::task::Poll;
+    use futures_core::Stream;
     use std::pin::Pin;
     let (tx, rx) = ipc::channel().unwrap();
     let (waker, count) = futures_test::task::new_count_waker();
