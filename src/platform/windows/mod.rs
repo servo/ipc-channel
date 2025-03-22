@@ -65,6 +65,9 @@ mod aliased_cell;
 
 use self::aliased_cell::AliasedCell;
 
+#[cfg(test)]
+mod tests;
+
 lazy_static! {
     static ref CURRENT_PROCESS_ID: u32 = unsafe { GetCurrentProcessId() };
     static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { GetCurrentProcess() });
