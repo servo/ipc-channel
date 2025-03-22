@@ -37,7 +37,8 @@ use windows::{
         },
         Storage::FileSystem::{
             CreateFileA, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED,
-            FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING, PIPE_ACCESS_INBOUND,
+            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING,
+            PIPE_ACCESS_DUPLEX,
         },
         System::{
             Memory::{
@@ -61,6 +62,7 @@ use windows::{
 };
 
 mod aliased_cell;
+
 use self::aliased_cell::AliasedCell;
 
 lazy_static! {
@@ -124,6 +126,37 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), WinError> {
     let sender = OsIpcSender::connect_named(&pipe_name)?;
 
     Ok((sender, receiver))
+}
+
+/// Unify the creation of sender and receiver duplex pipes to allow for either to be spawned first.
+/// Requires the use of a duplex and therefore lets both sides read and write.
+unsafe fn create_duplex(pipe_name: &CString) -> Result<HANDLE, WinError> {
+    if let Ok(handle) = CreateFileA(
+        PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+        FILE_GENERIC_WRITE.0 | FILE_GENERIC_READ.0,
+        FILE_SHARE_MODE(0),
+        None, // lpSecurityAttributes
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        None,
+    ) {
+        Ok(handle)
+    } else {
+        let handle = CreateNamedPipeA(
+            PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
+            // 1 max instance of this pipe
+            1,
+            // out/in buffer sizes
+            0,
+            PIPE_BUFFER_SIZE as u32,
+            0, // default timeout for WaitNamedPipe (0 == 50ms as default)
+            None,
+        )?;
+
+        Ok(handle)
+    }
 }
 
 struct MessageHeader {
@@ -1071,18 +1104,7 @@ impl OsIpcReceiver {
     fn new_named(pipe_name: &CString) -> Result<OsIpcReceiver, WinError> {
         unsafe {
             // create the pipe server
-            let handle = CreateNamedPipeA(
-                PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-                PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
-                // 1 max instance of this pipe
-                1,
-                // out/in buffer sizes
-                0,
-                PIPE_BUFFER_SIZE as u32,
-                0, // default timeout for WaitNamedPipe (0 == 50ms as default)
-                None,
-            )?;
+            let handle = create_duplex(pipe_name)?;
 
             Ok(OsIpcReceiver {
                 reader: RefCell::new(MessageReader::new(WinHandle::new(handle))),
@@ -1253,15 +1275,7 @@ impl OsIpcSender {
     /// Connect to a pipe server.
     fn connect_named(pipe_name: &CString) -> Result<OsIpcSender, WinError> {
         unsafe {
-            let handle = CreateFileA(
-                PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-                FILE_GENERIC_WRITE.0,
-                FILE_SHARE_MODE(0),
-                None, // lpSecurityAttributes
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                None,
-            )?;
+            let handle = create_duplex(pipe_name)?;
 
             win32_trace!("[c {:?}] connect_to_server success", handle);
 
