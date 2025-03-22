@@ -1,16 +1,11 @@
 use crate::platform::windows::{channel, OutOfBandMessage};
 use crate::platform::OsIpcSharedMemory;
-use windows::core::{Error, HRESULT, PCSTR};
+use windows::core::{HRESULT, PCSTR};
 use windows::Win32::Foundation::{
-    CloseHandle, CompareObjectHandles, ERROR_ACCESS_DENIED, ERROR_INVALID_HANDLE, HANDLE,
-    INVALID_HANDLE_VALUE,
+    CloseHandle, CompareObjectHandles, ERROR_INVALID_HANDLE, HANDLE, INVALID_HANDLE_VALUE,
 };
-use windows::Win32::Storage::FileSystem::READ_CONTROL;
 use windows::Win32::System::Memory::{CreateFileMappingA, PAGE_READWRITE};
-use windows::Win32::System::Threading::{
-    CreateEventA, GetCurrentProcess, GetCurrentProcessId, GetProcessId, OpenProcess,
-    PROCESS_ACCESS_RIGHTS, PROCESS_DUP_HANDLE,
-};
+use windows::Win32::System::Threading::{CreateEventA, GetCurrentProcessId};
 
 #[test]
 fn test_recover_handles_empty() {
@@ -344,6 +339,137 @@ fn test_recover_handles_shmem() {
 
     // Clean up
     unsafe { CloseHandle(HANDLE(oob.shmem_handles[0].0 as _)).unwrap() };
+}
+
+#[test]
+fn test_recover_handles_different_process() {
+    let current_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = current_process_id + 1; // Different from current process
+    let mut oob = OutOfBandMessage::new(target_process_id);
+
+    // Create some real handles
+    let event_handle = unsafe { CreateEventA(None, true, false, None).unwrap() };
+    let file_mapping_handle = unsafe {
+        CreateFileMappingA(INVALID_HANDLE_VALUE, None, PAGE_READWRITE, 0, 1024, None).unwrap()
+    };
+    let big_data_event_handle = unsafe { CreateEventA(None, true, false, None).unwrap() };
+
+    // Add these handles to the OutOfBandMessage
+    oob.channel_handles.push(event_handle.0 as isize);
+    oob.shmem_handles
+        .push((file_mapping_handle.0 as isize, 1024));
+    oob.big_data_receiver_handle = Some((big_data_event_handle.0 as isize, 2048));
+
+    // Execute the function
+    assert!(oob.recover_handles().is_ok());
+
+    // Check that handles were duplicated correctly
+    assert_ne!(oob.channel_handles[0], event_handle.0 as isize);
+    assert_ne!(oob.shmem_handles[0].0, file_mapping_handle.0 as isize);
+    assert_ne!(
+        oob.big_data_receiver_handle.unwrap().0,
+        big_data_event_handle.0 as isize
+    );
+
+    // Verify that the new handles are valid
+    unsafe {
+        assert!(CompareObjectHandles(HANDLE(oob.channel_handles[0] as _), event_handle).as_bool());
+        assert!(
+            CompareObjectHandles(HANDLE(oob.shmem_handles[0].0 as _), file_mapping_handle)
+                .as_bool()
+        );
+        assert!(CompareObjectHandles(
+            HANDLE(oob.big_data_receiver_handle.unwrap().0 as _),
+            big_data_event_handle
+        )
+        .as_bool());
+    }
+
+    // Clean up
+    unsafe {
+        CloseHandle(event_handle).unwrap();
+        CloseHandle(file_mapping_handle).unwrap();
+        CloseHandle(big_data_event_handle).unwrap();
+        CloseHandle(HANDLE(oob.channel_handles[0] as _)).unwrap();
+        CloseHandle(HANDLE(oob.shmem_handles[0].0 as _)).unwrap();
+        CloseHandle(HANDLE(oob.big_data_receiver_handle.unwrap().0 as _)).unwrap();
+    }
+}
+
+#[test]
+fn test_recover_handles_mixed_shmem_handles() {
+    let target_process_id = unsafe { GetCurrentProcessId() };
+    let mut oob = OutOfBandMessage::new(target_process_id);
+
+    // Create a valid shared memory handle
+    let valid_handle = unsafe {
+        CreateFileMappingA(
+            INVALID_HANDLE_VALUE,
+            None,
+            PAGE_READWRITE,
+            0,
+            1024,
+            PCSTR::null(),
+        )
+    }
+    .expect("Failed to create file mapping");
+
+    // Add a mix of valid and invalid handles to shmem_handles
+    oob.shmem_handles.push((valid_handle.0 as isize, 1024));
+    oob.shmem_handles
+        .push((INVALID_HANDLE_VALUE.0 as isize, 512));
+
+    // Recover handles
+    assert!(oob.recover_handles().is_ok());
+
+    // Verify that the valid handle was duplicated and the invalid handle remains unchanged
+    assert_ne!(oob.shmem_handles[0].0, valid_handle.0 as isize);
+    assert_ne!(oob.shmem_handles[0].0, INVALID_HANDLE_VALUE.0 as isize);
+    assert_ne!(oob.shmem_handles[1].0, INVALID_HANDLE_VALUE.0 as isize);
+    assert_ne!(oob.shmem_handles[1].0, target_process_id as isize);
+
+    // Clean up
+    unsafe {
+        CloseHandle(valid_handle).expect("Failed to close valid handle");
+        CloseHandle(HANDLE(oob.shmem_handles[0].0 as _))
+            .expect("Failed to close duplicated handle");
+        CloseHandle(HANDLE(oob.shmem_handles[1].0 as _)).expect("Failed to close invalid handle");
+    }
+}
+
+#[test]
+fn test_recover_handles_mixed_validity() {
+    let target_process_id = unsafe { GetCurrentProcessId() };
+    let mut oob = OutOfBandMessage::new(target_process_id);
+
+    // Create some valid handles
+    let valid_handles: Vec<HANDLE> = (0..3)
+        .map(|_| unsafe { CreateEventA(None, false, false, None).unwrap() })
+        .collect();
+
+    // Mix valid and invalid handles
+    oob.channel_handles = vec![
+        valid_handles[0].0 as isize,
+        INVALID_HANDLE_VALUE.0 as isize,
+        valid_handles[1].0 as isize,
+        INVALID_HANDLE_VALUE.0 as isize,
+        valid_handles[2].0 as isize,
+    ];
+
+    assert!(oob.recover_handles().is_ok());
+
+    // Check that valid handles were duplicated and invalid ones were ignored
+    assert!(oob.channel_handles.len() == 5);
+    assert!(oob.channel_handles[0] != valid_handles[0].0 as isize);
+    assert!(oob.channel_handles[1] != INVALID_HANDLE_VALUE.0 as isize);
+    assert!(oob.channel_handles[2] != valid_handles[1].0 as isize);
+    assert!(oob.channel_handles[3] != INVALID_HANDLE_VALUE.0 as isize);
+    assert!(oob.channel_handles[4] != valid_handles[2].0 as isize);
+
+    // Clean up
+    for handle in valid_handles {
+        unsafe { CloseHandle(handle).unwrap() };
+    }
 }
 
 #[test]
