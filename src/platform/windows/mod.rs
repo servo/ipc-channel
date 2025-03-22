@@ -207,14 +207,11 @@ impl<'data> Message<'data> {
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
         if self.oob_len > 0 {
-            let oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
+            let mut oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
-            if oob.target_process_id != *CURRENT_PROCESS_ID {
-                panic!("Windows IPC channel received handles intended for pid {}, but this is pid {}. \
-                       This likely happened because a receiver was transferred while it had outstanding data \
-                       that contained a channel or shared memory in its pipe. \
-                       This isn't supported in the Windows implementation.",
-                       oob.target_process_id, *CURRENT_PROCESS_ID);
+            if let Err(e) = oob.recover_handles() {
+                win32_trace!("Failed to recover handles: {:?}", e);
+                return None;
             }
             Some(oob)
         } else {
@@ -269,6 +266,70 @@ impl OutOfBandMessage {
         !self.channel_handles.is_empty()
             || !self.shmem_handles.is_empty()
             || self.big_data_receiver_handle.is_some()
+    }
+
+    /// Recover handles that are no longer valid in the current process via duplication.
+    /// Duplicates the handle from the target process to the current process.
+    fn recover_handles(&mut self) -> Result<(), WinError> {
+        // get current procees id and target process.
+        let current_process = unsafe { GetCurrentProcess() };
+        let target_process =
+            unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, self.target_process_id)? };
+
+        // Duplicate channel handles.
+        for handle in &mut self.channel_handles {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Duplicate any shmem handles.
+        for (handle, _) in &mut self.shmem_handles {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Duplicate any big data receivers.
+        if let Some((handle, _)) = &mut self.big_data_receiver_handle {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Close process handle.
+        unsafe { CloseHandle(target_process)? };
+        Ok(())
     }
 }
 
