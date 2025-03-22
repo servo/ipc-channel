@@ -235,18 +235,7 @@ impl<'data> Message<'data> {
 /// in another channel's buffer when that channel got transferred to another
 /// process.  On Windows, we duplicate handles on the sender side to a specific
 /// receiver.  If the wrong receiver gets it, those handles are not valid.
-///
-/// TODO(vlad): We could attempt to recover from the above situation by
-/// duplicating from the intended target process to ourselves (the receiver).
-/// That would only work if the intended process a) still exists; b) can be
-/// opened by the receiver with handle dup privileges.  Another approach
-/// could be to use a separate dedicated process intended purely for handle
-/// passing, though that process would need to be global to any processes
-/// amongst which you want to share channels or connect one-shot servers to.
-/// There may be a system process that we could use for this purpose, but
-/// I haven't found one -- and in the system process case, we'd need to ensure
-/// that we don't leak the handles (e.g. dup a handle to the system process,
-/// and then everything dies -- we don't want those resources to be leaked).
+/// These handles are recovered by the `recover_handles` method.
 #[derive(Debug)]
 struct OutOfBandMessage {
     target_process_id: u32,
@@ -274,7 +263,7 @@ impl OutOfBandMessage {
     /// Recover handles that are no longer valid in the current process via duplication.
     /// Duplicates the handle from the target process to the current process.
     fn recover_handles(&mut self) -> Result<(), WinError> {
-        // get current procees id and target process.
+        // get current process id and target process.
         let current_process = unsafe { GetCurrentProcess() };
         let target_process =
             unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, self.target_process_id)? };
