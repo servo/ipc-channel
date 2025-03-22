@@ -180,7 +180,7 @@ struct Message<'data> {
 }
 
 impl<'data> Message<'data> {
-    fn from_bytes(bytes: &'data [u8]) -> Option<Message> {
+    fn from_bytes(bytes: &'data [u8]) -> Option<Message<'data>> {
         if bytes.len() < mem::size_of::<MessageHeader>() {
             return None;
         }
