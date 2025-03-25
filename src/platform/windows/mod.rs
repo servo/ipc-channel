@@ -134,7 +134,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), WinError> {
 /// Unify the creation of sender and receiver duplex pipes to allow for either to be spawned first.
 /// Requires the use of a duplex and therefore lets both sides read and write.
 unsafe fn create_duplex(pipe_name: &CString) -> Result<HANDLE, WinError> {
-    if let Ok(handle) = CreateFileA(
+    CreateFileA(
         PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
         FILE_GENERIC_WRITE.0 | FILE_GENERIC_READ.0,
         FILE_SHARE_MODE(0),
@@ -142,24 +142,19 @@ unsafe fn create_duplex(pipe_name: &CString) -> Result<HANDLE, WinError> {
         OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL,
         None,
-    ) {
-        Ok(handle)
-    } else {
-        let handle = CreateNamedPipeA(
-            PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
-            // 1 max instance of this pipe
-            1,
-            // out/in buffer sizes
-            0,
-            PIPE_BUFFER_SIZE as u32,
-            0, // default timeout for WaitNamedPipe (0 == 50ms as default)
-            None,
-        )?;
-
-        Ok(handle)
-    }
+    )
+    .or(CreateNamedPipeA(
+        PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
+        // 1 max instance of this pipe
+        1,
+        // out/in buffer sizes
+        0,
+        PIPE_BUFFER_SIZE as u32,
+        0, // default timeout for WaitNamedPipe (0 == 50ms as default)
+        None,
+    ))
 }
 
 struct MessageHeader {
