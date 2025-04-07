@@ -51,8 +51,8 @@ fn spawn_one_shot_server_client() {
 fn spawn_receiver_sender_client() {
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_receiver_sender_client").to_string();
 
-    let (server, token) =
-        IpcOneShotServer::<IpcReceiver<String>>::new().expect("Failed to create IPC one-shot server.");
+    let (server, token) = IpcOneShotServer::<IpcReceiver<String>>::new()
+        .expect("Failed to create IPC one-shot server.");
 
     let mut command = process::Command::new(executable_path);
     let child_process = command.arg(token);
@@ -81,10 +81,11 @@ fn spawn_receiver_sender_client() {
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn spawn_used_receiver_sender_client() {
-    let executable_path: String = env!("CARGO_BIN_EXE_spawn_used_receiver_sender_client").to_string();
+    let executable_path: String =
+        env!("CARGO_BIN_EXE_spawn_used_receiver_sender_client").to_string();
 
-    let (server, token) =
-        IpcOneShotServer::<IpcReceiver<String>>::new().expect("Failed to create IPC one-shot server.");
+    let (server, token) = IpcOneShotServer::<IpcReceiver<String>>::new()
+        .expect("Failed to create IPC one-shot server.");
 
     let mut command = process::Command::new(executable_path);
     let child_process = command.arg(token);

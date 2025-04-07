@@ -177,7 +177,7 @@ fn embedded_receivers_used_before_and_after_transmission() {
     super_tx.send(person_and_receiver).unwrap();
     let received_person_and_receiver = super_rx.recv().unwrap();
     assert_eq!(received_person_and_receiver.0, person);
-    
+
     sub_tx.send(person.clone()).unwrap();
     let received_person2 = received_person_and_receiver.1.recv().unwrap();
     assert_eq!(received_person2, person);

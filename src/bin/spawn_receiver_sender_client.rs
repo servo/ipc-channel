@@ -19,9 +19,12 @@ fn main() {
 
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
 
-    let tx: IpcSender<IpcReceiver<String>> = IpcSender::connect(token.to_string()).expect("connect failed");
+    let tx: IpcSender<IpcReceiver<String>> =
+        IpcSender::connect(token.to_string()).expect("connect failed");
     tx.send(sub_rx).expect("send failed");
-    sub_tx.send("test message".to_string()).expect("send failed");
+    sub_tx
+        .send("test message".to_string())
+        .expect("send failed");
 
     process::exit(0);
 }
