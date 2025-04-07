@@ -254,6 +254,8 @@ fn cross_process_embedded_senders_spawn() {
         unsafe {
             libc::exit(0);
         }
+    } else {
+        assert!(false, "dead testcase");
     }
 }
 
