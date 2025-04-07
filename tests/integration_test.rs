@@ -73,3 +73,35 @@ fn spawn_receiver_sender_client() {
         result.code().expect("exit status code not available")
     );
 }
+
+/// Test spawing a process which then acts as a client to a
+/// one-shot server in the parent process. The client sends a
+/// receiver, which it has already used, and then send a
+/// message to the receiver.
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+#[test]
+fn spawn_used_receiver_sender_client() {
+    let executable_path: String = env!("CARGO_BIN_EXE_spawn_used_receiver_sender_client").to_string();
+
+    let (server, token) =
+        IpcOneShotServer::<IpcReceiver<String>>::new().expect("Failed to create IPC one-shot server.");
+
+    let mut command = process::Command::new(executable_path);
+    let child_process = command.arg(token);
+
+    let mut child = child_process
+        .spawn()
+        .expect("Failed to start child process");
+
+    let (_rx, sub_rx) = server.accept().expect("accept failed");
+
+    let msg = sub_rx.recv().unwrap();
+    assert_eq!("test message", msg);
+
+    let result = child.wait().expect("wait for child process failed");
+    assert!(
+        result.success(),
+        "child process failed with exit status code {}",
+        result.code().expect("exit status code not available")
+    );
+}
