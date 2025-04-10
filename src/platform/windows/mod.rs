@@ -37,7 +37,8 @@ use windows::{
         },
         Storage::FileSystem::{
             CreateFileA, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED,
-            FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING, PIPE_ACCESS_INBOUND,
+            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_MODE, OPEN_EXISTING,
+            PIPE_ACCESS_DUPLEX,
         },
         System::{
             Memory::{
@@ -61,7 +62,11 @@ use windows::{
 };
 
 mod aliased_cell;
+
 use self::aliased_cell::AliasedCell;
+
+#[cfg(test)]
+mod tests;
 
 lazy_static! {
     static ref CURRENT_PROCESS_ID: u32 = unsafe { GetCurrentProcessId() };
@@ -126,6 +131,32 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), WinError> {
     Ok((sender, receiver))
 }
 
+/// Unify the creation of sender and receiver duplex pipes to allow for either to be spawned first.
+/// Requires the use of a duplex and therefore lets both sides read and write.
+unsafe fn create_duplex(pipe_name: &CString) -> Result<HANDLE, WinError> {
+    CreateFileA(
+        PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+        FILE_GENERIC_WRITE.0 | FILE_GENERIC_READ.0,
+        FILE_SHARE_MODE(0),
+        None, // lpSecurityAttributes
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        None,
+    )
+    .or(CreateNamedPipeA(
+        PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
+        // 1 max instance of this pipe
+        1,
+        // out/in buffer sizes
+        0,
+        PIPE_BUFFER_SIZE as u32,
+        0, // default timeout for WaitNamedPipe (0 == 50ms as default)
+        None,
+    ))
+}
+
 struct MessageHeader {
     data_len: u32,
     oob_len: u32,
@@ -144,7 +175,7 @@ struct Message<'data> {
 }
 
 impl<'data> Message<'data> {
-    fn from_bytes(bytes: &'data [u8]) -> Option<Message> {
+    fn from_bytes(bytes: &'data [u8]) -> Option<Message<'data>> {
         if bytes.len() < mem::size_of::<MessageHeader>() {
             return None;
         }
@@ -174,14 +205,11 @@ impl<'data> Message<'data> {
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
         if self.oob_len > 0 {
-            let oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
+            let mut oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
-            if oob.target_process_id != *CURRENT_PROCESS_ID {
-                panic!("Windows IPC channel received handles intended for pid {}, but this is pid {}. \
-                       This likely happened because a receiver was transferred while it had outstanding data \
-                       that contained a channel or shared memory in its pipe. \
-                       This isn't supported in the Windows implementation.",
-                       oob.target_process_id, *CURRENT_PROCESS_ID);
+            if let Err(e) = oob.recover_handles() {
+                win32_trace!("Failed to recover handles: {:?}", e);
+                return None;
             }
             Some(oob)
         } else {
@@ -202,18 +230,7 @@ impl<'data> Message<'data> {
 /// in another channel's buffer when that channel got transferred to another
 /// process.  On Windows, we duplicate handles on the sender side to a specific
 /// receiver.  If the wrong receiver gets it, those handles are not valid.
-///
-/// TODO(vlad): We could attempt to recover from the above situation by
-/// duplicating from the intended target process to ourselves (the receiver).
-/// That would only work if the intended process a) still exists; b) can be
-/// opened by the receiver with handle dup privileges.  Another approach
-/// could be to use a separate dedicated process intended purely for handle
-/// passing, though that process would need to be global to any processes
-/// amongst which you want to share channels or connect one-shot servers to.
-/// There may be a system process that we could use for this purpose, but
-/// I haven't found one -- and in the system process case, we'd need to ensure
-/// that we don't leak the handles (e.g. dup a handle to the system process,
-/// and then everything dies -- we don't want those resources to be leaked).
+/// These handles are recovered by the `recover_handles` method.
 #[derive(Debug)]
 struct OutOfBandMessage {
     target_process_id: u32,
@@ -236,6 +253,70 @@ impl OutOfBandMessage {
         !self.channel_handles.is_empty()
             || !self.shmem_handles.is_empty()
             || self.big_data_receiver_handle.is_some()
+    }
+
+    /// Recover handles that are no longer valid in the current process via duplication.
+    /// Duplicates the handle from the target process to the current process.
+    fn recover_handles(&mut self) -> Result<(), WinError> {
+        // get current process id and target process.
+        let current_process = unsafe { GetCurrentProcess() };
+        let target_process =
+            unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, self.target_process_id)? };
+
+        // Duplicate channel handles.
+        for handle in &mut self.channel_handles {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Duplicate any shmem handles.
+        for (handle, _) in &mut self.shmem_handles {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Duplicate any big data receivers.
+        if let Some((handle, _)) = &mut self.big_data_receiver_handle {
+            let mut new_handle = INVALID_HANDLE_VALUE;
+            unsafe {
+                DuplicateHandle(
+                    target_process,
+                    HANDLE(*handle as _),
+                    current_process,
+                    &mut new_handle,
+                    0,
+                    false,
+                    DUPLICATE_SAME_ACCESS,
+                )?;
+            }
+            *handle = new_handle.0 as isize;
+        }
+
+        // Close process handle.
+        unsafe { CloseHandle(target_process)? };
+        Ok(())
     }
 }
 
@@ -1071,18 +1152,7 @@ impl OsIpcReceiver {
     fn new_named(pipe_name: &CString) -> Result<OsIpcReceiver, WinError> {
         unsafe {
             // create the pipe server
-            let handle = CreateNamedPipeA(
-                PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-                PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
-                // 1 max instance of this pipe
-                1,
-                // out/in buffer sizes
-                0,
-                PIPE_BUFFER_SIZE as u32,
-                0, // default timeout for WaitNamedPipe (0 == 50ms as default)
-                None,
-            )?;
+            let handle = create_duplex(pipe_name)?;
 
             Ok(OsIpcReceiver {
                 reader: RefCell::new(MessageReader::new(WinHandle::new(handle))),
@@ -1253,15 +1323,7 @@ impl OsIpcSender {
     /// Connect to a pipe server.
     fn connect_named(pipe_name: &CString) -> Result<OsIpcSender, WinError> {
         unsafe {
-            let handle = CreateFileA(
-                PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-                FILE_GENERIC_WRITE.0,
-                FILE_SHARE_MODE(0),
-                None, // lpSecurityAttributes
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                None,
-            )?;
+            let handle = create_duplex(pipe_name)?;
 
             win32_trace!("[c {:?}] connect_to_server success", handle);
 
