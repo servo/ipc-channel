@@ -143,18 +143,20 @@ unsafe fn create_duplex(pipe_name: &CString) -> Result<HANDLE, WinError> {
         FILE_ATTRIBUTE_NORMAL,
         None,
     )
-    .or(CreateNamedPipeA(
-        PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
-        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
-        // 1 max instance of this pipe
-        1,
-        // out/in buffer sizes
-        0,
-        PIPE_BUFFER_SIZE as u32,
-        0, // default timeout for WaitNamedPipe (0 == 50ms as default)
-        None,
-    ))
+    .or_else(|_| {
+        CreateNamedPipeA(
+            PCSTR::from_raw(pipe_name.as_ptr() as *const u8),
+            PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_REJECT_REMOTE_CLIENTS,
+            // 1 max instance of this pipe
+            1,
+            // out/in buffer sizes
+            0,
+            PIPE_BUFFER_SIZE as u32,
+            0, // default timeout for WaitNamedPipe (0 == 50ms as default)
+            None,
+        )
+    })
 }
 
 struct MessageHeader {
