@@ -45,7 +45,7 @@ mio = { version = "1.0", default-features = false, features = ["os-ext"] }
 tempfile = "3.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-rand = "0.9"
+rand = "0.8"
 
 [dev-dependencies]
 crossbeam-utils = "0.8"
