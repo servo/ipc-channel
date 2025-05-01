@@ -581,7 +581,7 @@ impl<'de> Deserialize<'de> for IpcSharedMemory {
             |os_ipc_shared_memory_regions_for_deserialization| {
                 let mut regions =  os_ipc_shared_memory_regions_for_deserialization.borrow_mut();
                 let Some(region) = regions.get_mut(index) else {
-                    return Err(format!("Cannot consume shared memory region {index}, there are only {} regions available", regions.len()));
+                    return Err(format!("Cannot consume shared memory region at index {index}, there are only {} regions available", regions.len()));
                 };
 
                 region.take().ok_or_else(|| format!("Shared memory region {index} has already been consumed"))
