@@ -47,7 +47,10 @@ impl RouterProxy {
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let (wakeup_sender, wakeup_receiver) = ipc::channel().unwrap();
-        thread::spawn(move || Router::new(msg_receiver, wakeup_receiver).run());
+        thread::Builder::new()
+            .name("router-proxy".to_string())
+            .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
+            .expect("Failed to spawn router proxy thread");
         RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender,

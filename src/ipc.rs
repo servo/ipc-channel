@@ -13,7 +13,7 @@ use crate::platform::{
 };
 
 use bincode;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::error::Error as StdError;
@@ -579,13 +579,15 @@ impl<'de> Deserialize<'de> for IpcSharedMemory {
 
         let os_shared_memory = OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
             |os_ipc_shared_memory_regions_for_deserialization| {
-                // FIXME(pcwalton): This could panic if the data was corrupt and the index was out
-                // of bounds. We should return an `Err` result instead.
-                os_ipc_shared_memory_regions_for_deserialization.borrow_mut()[index]
-                    .take()
-                    .unwrap()
+                let mut regions =  os_ipc_shared_memory_regions_for_deserialization.borrow_mut();
+                let Some(region) = regions.get_mut(index) else {
+                    return Err(format!("Cannot consume shared memory region at index {index}, there are only {} regions available", regions.len()));
+                };
+
+                region.take().ok_or_else(|| format!("Shared memory region {index} has already been consumed"))
             },
-        );
+        ).map_err(D::Error::custom)?;
+
         Ok(IpcSharedMemory {
             os_shared_memory: Some(os_shared_memory),
         })
