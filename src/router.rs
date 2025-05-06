@@ -13,9 +13,8 @@
 //! message to a crossbeam `Sender<T>` or `Receiver<T>`. You should use the global `ROUTER` to
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
 
-use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 
 use crate::ipc::OpaqueIpcReceiver;
@@ -23,12 +22,10 @@ use crate::ipc::{self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResu
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-lazy_static! {
-    /// Global object wrapping a `RouterProxy`.
-    /// Add routes ([add_route](RouterProxy::add_route)), or convert IpcReceiver<T>
-    /// to crossbeam channels (e.g. [route_ipc_receiver_to_new_crossbeam_receiver](RouterProxy::route_ipc_receiver_to_new_crossbeam_receiver))
-    pub static ref ROUTER: RouterProxy = RouterProxy::new();
-}
+/// Global object wrapping a `RouterProxy`.
+/// Add routes ([add_route](RouterProxy::add_route)), or convert IpcReceiver<T>
+/// to crossbeam channels (e.g. [route_ipc_receiver_to_new_crossbeam_receiver](RouterProxy::route_ipc_receiver_to_new_crossbeam_receiver))
+pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
 
 /// A `RouterProxy` provides methods for talking to the router. Calling
 /// [new](RouterProxy::new) automatically spins up a router thread which

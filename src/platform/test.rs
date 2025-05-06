@@ -242,11 +242,10 @@ fn with_n_fds(n: usize, size: usize) {
 mod fragment_tests {
     use super::with_n_fds;
     use crate::platform;
-    use lazy_static::lazy_static;
+    use std::sync::LazyLock;
 
-    lazy_static! {
-        static ref FRAGMENT_SIZE: usize = platform::OsIpcSender::get_max_fragment_size();
-    }
+    static FRAGMENT_SIZE: LazyLock<usize> =
+        LazyLock::new(platform::OsIpcSender::get_max_fragment_size);
 
     #[test]
     fn full_packet() {
