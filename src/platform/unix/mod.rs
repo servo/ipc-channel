@@ -86,7 +86,7 @@ static SYSTEM_SENDBUF_SIZE: LazyLock<usize> = LazyLock::new(|| {
 });
 
 // The pid of the current process which is used to create unique IDs
-static PID: LazyLock<c_int> = LazyLock::new(|| unsafe { libc::getpid() });
+static PID: LazyLock<u32> = LazyLock::new(std::process::id);
 
 // A global count used to create unique IDs
 static SHM_COUNT: AtomicUsize = AtomicUsize::new(0);

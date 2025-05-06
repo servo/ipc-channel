@@ -9,7 +9,7 @@ use windows::Win32::System::Threading::{CreateEventA, GetCurrentProcessId};
 
 #[test]
 fn test_recover_handles_empty() {
-    let target_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = std::process::id();
     let mut oob = OutOfBandMessage::new(target_process_id);
     assert!(oob.recover_handles().is_ok());
 }
@@ -26,7 +26,7 @@ fn test_recover_handles_duplicates_channel_handles() {
     }
 
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: handles.clone(),
         shmem_handles: vec![],
         big_data_receiver_handle: None,
@@ -53,7 +53,7 @@ fn test_recover_handles_duplicates_channel_handles() {
 #[test]
 fn test_recover_handles_empty_channel_handles() {
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: vec![],
         shmem_handles: vec![],
         big_data_receiver_handle: None,
@@ -88,7 +88,7 @@ fn test_recover_handles_duplicates_shmem_handles() {
     }
 
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: vec![],
         shmem_handles: handles.clone().into_iter().zip(sizes.into_iter()).collect(),
         big_data_receiver_handle: None,
@@ -119,7 +119,7 @@ fn test_recover_handles_duplicates_shmem_handles() {
 #[test]
 fn test_recover_handles_empty_shmem_handles() {
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: vec![],
         shmem_handles: vec![],
         big_data_receiver_handle: None,
@@ -137,7 +137,7 @@ fn test_recover_handles_duplicates_big_data_receiver_handle() {
     let event_handle = event.0 as isize;
 
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: vec![],
         shmem_handles: vec![],
         big_data_receiver_handle: Some((event_handle, 1024)),
@@ -171,7 +171,7 @@ fn test_recover_handles_with_no_big_data_receiver() {
         handles.push(event.0 as isize);
     }
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: vec![handles[0], handles[1], handles[2]],
         shmem_handles: vec![(handles[3], 100), (handles[4], 200)],
         big_data_receiver_handle: None,
@@ -226,7 +226,7 @@ fn test_recover_handles_fails_with_invalid_handles() {
     }
 
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: handles.clone(),
         shmem_handles: vec![],
         big_data_receiver_handle: None,
@@ -256,7 +256,7 @@ fn test_recover_handles_fails_with_invalid_handles() {
 #[test]
 fn test_recover_handles_large_number_of_handles() {
     let mut oob = OutOfBandMessage {
-        target_process_id: unsafe { GetCurrentProcessId() },
+        target_process_id: std::process::id(),
         channel_handles: Vec::new(),
         shmem_handles: Vec::new(),
         big_data_receiver_handle: None,
@@ -312,7 +312,7 @@ fn test_recover_handles_large_number_of_handles() {
 #[test]
 fn test_recover_handles_channel() {
     let (sender, _) = channel().unwrap();
-    let target_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = std::process::id();
     let mut oob = OutOfBandMessage::new(target_process_id);
 
     oob.channel_handles.push(sender.handle.as_raw().0 as _);
@@ -328,7 +328,7 @@ fn test_recover_handles_channel() {
 #[test]
 fn test_recover_handles_shmem() {
     let shmem = OsIpcSharedMemory::new(1024).unwrap();
-    let target_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = std::process::id();
     let mut oob = OutOfBandMessage::new(target_process_id);
 
     oob.shmem_handles.push((shmem.handle.as_raw().0 as _, 1024));
@@ -343,7 +343,7 @@ fn test_recover_handles_shmem() {
 
 #[test]
 fn test_recover_handles_different_process() {
-    let current_process_id = unsafe { GetCurrentProcessId() };
+    let current_process_id = std::process::id();
     let target_process_id = current_process_id + 1; // Different from current process
     let mut oob = OutOfBandMessage::new(target_process_id);
 
@@ -398,7 +398,7 @@ fn test_recover_handles_different_process() {
 
 #[test]
 fn test_recover_handles_mixed_shmem_handles() {
-    let target_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = std::process::id();
     let mut oob = OutOfBandMessage::new(target_process_id);
 
     // Create a valid shared memory handle
@@ -439,7 +439,7 @@ fn test_recover_handles_mixed_shmem_handles() {
 
 #[test]
 fn test_recover_handles_mixed_validity() {
-    let target_process_id = unsafe { GetCurrentProcessId() };
+    let target_process_id = std::process::id();
     let mut oob = OutOfBandMessage::new(target_process_id);
 
     // Create some valid handles
