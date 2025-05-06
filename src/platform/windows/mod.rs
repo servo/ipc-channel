@@ -9,7 +9,6 @@
 
 use crate::ipc::{self, IpcMessage};
 use bincode;
-use lazy_static::lazy_static;
 use serde;
 
 use std::{
@@ -22,7 +21,9 @@ use std::{
     marker::{PhantomData, Send, Sync},
     mem,
     ops::{Deref, DerefMut, RangeFrom},
-    ptr, slice, thread,
+    ptr, slice,
+    sync::LazyLock,
+    thread,
     time::Duration,
 };
 use uuid::Uuid;
@@ -68,10 +69,9 @@ use self::aliased_cell::AliasedCell;
 #[cfg(test)]
 mod tests;
 
-lazy_static! {
-    static ref CURRENT_PROCESS_ID: u32 = unsafe { GetCurrentProcessId() };
-    static ref CURRENT_PROCESS_HANDLE: WinHandle = WinHandle::new(unsafe { GetCurrentProcess() });
-}
+static CURRENT_PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
+static CURRENT_PROCESS_HANDLE: LazyLock<WinHandle> =
+    LazyLock::new(|| WinHandle::new(unsafe { GetCurrentProcess() }));
 
 // Added to overcome build error where Box<OVERLAPPED> was used and
 // struct had a trait of #[derive(Debug)].  Adding NoDebug<> overrode the Debug() trait.
@@ -97,9 +97,8 @@ impl<T> fmt::Debug for NoDebug<T> {
     }
 }
 
-lazy_static! {
-    static ref DEBUG_TRACE_ENABLED: bool = env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some();
-}
+static DEBUG_TRACE_ENABLED: LazyLock<bool> =
+    LazyLock::new(|| env::var_os("IPC_CHANNEL_WIN_DEBUG_TRACE").is_some());
 
 /// Debug macro to better track what's going on in case of errors.
 macro_rules! win32_trace {

@@ -10,7 +10,6 @@
 use crate::ipc::{self, IpcMessage};
 use bincode;
 use crossbeam_channel::{self, Receiver, RecvTimeoutError, Select, Sender, TryRecvError};
-use lazy_static::lazy_static;
 use std::cell::{Ref, RefCell};
 use std::cmp::PartialEq;
 use std::collections::hash_map::HashMap;
@@ -19,7 +18,7 @@ use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, RangeFrom};
 use std::slice;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use std::usize;
 use uuid::Uuid;
@@ -50,9 +49,8 @@ impl ServerRecord {
     }
 }
 
-lazy_static! {
-    static ref ONE_SHOT_SERVERS: Mutex<HashMap<String, ServerRecord>> = Mutex::new(HashMap::new());
-}
+static ONE_SHOT_SERVERS: LazyLock<Mutex<HashMap<String, ServerRecord>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 struct ChannelMessage(IpcMessage);
 

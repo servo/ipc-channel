@@ -16,13 +16,12 @@ use futures_core::stream::FusedStream;
 use futures_core::task::Context;
 use futures_core::task::Poll;
 use futures_core::Stream;
-use lazy_static::lazy_static;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 use std::thread;
 
 /// A stream built from an IPC channel.
@@ -42,42 +41,40 @@ struct Router {
 
 // Lazily initialize a singleton router,
 // so we only end up with one routing thread per process.
-lazy_static! {
-    static ref ROUTER: Router = {
-        let (send, mut recv) = futures_channel::mpsc::unbounded();
-        let (waker, wakee) = ipc::channel().expect("Failed to create IPC channel");
-        thread::spawn(move || {
-            let mut receivers = IpcReceiverSet::new().expect("Failed to create receiver set");
-            let mut senders = HashMap::<u64, UnboundedSender<IpcMessage>>::new();
-            let _ = receivers.add(wakee);
-            while let Ok(mut selections) = receivers.select() {
-                for selection in selections.drain(..) {
-                    match selection {
-                        IpcSelectionResult::MessageReceived(id, msg) => {
-                            if let Some(sender) = senders.get(&id) {
-                                let _ = sender.unbounded_send(msg);
-                            }
-                        },
-                        IpcSelectionResult::ChannelClosed(id) => {
-                            senders.remove(&id);
-                        },
-                    }
-                }
-                if !recv.is_terminated() {
-                    while let Ok(Some((receiver, sender))) = recv.try_next() {
-                        if let Ok(id) = receivers.add_opaque(receiver) {
-                            senders.insert(id, sender);
+static ROUTER: LazyLock<Router> = LazyLock::new(|| {
+    let (send, mut recv) = futures_channel::mpsc::unbounded();
+    let (waker, wakee) = ipc::channel().expect("Failed to create IPC channel");
+    thread::spawn(move || {
+        let mut receivers = IpcReceiverSet::new().expect("Failed to create receiver set");
+        let mut senders = HashMap::<u64, UnboundedSender<IpcMessage>>::new();
+        let _ = receivers.add(wakee);
+        while let Ok(mut selections) = receivers.select() {
+            for selection in selections.drain(..) {
+                match selection {
+                    IpcSelectionResult::MessageReceived(id, msg) => {
+                        if let Some(sender) = senders.get(&id) {
+                            let _ = sender.unbounded_send(msg);
                         }
+                    },
+                    IpcSelectionResult::ChannelClosed(id) => {
+                        senders.remove(&id);
+                    },
+                }
+            }
+            if !recv.is_terminated() {
+                while let Ok(Some((receiver, sender))) = recv.try_next() {
+                    if let Ok(id) = receivers.add_opaque(receiver) {
+                        senders.insert(id, sender);
                     }
                 }
             }
-        });
-        Router {
-            add_route: send,
-            wakeup: Mutex::new(waker),
         }
-    };
-}
+    });
+    Router {
+        add_route: send,
+        wakeup: Mutex::new(waker),
+    }
+});
 
 impl<T> IpcReceiver<T>
 where

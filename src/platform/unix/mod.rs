@@ -10,7 +10,6 @@
 use crate::ipc::{self, IpcMessage};
 use bincode;
 use fnv::FnvHasher;
-use lazy_static::lazy_static;
 use libc::{
     self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
     PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
@@ -37,7 +36,7 @@ use std::os::fd::RawFd;
 use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::{Builder, TempDir};
@@ -80,18 +79,14 @@ unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
     (sockaddr, mem::size_of::<sockaddr_un>())
 }
 
-lazy_static! {
-    static ref SYSTEM_SENDBUF_SIZE: usize = {
-        let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
-        tx.get_system_sendbuf_size()
-            .expect("Failed to obtain maximum send size for socket")
-    };
-}
+static SYSTEM_SENDBUF_SIZE: LazyLock<usize> = LazyLock::new(|| {
+    let (tx, _) = channel().expect("Failed to obtain a socket for checking maximum send size");
+    tx.get_system_sendbuf_size()
+        .expect("Failed to obtain maximum send size for socket")
+});
 
 // The pid of the current process which is used to create unique IDs
-lazy_static! {
-    static ref PID: c_int = unsafe { libc::getpid() };
-}
+static PID: LazyLock<c_int> = LazyLock::new(|| unsafe { libc::getpid() });
 
 // A global count used to create unique IDs
 static SHM_COUNT: AtomicUsize = AtomicUsize::new(0);
