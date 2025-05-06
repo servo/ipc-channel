@@ -69,7 +69,7 @@ use self::aliased_cell::AliasedCell;
 #[cfg(test)]
 mod tests;
 
-static CURRENT_PROCESS_ID: LazyLock<u32> = LazyLock::new(|| unsafe { GetCurrentProcessId() });
+static CURRENT_PROCESS_ID: LazyLock<u32> = LazyLock::new(std::process::id);
 static CURRENT_PROCESS_HANDLE: LazyLock<WinHandle> =
     LazyLock::new(|| WinHandle::new(unsafe { GetCurrentProcess() }));
 
