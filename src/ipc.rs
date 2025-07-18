@@ -26,16 +26,13 @@ use std::time::Duration;
 
 thread_local! {
     static OS_IPC_CHANNELS_FOR_DESERIALIZATION: RefCell<Vec<OsOpaqueIpcChannel>> =
-        const { RefCell::new(Vec::new()) }
-}
-thread_local! {
+        const { RefCell::new(Vec::new()) };
+
     static OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION:
-        RefCell<Vec<Option<OsIpcSharedMemory>>> = const { RefCell::new(Vec::new()) }
-}
-thread_local! {
-    static OS_IPC_CHANNELS_FOR_SERIALIZATION: RefCell<Vec<OsIpcChannel>> = const { RefCell::new(Vec::new()) }
-}
-thread_local! {
+        RefCell<Vec<Option<OsIpcSharedMemory>>> = const { RefCell::new(Vec::new()) };
+
+    static OS_IPC_CHANNELS_FOR_SERIALIZATION: RefCell<Vec<OsIpcChannel>> = const { RefCell::new(Vec::new()) };
+
     static OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION: RefCell<Vec<OsIpcSharedMemory>> =
         const { RefCell::new(Vec::new()) }
 }
