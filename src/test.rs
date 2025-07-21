@@ -325,6 +325,21 @@ fn router_simple_global() {
 }
 
 #[test]
+fn router_flood() {
+    let router = RouterProxy::new();
+    for _ in 0..1_000_000 {
+        let person = ("Patrick Walton".to_owned(), 29);
+        let (tx, rx) = ipc::channel().unwrap();
+        let _ = tx.send(person.clone());
+
+        let (tx2, rx2) = ipc::channel().unwrap();
+        router.add_typed_route(rx, Box::new(move |msg| drop(tx2.send(msg.unwrap()))));
+        let received_person = rx2.recv().unwrap();
+        assert_eq!(received_person, person);
+    }
+}
+
+#[test]
 fn router_routing_to_new_crossbeam_receiver() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
