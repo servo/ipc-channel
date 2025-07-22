@@ -608,7 +608,7 @@ impl OsOpaqueIpcChannel {
 
 pub struct OsIpcReceiverSet {
     port: mach_port_t,
-    ports: Vec<mach_port_t>,
+    ports: Vec<OsIpcReceiver>,
 }
 
 impl OsIpcReceiverSet {
@@ -621,22 +621,28 @@ impl OsIpcReceiverSet {
     }
 
     pub fn add(&mut self, receiver: OsIpcReceiver) -> Result<u64, MachError> {
-        mach_port_move_member(receiver.extract_port(), self.port)?;
-        let receiver_port = receiver.consume_port();
-        self.ports.push(receiver_port);
+        let receiver_port = receiver.extract_port();
+        mach_port_move_member(receiver_port, self.port)?;
+        self.ports.push(receiver);
         Ok(receiver_port as u64)
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>, MachError> {
-        select(self.port, BlockingMode::Blocking).map(|result| vec![result])
+        let result = select(self.port, BlockingMode::Blocking);
+        if let Ok(OsIpcSelectionResult::ChannelClosed(mach_port)) = result {
+            let index = self
+                .ports
+                .iter()
+                .position(|port| port.extract_port() as u64 == mach_port)
+                .expect("Port must be present for error to occur");
+            let _ = self.ports.swap_remove(index);
+        }
+        result.map(|result| vec![result])
     }
 }
 
 impl Drop for OsIpcReceiverSet {
     fn drop(&mut self) {
-        for port in &self.ports {
-            mach_port_mod_release(*port, MACH_PORT_RIGHT_RECEIVE).unwrap();
-        }
         mach_port_mod_release(self.port, MACH_PORT_RIGHT_PORT_SET).unwrap();
     }
 }
