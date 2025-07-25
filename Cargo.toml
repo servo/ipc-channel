@@ -28,6 +28,7 @@ default = []
 force-inprocess = []
 async = ["dep:futures-core", "dep:futures-channel"]
 win32-trace = []
+enable-slow-tests = []
 
 [dependencies]
 bincode = "1"

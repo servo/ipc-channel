@@ -324,6 +324,7 @@ fn router_simple_global() {
     ROUTER.shutdown();
 }
 
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
 #[test]
 fn router_flood() {
     let router = RouterProxy::new();
