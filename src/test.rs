@@ -324,7 +324,7 @@ fn router_simple_global() {
     ROUTER.shutdown();
 }
 
-#[cfg(not(debug_assertions))] // skip the test for the debug profile
+#[cfg_attr(not(debug_assertions), ignore)] // skip the test for the debug profile
 #[test]
 fn router_flood() {
     let router = RouterProxy::new();
