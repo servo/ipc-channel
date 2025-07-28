@@ -51,8 +51,8 @@ use windows::{
                 PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE,
             },
             Threading::{
-                CreateEventA, GetCurrentProcess, GetCurrentProcessId, OpenProcess, ResetEvent,
-                INFINITE, PROCESS_DUP_HANDLE,
+                CreateEventA, GetCurrentProcess, OpenProcess, ResetEvent, INFINITE,
+                PROCESS_DUP_HANDLE,
             },
             IO::{
                 CancelIoEx, CreateIoCompletionPort, GetOverlappedResult, GetOverlappedResultEx,
@@ -1014,7 +1014,7 @@ impl MessageReader {
             let completion_key = self.handle.as_raw().0;
             CreateIoCompletionPort(
                 self.handle.as_raw(),
-                iocp.as_raw(),
+                Some(iocp.as_raw()),
                 completion_key as usize,
                 0,
             )?;
