@@ -20,7 +20,7 @@ runs:
         GITHUB_ACTION_PATH: ${{ github.action_path }}
 
     - name: clippy (with annotations)
-      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json | etc/ci/clippy-annotation.sh
+      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json | clippy-annotation.sh
       shell: bash
       env:
         FEATURES: ${{ inputs.features }}
