@@ -93,7 +93,7 @@ impl Wait for libc::pid_t {
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 pub fn get_channel_name_arg(which: &str) -> Option<String> {
     for arg in env::args() {
-        let arg_str = &*format!("channel_name-{}:", which);
+        let arg_str = &*format!("channel_name-{which}:");
         if let Some(arg) = arg.strip_prefix(arg_str) {
             return Some(arg.to_owned());
         }
@@ -110,7 +110,7 @@ pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::C
         .args(
             server_args
                 .iter()
-                .map(|(name, val)| format!("channel_name-{}:{}", name, val)),
+                .map(|(name, val)| format!("channel_name-{name}:{val}")),
         )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -131,7 +131,7 @@ fn simple() {
     drop(tx);
     match rx.recv().unwrap_err() {
         ipc::IpcError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 }
 
@@ -288,7 +288,7 @@ fn router_simple_global() {
     // Try the same, with a strongly typed route
     let message: usize = 42;
     let (tx, rx) = ipc::channel().unwrap();
-    tx.send(message.clone()).unwrap();
+    tx.send(message).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
     ROUTER.add_typed_route(
@@ -448,7 +448,7 @@ fn router_drops_callbacks_on_cloned_sender_shutdown() {
 #[test]
 fn router_big_data() {
     let person = ("Patrick Walton".to_owned(), 29);
-    let people: Vec<_> = iter::repeat(person).take(64 * 1024).collect();
+    let people: Vec<_> = std::iter::repeat_n(person, 64 * 1024).collect();
     let (tx, rx) = ipc::channel().unwrap();
     let people_for_subthread = people.clone();
     let thread = thread::spawn(move || {
@@ -550,19 +550,19 @@ fn try_recv() {
     let (tx, rx) = ipc::channel().unwrap();
     match rx.try_recv() {
         Err(ipc::TryRecvError::Empty) => (),
-        v => panic!("Expected empty channel err: {:?}", v),
+        v => panic!("Expected empty channel err: {v:?}"),
     }
     tx.send(person.clone()).unwrap();
     let received_person = rx.try_recv().unwrap();
     assert_eq!(person, received_person);
     match rx.try_recv() {
         Err(ipc::TryRecvError::Empty) => (),
-        v => panic!("Expected empty channel err: {:?}", v),
+        v => panic!("Expected empty channel err: {v:?}"),
     }
     drop(tx);
     match rx.try_recv() {
         Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
-        v => panic!("Expected disconnected err: {:?}", v),
+        v => panic!("Expected disconnected err: {v:?}"),
     }
 }
 
@@ -576,7 +576,7 @@ fn try_recv_timeout() {
         Err(ipc::TryRecvError::Empty) => {
             assert!(start_recv.elapsed() >= Duration::from_millis(500))
         },
-        v => panic!("Expected empty channel err: {:?}", v),
+        v => panic!("Expected empty channel err: {v:?}"),
     }
     tx.send(person.clone()).unwrap();
     let start_recv = Instant::now();
@@ -588,12 +588,12 @@ fn try_recv_timeout() {
         Err(ipc::TryRecvError::Empty) => {
             assert!(start_recv.elapsed() >= Duration::from_millis(500))
         },
-        v => panic!("Expected empty channel err: {:?}", v),
+        v => panic!("Expected empty channel err: {v:?}"),
     }
     drop(tx);
     match rx.try_recv_timeout(timeout) {
         Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
-        v => panic!("Expected disconnected err: {:?}", v),
+        v => panic!("Expected disconnected err: {v:?}"),
     }
 }
 
@@ -651,7 +651,7 @@ fn test_so_linger() {
     let val = match receiver.recv() {
         Ok(val) => val,
         Err(e) => {
-            panic!("err: `{:?}`", e);
+            panic!("err: `{e:?}`");
         },
     };
     assert_eq!(val, 42);

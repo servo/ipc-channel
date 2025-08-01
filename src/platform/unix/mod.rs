@@ -539,11 +539,10 @@ impl OsIpcReceiverSet {
             assert!(event.is_readable());
 
             let event_token = event.token();
-            let poll_entry = self
+            let poll_entry = *self
                 .pollfds
                 .get(&event_token)
-                .expect("Got event for unknown token.")
-                .clone();
+                .expect("Got event for unknown token.");
             loop {
                 match recv(poll_entry.fd, BlockingMode::Nonblocking) {
                     Ok(ipc_message) => {
@@ -590,10 +589,7 @@ impl OsIpcSelectionResult {
         match self {
             OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!(
-                    "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
-                    id
-                )
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!")
             },
         }
     }
@@ -863,6 +859,11 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// User can achieve this by not cloning [`IpcSharedMemory`]
+    /// and serializing/deserializing only once.
     #[inline]
     pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
