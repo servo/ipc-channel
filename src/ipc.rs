@@ -47,8 +47,8 @@ pub enum IpcError {
 impl fmt::Display for IpcError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            IpcError::Bincode(ref err) => write!(fmt, "bincode error: {}", err),
-            IpcError::Io(ref err) => write!(fmt, "io error: {}", err),
+            IpcError::Bincode(ref err) => write!(fmt, "bincode error: {err}"),
+            IpcError::Io(ref err) => write!(fmt, "io error: {err}"),
             IpcError::Disconnected => write!(fmt, "disconnected"),
         }
     }
@@ -73,7 +73,7 @@ pub enum TryRecvError {
 impl fmt::Display for TryRecvError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            TryRecvError::IpcError(ref err) => write!(fmt, "ipc error: {}", err),
+            TryRecvError::IpcError(ref err) => write!(fmt, "ipc error: {err}"),
             TryRecvError::Empty => write!(fmt, "empty"),
         }
     }
@@ -673,7 +673,7 @@ impl IpcSelectionResult {
         match self {
             IpcSelectionResult::MessageReceived(id, message) => (id, message),
             IpcSelectionResult::ChannelClosed(id) => {
-                panic!("IpcSelectionResult::unwrap(): channel {} closed", id)
+                panic!("IpcSelectionResult::unwrap(): channel {id} closed")
             },
         }
     }
