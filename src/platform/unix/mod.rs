@@ -589,9 +589,7 @@ impl OsIpcSelectionResult {
         match self {
             OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!(
-                    "OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!"
-                )
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!")
             },
         }
     }
