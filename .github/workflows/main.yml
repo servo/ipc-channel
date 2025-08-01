@@ -34,13 +34,12 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
-      - name: Make Clippy JSON formatting script executable
-        run: |
-          chmod +x etc/ci/clippy-annotation.sh
-
       - name: clippy (with annotations)
         if: matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == ''
-        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }} --message-format=json | etc/ci/clippy-annotation.sh
+        uses: ./.github/actions/comment-preview-on-pr
+        with:
+          features: ${{ matrix.features }}
+          platform-target: ${{ matrix.platform.target }}
 
       - name: clippy
         if: matrix.platform.target != 'x86_64-unknown-linux-gnu' || matrix.features != ''
