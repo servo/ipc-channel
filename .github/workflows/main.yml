@@ -34,8 +34,12 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
+      - name: Make Clippy JSON formatting script executable
+        run: |
+          chmod +x etc/ci/clippy-annotation.sh
+
       - name: clippy
-        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }} --message-format=json | etc/ci/clippy-annotation.sh
 
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }} enable-slow-tests" --target ${{ matrix.platform.target }}
