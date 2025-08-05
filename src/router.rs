@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 
+use crate::error::SerializationError;
 use crate::ipc::OpaqueIpcReceiver;
 use crate::ipc::{self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
 use crossbeam_channel::{self, Receiver, Sender};
@@ -240,4 +241,4 @@ enum RouterMsg {
 pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
 /// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
+pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, SerializationError>) + Send>;

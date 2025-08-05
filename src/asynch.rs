@@ -10,6 +10,7 @@
 use crate::ipc::{
     self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcReceiver,
 };
+use crate::IpcError;
 use futures_channel::mpsc::UnboundedReceiver;
 use futures_channel::mpsc::UnboundedSender;
 use futures_core::stream::FusedStream;
@@ -96,7 +97,7 @@ impl<T> Stream for IpcStream<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
-    type Item = Result<T, bincode::Error>;
+    type Item = Result<T, IpcError>;
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
         let recv = Pin::new(&mut self.0);

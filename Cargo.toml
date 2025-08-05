@@ -38,6 +38,7 @@ futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 libc = "0.2.162"
 serde = { version = "1.0", features = ["rc"] }
+thiserror = "2.0.12"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd", target_os = "illumos"))'.dependencies]

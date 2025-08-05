@@ -7,8 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc::{self, IpcMessage};
-use bincode;
+use crate::ipc::IpcMessage;
 use fnv::FnvHasher;
 use libc::{
     self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
@@ -24,7 +23,6 @@ use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::error::Error as StdError;
 use std::ffi::{c_uint, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
@@ -40,6 +38,7 @@ use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 use tempfile::{Builder, TempDir};
+use thiserror::Error;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
@@ -906,7 +905,7 @@ impl OsIpcSharedMemory {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum UnixError {
     Errno(c_int),
     ChannelClosed,
@@ -924,6 +923,15 @@ impl UnixError {
     }
 }
 
+impl From<UnixError> for crate::IpcError {
+    fn from(error: UnixError) -> Self {
+        match error {
+            UnixError::ChannelClosed => crate::IpcError::Disconnected,
+            e => crate::IpcError::Io(io::Error::from(e)),
+        }
+    }
+}
+
 impl fmt::Display for UnixError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -933,14 +941,6 @@ impl fmt::Display for UnixError {
             UnixError::ChannelClosed => write!(fmt, "All senders for this socket closed"),
             UnixError::IoError(e) => write!(fmt, "{e}"),
         }
-    }
-}
-
-impl StdError for UnixError {}
-
-impl From<UnixError> for bincode::Error {
-    fn from(unix_error: UnixError) -> Self {
-        io::Error::from(unix_error).into()
     }
 }
 
@@ -954,23 +954,16 @@ impl From<UnixError> for io::Error {
     }
 }
 
-impl From<UnixError> for ipc::IpcError {
+impl From<UnixError> for crate::TryRecvError {
     fn from(error: UnixError) -> Self {
         match error {
-            UnixError::ChannelClosed => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(io::Error::from(e)),
-        }
-    }
-}
-
-impl From<UnixError> for ipc::TryRecvError {
-    fn from(error: UnixError) -> Self {
-        match error {
-            UnixError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
-            UnixError::Errno(code) if code == EAGAIN || code == EWOULDBLOCK => {
-                ipc::TryRecvError::Empty
+            UnixError::ChannelClosed => {
+                crate::TryRecvError::IpcError(crate::IpcError::Disconnected)
             },
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
+            UnixError::Errno(code) if code == EAGAIN || code == EWOULDBLOCK => {
+                crate::TryRecvError::Empty
+            },
+            e => crate::TryRecvError::IpcError(crate::IpcError::Io(io::Error::from(e))),
         }
     }
 }
