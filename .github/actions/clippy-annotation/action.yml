@@ -3,24 +3,18 @@ description: "Github inline annotation for clippy"
 inputs:
   features:
     description: "Clippy feature to use"
-    required: true
+    required: false
     default: ""
   platform-target:
     description: "Clippy platform target"
-    required: true
+    required: false
     default: "x86_64-unknown-linux-gnu"
 
 runs:
   using: "composite"
   steps:
-    - name: Set GitHub Path
-      run: echo "$GITHUB_ACTION_PATH" >> $GITHUB_PATH
-      shell: bash
-      env:
-        GITHUB_ACTION_PATH: ${{ github.action_path }}
-
     - name: clippy (with annotations)
-      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json | clippy-annotation.sh
+      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json -- --deny warnings | ${{ github.action_path }}/clippy-annotation.sh
       shell: bash
       env:
         FEATURES: ${{ inputs.features }}
