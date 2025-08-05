@@ -32,6 +32,7 @@ pub mod asynch;
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
 extern crate windows;
 
+mod error;
 pub mod ipc;
 pub mod platform;
 pub mod router;
@@ -39,6 +40,6 @@ pub mod router;
 #[cfg(test)]
 mod test;
 
-pub use bincode::{Error, ErrorKind};
+pub use error::{IpcError, TryRecvError};
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
 pub use platform::set_bootstrap_prefix;
