@@ -9,12 +9,27 @@ inputs:
     description: "Clippy platform target"
     required: false
     default: "x86_64-unknown-linux-gnu"
+  with-annotation:
+    description: "Enable Clippy annotation"
+    required: false
+    default: "false"
 
 runs:
   using: "composite"
   steps:
     - name: clippy (with annotations)
-      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json -- --deny warnings | ${{ github.action_path }}/clippy-annotation.sh
+      if: inputs.with-annotation == 'true'
+      run: |
+        cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json -- --deny warnings \
+        | ${{ github.action_path }}/clippy-annotation.sh
+      shell: bash
+      env:
+        FEATURES: ${{ inputs.features }}
+        PLATFORM: ${{ inputs.platform-target }}
+
+    - name: clippy (without annotation)
+      if: inputs.with-annotation != 'true'
+      run: cargo clippy --features "$FEATURES" --target "$PLATFORM" -- --deny warnings
       shell: bash
       env:
         FEATURES: ${{ inputs.features }}

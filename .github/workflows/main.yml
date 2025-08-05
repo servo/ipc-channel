@@ -34,16 +34,12 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
-      - name: clippy (with annotations)
-        if: matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == ''
+      - name: clippy
         uses: ./.github/actions/clippy-annotation
         with:
           features: ${{ matrix.features }}
           platform-target: ${{ matrix.platform.target }}
-
-      - name: clippy
-        if: matrix.platform.target != 'x86_64-unknown-linux-gnu' || matrix.features != ''
-        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+          with-annotation: ${{ matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == '' }}
 
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }} enable-slow-tests" --target ${{ matrix.platform.target }}
