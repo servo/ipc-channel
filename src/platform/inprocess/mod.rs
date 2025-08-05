@@ -19,6 +19,7 @@ use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 use thiserror::Error;
+use std::usize;
 use uuid::Uuid;
 
 #[derive(Clone)]
