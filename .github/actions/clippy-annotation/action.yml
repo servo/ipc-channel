@@ -20,6 +20,7 @@ runs:
     - name: clippy (with annotations)
       if: inputs.with-annotation == 'true'
       run: |
+        set -o pipefail
         cargo clippy --features "$FEATURES" --target "$PLATFORM" --message-format=json -- --deny warnings \
         | ${{ github.action_path }}/clippy-annotation.sh
       shell: bash
