@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.20.1"
+version = "0.21.0"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
@@ -31,7 +31,7 @@ win32-trace = []
 enable-slow-tests = []
 
 [dependencies]
-bincode = "1"
+bitcode = { version = "0.6.6", features = ["serde"] }
 crossbeam-channel = "0.5"
 fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }

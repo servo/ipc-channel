@@ -14,7 +14,7 @@ use crate::platform::{
 };
 use crate::{IpcError, TryRecvError};
 
-use bincode;
+use bitcode;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -330,7 +330,8 @@ where
                     let os_ipc_shared_memory_regions;
                     let os_ipc_channels;
                     {
-                        bincode::serialize_into(&mut bytes, &data).map_err(SerializationError)?;
+                        bytes = bitcode::serialize(&data).map_err(SerializationError)?;
+
                         os_ipc_channels = mem::replace(
                             &mut *os_ipc_channels_for_serialization.borrow_mut(),
                             old_os_ipc_channels,
@@ -697,7 +698,7 @@ impl IpcMessage {
                             .map(Some)
                             .collect(),
                     );
-                    let result = bincode::deserialize(&self.data[..]).map_err(|e| e.into());
+                    let result = bitcode::deserialize(&self.data[..]).map_err(|e| e.into());
                     *os_ipc_shared_memory_regions_for_deserialization.borrow_mut() =
                         old_ipc_shared_memory_regions_for_deserialization;
                     mem::swap(
