@@ -35,10 +35,9 @@ jobs:
         run: cargo fmt --check
 
       - name: clippy
-        uses: ./.github/actions/clippy-annotation
+        uses: servo/actions/cargo-annotation@main
         with:
-          features: ${{ matrix.features }}
-          platform-target: ${{ matrix.platform.target }}
+          cargo-command: clippy --features '${{ matrix.features }}' --target '${{ matrix.platform.target }}'
           with-annotation: ${{ matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == '' }}
 
       - name: Cargo test
