@@ -17,10 +17,11 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, RangeFrom};
+use std::ptr::eq;
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use std::usize;
+use usize;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -34,7 +35,7 @@ impl ServerRecord {
     fn new(sender: OsIpcSender) -> ServerRecord {
         let (tx, rx) = crossbeam_channel::unbounded::<bool>();
         ServerRecord {
-            sender: sender,
+            sender,
             conn_sender: tx,
             conn_receiver: rx,
         }
@@ -128,7 +129,10 @@ pub struct OsIpcSender {
 
 impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
-        &*self.sender.borrow() as *const _ == &*other.sender.borrow() as *const _
+        eq(
+            &*self.sender.borrow() as *const _,
+            &*other.sender.borrow() as *const _,
+        )
     }
 }
 
@@ -157,11 +161,10 @@ impl OsIpcSender {
     ) -> Result<(), ChannelError> {
         let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
         let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
-        Ok(self
-            .sender
+        self.sender
             .borrow()
             .send(ChannelMessage(ipc_message))
-            .map_err(|_| ChannelError::BrokenPipeError)?)
+            .map_err(|_| ChannelError::BrokenPipeError)
     }
 }
 
@@ -204,12 +207,12 @@ impl OsIpcReceiverSet {
 
             let mut select = Select::new();
             for r in &borrows {
-                select.recv(&r);
+                select.recv(r);
             }
             let res = select.select();
             let receiver_index = res.index();
             let receiver_id = self.receiver_ids[receiver_index];
-            if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index as usize]) {
+            if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index]) {
                 return Ok(vec![OsIpcSelectionResult::DataReceived(
                     receiver_id,
                     ipc_message,
@@ -234,10 +237,7 @@ impl OsIpcSelectionResult {
         match self {
             OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!(
-                    "OsIpcSelectionResult::unwrap(): receiver ID {} was closed!",
-                    id
-                )
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!")
             },
         }
     }
@@ -260,7 +260,7 @@ impl OsIpcOneShotServer {
             .insert(name.clone(), record);
         Ok((
             OsIpcOneShotServer {
-                receiver: receiver,
+                receiver,
                 name: name.clone(),
             },
             name.clone(),
@@ -358,6 +358,11 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// User can achieve this by not cloning [`IpcSharedMemory`]
+    /// and serializing/deserializing only once.
     #[inline]
     pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
         if self.ptr.is_null() {
@@ -372,7 +377,7 @@ impl OsIpcSharedMemory {
         let mut v = Arc::new(vec![byte; length]);
         OsIpcSharedMemory {
             ptr: Arc::get_mut(&mut v).unwrap().as_mut_ptr(),
-            length: length,
+            length,
             data: v,
         }
     }
@@ -457,9 +462,7 @@ impl From<ChannelError> for io::Error {
                 io::ErrorKind::BrokenPipe,
                 "crossbeam-channel receiver closed",
             ),
-            ChannelError::UnknownError => {
-                io::Error::new(io::ErrorKind::Other, "Other crossbeam-channel error")
-            },
+            ChannelError::UnknownError => io::Error::other("Other crossbeam-channel error"),
         }
     }
 }
