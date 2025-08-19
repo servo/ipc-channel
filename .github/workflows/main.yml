@@ -35,7 +35,10 @@ jobs:
         run: cargo fmt --check
 
       - name: clippy
-        run: cargo clippy --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+        uses: servo/actions/cargo-annotation@main
+        with:
+          cargo-command: clippy --features '${{ matrix.features }}' --target '${{ matrix.platform.target }}'
+          with-annotation: ${{ matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == '' }}
 
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }} enable-slow-tests" --target ${{ matrix.platform.target }}
