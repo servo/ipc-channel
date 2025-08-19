@@ -17,10 +17,10 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, RangeFrom};
+use std::ptr::eq;
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use std::ptr::eq;
 use usize;
 use uuid::Uuid;
 
@@ -129,7 +129,10 @@ pub struct OsIpcSender {
 
 impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
-        eq(&*self.sender.borrow() as *const _, &*other.sender.borrow() as *const _)
+        eq(
+            &*self.sender.borrow() as *const _,
+            &*other.sender.borrow() as *const _,
+        )
     }
 }
 
@@ -158,8 +161,7 @@ impl OsIpcSender {
     ) -> Result<(), ChannelError> {
         let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
         let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
-        self
-            .sender
+        self.sender
             .borrow()
             .send(ChannelMessage(ipc_message))
             .map_err(|_| ChannelError::BrokenPipeError)
@@ -235,9 +237,7 @@ impl OsIpcSelectionResult {
         match self {
             OsIpcSelectionResult::DataReceived(id, ipc_message) => (id, ipc_message),
             OsIpcSelectionResult::ChannelClosed(id) => {
-                panic!(
-                    "OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!" 
-                )
+                panic!("OsIpcSelectionResult::unwrap(): receiver ID {id} was closed!")
             },
         }
     }
@@ -458,9 +458,7 @@ impl From<ChannelError> for io::Error {
                 io::ErrorKind::BrokenPipe,
                 "crossbeam-channel receiver closed",
             ),
-            ChannelError::UnknownError => {
-                io::Error::other("Other crossbeam-channel error")
-            },
+            ChannelError::UnknownError => io::Error::other("Other crossbeam-channel error"),
         }
     }
 }
