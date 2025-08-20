@@ -70,4 +70,5 @@ criterion_group!(
     transfer_receivers<8>,
     transfer_receivers<64>,
 );
+
 criterion_main!(benches);
