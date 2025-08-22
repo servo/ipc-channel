@@ -1829,6 +1829,11 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// User can achieve this by not cloning [`IpcSharedMemory`]
+    /// and serializing/deserializing only once.
     #[inline]
     pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
         assert!(!self.view_handle.Value.is_null() && self.handle.is_valid());
