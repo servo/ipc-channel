@@ -1829,6 +1829,11 @@ impl Deref for OsIpcSharedMemory {
 }
 
 impl OsIpcSharedMemory {
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// User can achieve this by not cloning [`IpcSharedMemory`]
+    /// and serializing/deserializing only once.
     #[inline]
     pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
         assert!(!self.view_handle.Value.is_null() && self.handle.is_valid());
@@ -1840,10 +1845,7 @@ impl OsIpcSharedMemory {
     fn new(length: usize) -> Result<OsIpcSharedMemory, WinError> {
         unsafe {
             assert!(length < u32::MAX as usize);
-            let (lhigh, llow) = (
-                length.checked_shr(32).unwrap_or(0) as u32,
-                (length & 0xffffffff) as u32,
-            );
+            let (lhigh, llow) = (length.checked_shr(32).unwrap_or(0) as u32, length as u32);
             let handle = CreateFileMappingA(
                 INVALID_HANDLE_VALUE,
                 None,
