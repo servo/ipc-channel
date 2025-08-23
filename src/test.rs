@@ -16,7 +16,6 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::env;
-use std::iter;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
 use std::process::{self, Command, Stdio};
 #[cfg(not(any(
@@ -130,7 +129,7 @@ fn simple() {
     assert_eq!(person, received_person);
     drop(tx);
     match rx.recv().unwrap_err() {
-        ipc::IpcError::Disconnected => (),
+        crate::IpcError::Disconnected => (),
         e => panic!("expected disconnected error, got {e:?}"),
     }
 }
@@ -549,19 +548,19 @@ fn try_recv() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     match rx.try_recv() {
-        Err(ipc::TryRecvError::Empty) => (),
+        Err(crate::TryRecvError::Empty) => (),
         v => panic!("Expected empty channel err: {v:?}"),
     }
     tx.send(person.clone()).unwrap();
     let received_person = rx.try_recv().unwrap();
     assert_eq!(person, received_person);
     match rx.try_recv() {
-        Err(ipc::TryRecvError::Empty) => (),
+        Err(crate::TryRecvError::Empty) => (),
         v => panic!("Expected empty channel err: {v:?}"),
     }
     drop(tx);
     match rx.try_recv() {
-        Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
+        Err(crate::TryRecvError::IpcError(crate::IpcError::Disconnected)) => (),
         v => panic!("Expected disconnected err: {v:?}"),
     }
 }
@@ -573,7 +572,7 @@ fn try_recv_timeout() {
     let timeout = Duration::from_millis(1000);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => {
+        Err(crate::TryRecvError::Empty) => {
             assert!(start_recv.elapsed() >= Duration::from_millis(500))
         },
         v => panic!("Expected empty channel err: {v:?}"),
@@ -585,14 +584,14 @@ fn try_recv_timeout() {
     assert_eq!(person, received_person);
     let start_recv = Instant::now();
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::Empty) => {
+        Err(crate::TryRecvError::Empty) => {
             assert!(start_recv.elapsed() >= Duration::from_millis(500))
         },
         v => panic!("Expected empty channel err: {v:?}"),
     }
     drop(tx);
     match rx.try_recv_timeout(timeout) {
-        Err(ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected)) => (),
+        Err(crate::TryRecvError::IpcError(crate::IpcError::Disconnected)) => (),
         v => panic!("Expected disconnected err: {v:?}"),
     }
 }

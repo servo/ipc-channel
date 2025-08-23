@@ -7,16 +7,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::error::SerializationError;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{
     OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel,
 };
+use crate::{IpcError, TryRecvError};
 
 use bincode;
 use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
-use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
@@ -35,57 +36,6 @@ thread_local! {
 
     static OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION: RefCell<Vec<OsIpcSharedMemory>> =
         const { RefCell::new(Vec::new()) }
-}
-
-#[derive(Debug)]
-pub enum IpcError {
-    Bincode(bincode::Error),
-    Io(io::Error),
-    Disconnected,
-}
-
-impl fmt::Display for IpcError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            IpcError::Bincode(ref err) => write!(fmt, "bincode error: {err}"),
-            IpcError::Io(ref err) => write!(fmt, "io error: {err}"),
-            IpcError::Disconnected => write!(fmt, "disconnected"),
-        }
-    }
-}
-
-impl StdError for IpcError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match *self {
-            IpcError::Bincode(ref err) => Some(err),
-            IpcError::Io(ref err) => Some(err),
-            IpcError::Disconnected => None,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum TryRecvError {
-    IpcError(IpcError),
-    Empty,
-}
-
-impl fmt::Display for TryRecvError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            TryRecvError::IpcError(ref err) => write!(fmt, "ipc error: {err}"),
-            TryRecvError::Empty => write!(fmt, "empty"),
-        }
-    }
-}
-
-impl StdError for TryRecvError {
-    fn source(&self) -> Option<&(dyn StdError + 'static)> {
-        match *self {
-            TryRecvError::IpcError(ref err) => Some(err),
-            TryRecvError::Empty => None,
-        }
-    }
 }
 
 /// Create a connected [IpcSender] and [IpcReceiver] that
@@ -248,7 +198,10 @@ where
 {
     /// Blocking receive.
     pub fn recv(&self) -> Result<T, IpcError> {
-        self.os_receiver.recv()?.to().map_err(IpcError::Bincode)
+        self.os_receiver
+            .recv()?
+            .to()
+            .map_err(IpcError::SerializationError)
     }
 
     /// Non-blocking receive
@@ -256,7 +209,7 @@ where
         self.os_receiver
             .try_recv()?
             .to()
-            .map_err(IpcError::Bincode)
+            .map_err(IpcError::SerializationError)
             .map_err(TryRecvError::IpcError)
     }
 
@@ -270,7 +223,7 @@ where
         self.os_receiver
             .try_recv_timeout(duration)?
             .to()
-            .map_err(IpcError::Bincode)
+            .map_err(IpcError::SerializationError)
             .map_err(TryRecvError::IpcError)
     }
 
@@ -364,7 +317,7 @@ where
     }
 
     /// Send data across the channel to the receiver.
-    pub fn send(&self, data: T) -> Result<(), bincode::Error> {
+    pub fn send(&self, data: T) -> Result<(), IpcError> {
         let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
@@ -377,7 +330,7 @@ where
                     let os_ipc_shared_memory_regions;
                     let os_ipc_channels;
                     {
-                        bincode::serialize_into(&mut bytes, &data)?;
+                        bincode::serialize_into(&mut bytes, &data).map_err(SerializationError)?;
                         os_ipc_channels = mem::replace(
                             &mut *os_ipc_channels_for_serialization.borrow_mut(),
                             old_os_ipc_channels,
@@ -726,7 +679,7 @@ impl IpcMessage {
     }
 
     /// Deserialize the raw data in the contained message into the inferred type.
-    pub fn to<T>(mut self) -> Result<T, bincode::Error>
+    pub fn to<T>(mut self) -> Result<T, SerializationError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -744,7 +697,7 @@ impl IpcMessage {
                             .map(Some)
                             .collect(),
                     );
-                    let result = bincode::deserialize(&self.data[..]);
+                    let result = bincode::deserialize(&self.data[..]).map_err(|e| e.into());
                     *os_ipc_shared_memory_regions_for_deserialization.borrow_mut() =
                         old_ipc_shared_memory_regions_for_deserialization;
                     mem::swap(
@@ -886,7 +839,7 @@ where
         ))
     }
 
-    pub fn accept(self) -> Result<(IpcReceiver<T>, T), bincode::Error> {
+    pub fn accept(self) -> Result<(IpcReceiver<T>, T), IpcError> {
         let (os_receiver, ipc_message) = self.os_server.accept()?;
         Ok((
             IpcReceiver {
