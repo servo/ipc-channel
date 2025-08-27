@@ -15,12 +15,14 @@
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
-use crate::ipc::OpaqueIpcReceiver;
-use crate::ipc::{self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
+
+use crate::ipc::{
+    self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcReceiver,
+};
 
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_route](RouterProxy::add_route)), or convert IpcReceiver<T>
@@ -44,7 +46,7 @@ impl RouterProxy {
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let (wakeup_sender, wakeup_receiver) = ipc::channel().unwrap();
-        thread::Builder::new()
+        let handle = thread::Builder::new()
             .name("router-proxy".to_string())
             .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
             .expect("Failed to spawn router proxy thread");
@@ -53,6 +55,7 @@ impl RouterProxy {
                 msg_sender,
                 wakeup_sender,
                 shutdown: false,
+                handle: Some(handle),
             }),
         }
     }
@@ -117,6 +120,11 @@ impl RouterProxy {
                 ack_receiver.recv().unwrap();
             })
             .unwrap();
+        comm.handle
+            .take()
+            .expect("Should have a join handle at shutdown")
+            .join()
+            .expect("Failed to join on the router proxy thread");
     }
 
     /// A convenience function to route an `IpcReceiver<T>` to an existing `Sender<T>`.
@@ -152,6 +160,7 @@ struct RouterProxyComm {
     msg_sender: Sender<RouterMsg>,
     wakeup_sender: IpcSender<()>,
     shutdown: bool,
+    handle: Option<JoinHandle<()>>,
 }
 
 /// Router runs in its own thread listening for events. Adds events to its IpcReceiverSet
@@ -211,7 +220,7 @@ impl Router {
                                 sender
                                     .send(())
                                     .expect("Failed to send comfirmation of shutdown.");
-                                break;
+                                return;
                             },
                         }
                     },
