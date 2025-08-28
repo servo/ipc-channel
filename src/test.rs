@@ -7,16 +7,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-use crate::ipc::IpcReceiver;
-use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
-use crate::router::{RouterProxy, ROUTER};
-use crossbeam_channel::{self, Sender};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::env;
-use std::iter;
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "android",
+    target_os = "ios",
+    target_os = "windows",
+)))]
+use std::io::Error;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
 use std::process::{self, Command, Stdio};
 #[cfg(not(any(
@@ -27,7 +27,11 @@ use std::process::{self, Command, Stdio};
 )))]
 use std::ptr;
 use std::rc::Rc;
-use std::thread;
+use std::time::{Duration, Instant};
+use std::{iter, thread};
+
+use crossbeam_channel::{self, Sender};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -36,15 +40,10 @@ use std::thread;
     target_os = "windows"
 )))]
 use crate::ipc::IpcOneShotServer;
-
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "android",
-    target_os = "ios",
-    target_os = "windows",
-)))]
-use std::io::Error;
-use std::time::{Duration, Instant};
+#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
+use crate::ipc::IpcReceiver;
+use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use crate::router::{RouterProxy, ROUTER};
 
 #[cfg(not(any(
     feature = "force-inprocess",
@@ -338,6 +337,12 @@ fn router_flood() {
         let received_person = rx2.recv().unwrap();
         assert_eq!(received_person, person);
     }
+}
+
+#[test]
+fn router_shutdown() {
+    let router = RouterProxy::new();
+    router.shutdown();
 }
 
 #[test]
@@ -722,10 +727,10 @@ fn transfer_closed_sender() {
 #[cfg(feature = "async")]
 #[test]
 fn test_receiver_stream() {
-    use futures_core::task::Context;
-    use futures_core::task::Poll;
-    use futures_core::Stream;
     use std::pin::Pin;
+
+    use futures_core::task::{Context, Poll};
+    use futures_core::Stream;
     let (tx, rx) = ipc::channel().unwrap();
     let (waker, count) = futures_test::task::new_count_waker();
     let mut ctx = Context::from_waker(&waker);
