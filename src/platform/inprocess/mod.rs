@@ -21,7 +21,6 @@ use std::ptr::eq;
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use usize;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -124,23 +123,19 @@ impl OsIpcReceiver {
 
 #[derive(Clone, Debug)]
 pub struct OsIpcSender {
-    sender: RefCell<Sender<ChannelMessage>>,
+    sender: Sender<ChannelMessage>,
 }
 
 impl PartialEq for OsIpcSender {
     fn eq(&self, other: &OsIpcSender) -> bool {
-        eq(
-            &*self.sender.borrow() as *const _,
-            &*other.sender.borrow() as *const _,
-        )
+        // FIXME: this implementation is wrong: https://github.com/servo/ipc-channel/issues/414
+        eq(&self.sender as *const _, &other.sender as *const _)
     }
 }
 
 impl OsIpcSender {
     fn new(sender: Sender<ChannelMessage>) -> OsIpcSender {
-        OsIpcSender {
-            sender: RefCell::new(sender),
-        }
+        OsIpcSender { sender }
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender, ChannelError> {
@@ -162,7 +157,6 @@ impl OsIpcSender {
         let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
         let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
         self.sender
-            .borrow()
             .send(ChannelMessage(ipc_message))
             .map_err(|_| ChannelError::BrokenPipeError)
     }

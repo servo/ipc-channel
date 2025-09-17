@@ -15,7 +15,7 @@ use std::{env, process};
 // These integration tests may be run on their own by issuing:
 // cargo test --test '*'
 
-/// Test spawing a process which then acts as a client to a
+/// Test spawning a process which then acts as a client to a
 /// one-shot server in the parent process.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
