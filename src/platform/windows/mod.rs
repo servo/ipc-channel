@@ -12,13 +12,13 @@ use bincode;
 use serde;
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     cmp::PartialEq,
     convert::TryInto,
     env,
     ffi::CString,
     fmt, io,
-    marker::{PhantomData, Send, Sync},
+    marker::{Send, Sync},
     mem,
     ops::{Deref, DerefMut, RangeFrom},
     ptr, slice,

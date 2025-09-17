@@ -29,7 +29,6 @@ use std::ffi::{c_uint, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
 use std::io;
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, RangeFrom};
 use std::os::fd::RawFd;
