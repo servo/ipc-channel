@@ -116,7 +116,7 @@ struct PollEntry {
     pub fd: RawFd,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     fd: Cell<c_int>,
 }

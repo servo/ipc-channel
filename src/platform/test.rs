@@ -44,7 +44,7 @@ fn simple() {
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
     let ipc_message = rx.recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn sender_transfer() {
     let sub_tx = ipc_message.os_ipc_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message = sub_rx.recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn receiver_transfer() {
     let sub_rx = ipc_message.os_ipc_channels.pop().unwrap().to_receiver();
     sub_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message = sub_rx.recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -98,12 +98,12 @@ fn multisender_transfer() {
     let sub0_tx = ipc_message1.os_ipc_channels.remove(0).to_sender();
     sub0_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message2 = sub0_rx.recv().unwrap();
-    assert_eq!(ipc_message2, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message2.data, data);
 
     let sub1_tx = ipc_message1.os_ipc_channels.remove(0).to_sender();
     sub1_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message3 = sub1_rx.recv().unwrap();
-    assert_eq!(ipc_message3, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message3.data, data);
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn medium_data() {
     let (tx, rx) = platform::channel().unwrap();
     tx.send(data, vec![], vec![]).unwrap();
     let ipc_message = rx.recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -134,7 +134,7 @@ fn medium_data_with_sender_transfer() {
     let sub_tx = ipc_message.os_ipc_channels.pop().unwrap().to_sender();
     sub_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message = sub_rx.recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 fn check_big_data(size: u32) {
@@ -148,7 +148,7 @@ fn check_big_data(size: u32) {
     let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(ipc_message.data.len(), data.len());
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
     thread.join().unwrap();
 }
 
@@ -181,7 +181,7 @@ fn big_data_with_sender_transfer() {
     let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
     assert_eq!(ipc_message.data.len(), data.len());
-    assert_eq!(&ipc_message.data[..], data);
+    assert_eq!(&ipc_message.data, data);
     assert_eq!(ipc_message.os_ipc_channels.len(), 1);
     assert_eq!(ipc_message.os_ipc_shared_memory_regions.len(), 0);
 
@@ -193,7 +193,7 @@ fn big_data_with_sender_transfer() {
     sub_tx.send(data, vec![], vec![]).unwrap();
     let ipc_message = sub_rx.recv().unwrap();
     assert_eq!(ipc_message.data.len(), data.len());
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
     thread.join().unwrap();
 }
 
@@ -225,7 +225,7 @@ fn with_n_fds(n: usize, size: usize) {
         sub_tx.send(&data, vec![], vec![]).unwrap();
         let ipc_message = sub_rx.recv().unwrap();
         assert_eq!(ipc_message.data.len(), data.len());
-        assert_eq!(ipc_message, IpcMessage::from_data(data.clone()));
+        assert_eq!(&ipc_message.data, &data);
     }
 }
 
@@ -349,7 +349,7 @@ macro_rules! create_big_data_with_n_fds {
                 sub_tx.send(data, vec![], vec![]).unwrap();
                 let ipc_message = sub_rx.recv().unwrap();
                 assert_eq!(ipc_message.data.len(), data.len());
-                assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+                assert_eq!(ipc_message.data, data);
             }
         }
     };
@@ -390,7 +390,7 @@ fn concurrent_senders() {
             .collect();
         let data: &[u8] = &data[..];
         assert_eq!(ipc_message.data.len(), data.len());
-        assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+        assert_eq!(ipc_message.data, data);
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -700,7 +700,7 @@ fn server_accept_first() {
     });
 
     let (_, ipc_message) = server.accept().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -716,7 +716,7 @@ fn server_connect_first() {
     thread::sleep(Duration::from_millis(30));
     let (_, mut ipc_message) = server.accept().unwrap();
     ipc_message.data.truncate(7);
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -739,7 +739,7 @@ fn cross_process_spawn() {
 
     let (_, ipc_message) = server.accept().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[cfg(not(any(
@@ -762,7 +762,7 @@ fn cross_process_fork() {
 
     let (_, ipc_message) = server.accept().unwrap();
     child_pid.wait();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -797,7 +797,7 @@ fn cross_process_sender_transfer_spawn() {
     let data: &[u8] = b"bar";
     let ipc_message = super_rx.recv().unwrap();
     child_pid.wait().expect("failed to wait on child");
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[cfg(not(any(
@@ -833,7 +833,7 @@ fn cross_process_sender_transfer_fork() {
     let data: &[u8] = b"bar";
     let ipc_message = super_rx.recv().unwrap();
     child_pid.wait();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
 }
 
 #[test]
@@ -944,7 +944,7 @@ fn try_recv() {
     let data: &[u8] = b"1234567";
     tx.send(data, Vec::new(), Vec::new()).unwrap();
     let ipc_message = rx.try_recv().unwrap();
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
     assert!(rx.try_recv().is_err());
 }
 
@@ -1016,7 +1016,7 @@ fn try_recv_large() {
 
     let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 251) as u8).collect();
     let data: &[u8] = &data[..];
-    assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+    assert_eq!(ipc_message.data, data);
     assert!(rx.try_recv().is_err());
 }
 
@@ -1085,7 +1085,7 @@ fn try_recv_large_delayed() {
         let data: Vec<u8> = (0..msg_size).map(|j| (j % 13) as u8 | val << 4).collect();
         let data: &[u8] = &data[..];
         assert_eq!(ipc_message.data.len(), data.len());
-        assert_eq!(ipc_message, IpcMessage::from_data(data.to_vec()));
+        assert_eq!(ipc_message.data, data);
     }
     assert!(rx.try_recv().is_err()); // There should be no further messages pending.
     received_vals.sort();
@@ -1197,7 +1197,7 @@ fn cross_process_two_step_transfer_spawn() {
     let ipc_message = super_rx.recv().unwrap();
     let child_exit_code = child_pid.wait().expect("failed to wait on child");
     assert!(child_exit_code.success());
-    assert_eq!(ipc_message, IpcMessage::from_data(cookie.to_vec()));
+    assert_eq!(ipc_message.data, cookie);
 }
 
 fn get_max_fragment_size() -> usize {

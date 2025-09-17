@@ -130,7 +130,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), MachError> {
     Ok((sender, receiver))
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     port: Cell<mach_port_t>,
 }
