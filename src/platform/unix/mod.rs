@@ -29,7 +29,6 @@ use std::ffi::{c_uint, CString};
 use std::fmt::{self, Debug, Formatter};
 use std::hash::BuildHasherDefault;
 use std::io;
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::{Deref, RangeFrom};
 use std::os::fd::RawFd;
@@ -117,7 +116,7 @@ struct PollEntry {
     pub fd: RawFd,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     fd: Cell<c_int>,
 }
@@ -182,21 +181,15 @@ impl Drop for SharedFileDescriptor {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OsIpcSender {
     fd: Arc<SharedFileDescriptor>,
-    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
-    //
-    // (Rather, senders should just be cloned, as they are shared internally anyway --
-    // another layer of sharing only adds unnecessary overhead...)
-    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl OsIpcSender {
     fn from_fd(fd: c_int) -> OsIpcSender {
         OsIpcSender {
             fd: Arc::new(SharedFileDescriptor(fd)),
-            nosync_marker: PhantomData,
         }
     }
 
@@ -461,7 +454,7 @@ impl OsIpcSender {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum OsIpcChannel {
     Sender(OsIpcSender),
     Receiver(OsIpcReceiver),
@@ -595,7 +588,7 @@ impl OsIpcSelectionResult {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     fd: c_int,
 }

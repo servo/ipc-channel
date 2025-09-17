@@ -23,7 +23,6 @@ use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
-use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 use std::ptr;
@@ -125,7 +124,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), MachError> {
     Ok((sender, receiver))
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     port: Cell<mach_port_t>,
 }
@@ -389,15 +388,9 @@ impl<'a> SendData<'a> {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcSender {
     port: mach_port_t,
-    // Make sure this is `!Sync`, to match `crossbeam_channel::Sender`; and to discourage sharing
-    // references.
-    //
-    // (Rather, senders should just be cloned, as they are shared internally anyway --
-    // another layer of sharing only adds unnecessary overhead...)
-    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl Drop for OsIpcSender {
@@ -419,19 +412,13 @@ impl Clone for OsIpcSender {
                 Err(error) => panic!("mach_port_mod_refs(1, {}) failed: {:?}", cloned_port, error),
             }
         }
-        OsIpcSender {
-            port: cloned_port,
-            nosync_marker: PhantomData,
-        }
+        OsIpcSender { port: cloned_port }
     }
 }
 
 impl OsIpcSender {
     fn from_name(port: mach_port_t) -> OsIpcSender {
-        OsIpcSender {
-            port,
-            nosync_marker: PhantomData,
-        }
+        OsIpcSender { port }
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender, MachError> {
@@ -577,7 +564,7 @@ impl OsIpcChannel {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     port: mach_port_t,
 }
@@ -597,7 +584,6 @@ impl OsOpaqueIpcChannel {
     pub fn to_sender(&mut self) -> OsIpcSender {
         OsIpcSender {
             port: mem::replace(&mut self.port, MACH_PORT_NULL),
-            nosync_marker: PhantomData,
         }
     }
 

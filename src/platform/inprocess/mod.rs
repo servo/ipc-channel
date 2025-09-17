@@ -17,11 +17,9 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, RangeFrom};
-use std::ptr::eq;
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use usize;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -66,13 +64,6 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), ChannelError> {
 #[derive(Debug)]
 pub struct OsIpcReceiver {
     receiver: RefCell<Option<crossbeam_channel::Receiver<ChannelMessage>>>,
-}
-
-impl PartialEq for OsIpcReceiver {
-    fn eq(&self, other: &OsIpcReceiver) -> bool {
-        self.receiver.borrow().as_ref().map(|rx| rx as *const _)
-            == other.receiver.borrow().as_ref().map(|rx| rx as *const _)
-    }
 }
 
 impl OsIpcReceiver {
@@ -124,23 +115,12 @@ impl OsIpcReceiver {
 
 #[derive(Clone, Debug)]
 pub struct OsIpcSender {
-    sender: RefCell<Sender<ChannelMessage>>,
-}
-
-impl PartialEq for OsIpcSender {
-    fn eq(&self, other: &OsIpcSender) -> bool {
-        eq(
-            &*self.sender.borrow() as *const _,
-            &*other.sender.borrow() as *const _,
-        )
-    }
+    sender: Sender<ChannelMessage>,
 }
 
 impl OsIpcSender {
     fn new(sender: Sender<ChannelMessage>) -> OsIpcSender {
-        OsIpcSender {
-            sender: RefCell::new(sender),
-        }
+        OsIpcSender { sender }
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender, ChannelError> {
@@ -162,7 +142,6 @@ impl OsIpcSender {
         let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
         let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
         self.sender
-            .borrow()
             .send(ChannelMessage(ipc_message))
             .map_err(|_| ChannelError::BrokenPipeError)
     }
@@ -281,13 +260,13 @@ impl OsIpcOneShotServer {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum OsIpcChannel {
     Sender(OsIpcSender),
     Receiver(OsIpcReceiver),
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     channel: RefCell<Option<OsIpcChannel>>,
 }
