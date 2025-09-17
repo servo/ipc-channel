@@ -1291,11 +1291,6 @@ impl OsIpcReceiver {
 #[derive(Debug, PartialEq)]
 pub struct OsIpcSender {
     handle: WinHandle,
-    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
-    //
-    // (Rather, senders should just be cloned, as they are shared internally anyway --
-    // another layer of sharing only adds unnecessary overhead...)
-    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl Clone for OsIpcSender {
@@ -1315,10 +1310,7 @@ impl OsIpcSender {
     }
 
     fn from_handle(handle: WinHandle) -> OsIpcSender {
-        OsIpcSender {
-            handle,
-            nosync_marker: PhantomData,
-        }
+        OsIpcSender { handle }
     }
 
     /// Connect to a pipe server.

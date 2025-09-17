@@ -750,3 +750,20 @@ fn test_receiver_stream() {
         _ => panic!("Stream should have 5"),
     };
 }
+
+mod sync_test {
+    use crate::ipc::{IpcReceiver, IpcSender};
+    use static_assertions::{assert_impl_all, assert_not_impl_any};
+
+    #[test]
+    fn ipc_receiver_not_sync() {
+        // A single-consumer queue is not Sync.
+        assert_not_impl_any!(IpcReceiver<usize> : Sync);
+    }
+
+    #[test]
+    fn ipc_sender_is_sync() {
+        // A multi-producer queue must be Sync.
+        assert_impl_all!(IpcSender<usize> : Sync);
+    }
+}

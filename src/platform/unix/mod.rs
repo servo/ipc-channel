@@ -185,18 +185,12 @@ impl Drop for SharedFileDescriptor {
 #[derive(PartialEq, Debug, Clone)]
 pub struct OsIpcSender {
     fd: Arc<SharedFileDescriptor>,
-    // Make sure this is `!Sync`, to match `mpsc::Sender`; and to discourage sharing references.
-    //
-    // (Rather, senders should just be cloned, as they are shared internally anyway --
-    // another layer of sharing only adds unnecessary overhead...)
-    nosync_marker: PhantomData<Cell<()>>,
 }
 
 impl OsIpcSender {
     fn from_fd(fd: c_int) -> OsIpcSender {
         OsIpcSender {
             fd: Arc::new(SharedFileDescriptor(fd)),
-            nosync_marker: PhantomData,
         }
     }
 

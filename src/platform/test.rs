@@ -1098,11 +1098,18 @@ fn try_recv_large_delayed() {
 
 mod sync_test {
     use crate::platform;
-    use static_assertions::assert_not_impl_any;
+    use static_assertions::{assert_impl_all, assert_not_impl_any};
 
     #[test]
     fn receiver_not_sync() {
-        assert_not_impl_any!(platform::OsIpcSender : Sync);
+        // A single-consumer queue is not Sync.
+        assert_not_impl_any!(platform::OsIpcReceiver : Sync);
+    }
+
+    #[test]
+    fn sender_is_sync() {
+        // A multi-producer queue must be Sync.
+        assert_impl_all!(platform::OsIpcSender : Sync);
     }
 }
 
