@@ -126,13 +126,6 @@ pub struct OsIpcSender {
     sender: Sender<ChannelMessage>,
 }
 
-impl PartialEq for OsIpcSender {
-    fn eq(&self, other: &OsIpcSender) -> bool {
-        // FIXME: this implementation is wrong: https://github.com/servo/ipc-channel/issues/414
-        eq(&self.sender as *const _, &other.sender as *const _)
-    }
-}
-
 impl OsIpcSender {
     fn new(sender: Sender<ChannelMessage>) -> OsIpcSender {
         OsIpcSender { sender }
@@ -275,13 +268,13 @@ impl OsIpcOneShotServer {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum OsIpcChannel {
     Sender(OsIpcSender),
     Receiver(OsIpcReceiver),
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     channel: RefCell<Option<OsIpcChannel>>,
 }
