@@ -274,11 +274,10 @@ fn router_simple_global() {
     tx.send(person.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
-    #[allow(deprecated)]
-    ROUTER.add_route(
-        rx.to_opaque(),
+    ROUTER.add_typed_route(
+        rx,
         Box::new(move |person| {
-            callback_fired_sender.send(person.to().unwrap()).unwrap();
+            callback_fired_sender.send(person.unwrap()).unwrap();
         }),
     );
     let received_person = callback_fired_receiver.recv().unwrap();
