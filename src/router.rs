@@ -77,8 +77,11 @@ impl RouterProxy {
 
     /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
     /// to the router.
-    pub fn add_typed_route<T>(&self, receiver: IpcReceiver<T>, mut callback: TypedRouterHandler<T>)
-    where
+    pub fn add_typed_route<T>(
+        &self,
+        receiver: IpcReceiver<T>,
+        mut callback: TypedRouterMultiHandler<T>,
+    ) where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
         // Before passing the message on to the callback, turn it into the appropriate type
@@ -87,7 +90,31 @@ impl RouterProxy {
             callback(typed_message)
         };
 
-        self.add_route(receiver.to_opaque(), Box::new(modified_callback));
+        self.add_route(
+            receiver.to_opaque(),
+            RouterHandler::Multi(Box::new(modified_callback)),
+        );
+    }
+
+    /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
+    /// to the router.
+    pub fn add_typed_one_shot_route<T>(
+        &self,
+        receiver: IpcReceiver<T>,
+        callback: TypedRouterOneShotHandler<T>,
+    ) where
+        T: Serialize + for<'de> Deserialize<'de> + 'static,
+    {
+        // Before passing the message on to the callback, turn it into the appropriate type
+        let modified_callback = move |msg: IpcMessage| {
+            let typed_message = msg.to::<T>();
+            callback(typed_message)
+        };
+
+        self.add_route(
+            receiver.to_opaque(),
+            RouterHandler::Once(Box::new(modified_callback)),
+        );
     }
 
     /// Send a shutdown message to the router containing a ACK sender,
@@ -218,7 +245,18 @@ impl Router {
                     },
                     // Event from one of our registered receivers, call callback.
                     IpcSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get_mut(&id).unwrap()(message)
+                        match self.handlers.get_mut(&id).unwrap() {
+                            RouterHandler::Once(_) => {},
+                            RouterHandler::Multi(handler) => {
+                                (handler)(message);
+                                continue;
+                            },
+                        };
+                        let RouterHandler::Once(handler) = self.handlers.remove(&id).unwrap()
+                        else {
+                            continue;
+                        };
+                        (handler)(message);
                     },
                     IpcSelectionResult::ChannelClosed(id) => {
                         let _ = self.handlers.remove(&id).unwrap();
@@ -238,7 +276,18 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
+pub type RouterMultiHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
-/// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
+/// Function to call once when a new event is received from the corresponding receiver.
+pub type RouterOneShotHandler = Box<dyn FnOnce(IpcMessage) + Send>;
+
+enum RouterHandler {
+    Once(RouterOneShotHandler),
+    Multi(RouterMultiHandler),
+}
+
+/// Like [RouterMultiHandler] but includes the type that will be passed to the callback
+pub type TypedRouterMultiHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
+
+/// Like [RouterOneShotHandler] but includes the type that will be passed to the callback
+pub type TypedRouterOneShotHandler<T> = Box<dyn FnOnce(Result<T, bincode::Error>) + Send>;
