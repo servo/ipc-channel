@@ -38,6 +38,12 @@ pub struct RouterProxy {
     comm: Mutex<RouterProxyComm>,
 }
 
+impl Drop for RouterProxy {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl RouterProxy {
     pub fn new() -> RouterProxy {
