@@ -30,12 +30,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: ${{ matrix.platform.target }}
 
       - name: rustfmt
         run: cargo fmt --check
-
-      - name: rustup target install
-        run: rustup target add '${{ matrix.platform.target }}'
 
       - name: clippy
         uses: servo/actions/cargo-annotation@main
