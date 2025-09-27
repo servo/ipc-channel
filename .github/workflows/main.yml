@@ -34,6 +34,9 @@ jobs:
       - name: rustfmt
         run: cargo fmt --check
 
+      - name: rustup target install
+        run: rustup target add '${{ matrix.platform.target }}'
+
       - name: clippy
         uses: servo/actions/cargo-annotation@main
         with:
