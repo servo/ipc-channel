@@ -41,7 +41,7 @@ fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 libc = "0.2.162"
-serde = { version = "1.0", features = ["rc"] }
+serde_core = "1.0"
 uuid = { version = "1", features = ["v4"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd", target_os = "illumos"))'.dependencies]
@@ -52,6 +52,7 @@ tempfile = "3.4"
 rand = "0.9"
 
 [dev-dependencies]
+serde = { version = "1.0", features = ["rc"] }
 crossbeam-utils = "0.8"
 futures-test = "0.3"
 static_assertions = "1.1.0"

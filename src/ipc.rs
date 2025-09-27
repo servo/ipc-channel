@@ -13,7 +13,7 @@ use crate::platform::{
 };
 
 use bincode;
-use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
+use serde_core::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
 use std::error::Error as StdError;
