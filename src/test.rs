@@ -274,11 +274,10 @@ fn router_simple_global() {
     tx.send(person.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
-    #[allow(deprecated)]
-    ROUTER.add_route(
-        rx.to_opaque(),
+    ROUTER.add_typed_route(
+        rx,
         Box::new(move |person| {
-            callback_fired_sender.send(person.to().unwrap()).unwrap();
+            callback_fired_sender.send(person.unwrap()).unwrap();
         }),
     );
     let received_person = callback_fired_receiver.recv().unwrap();
@@ -355,6 +354,29 @@ fn router_routing_to_new_crossbeam_receiver() {
     let crossbeam_receiver = router.route_ipc_receiver_to_new_crossbeam_receiver(rx);
     let received_person = crossbeam_receiver.recv().unwrap();
     assert_eq!(received_person, person);
+}
+
+#[test]
+fn router_once_handler() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (tx, rx) = ipc::channel().unwrap();
+    let (tx2, rx2) = ipc::channel().unwrap();
+
+    let router = RouterProxy::new();
+    let mut once_tx2 = Some(tx2);
+    router.add_typed_one_shot_route(
+        rx,
+        Box::new(move |_msg| once_tx2.take().unwrap().send(()).unwrap()),
+    );
+
+    // Send one single event.
+    tx.send(person.clone()).unwrap();
+    // Wait for acknowledgement that the callback ran.
+    rx2.recv().unwrap();
+    // This send should succeed but no handler should run. If it does run,
+    // a panic will occur.
+    tx.send(person.clone()).unwrap();
+    assert!(rx2.recv().is_err());
 }
 
 #[test]

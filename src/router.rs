@@ -38,6 +38,12 @@ pub struct RouterProxy {
     comm: Mutex<RouterProxyComm>,
 }
 
+impl Drop for RouterProxy {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl RouterProxy {
     pub fn new() -> RouterProxy {
@@ -62,11 +68,7 @@ impl RouterProxy {
 
     /// Add a new (receiver, callback) pair to the router, and send a wakeup message
     /// to the router.
-    ///
-    /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
-    /// mismatches between the receiver and callback types.
-    #[deprecated(since = "0.19.0", note = "please use 'add_typed_route' instead")]
-    pub fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
+    fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
         if comm.shutdown {
@@ -81,11 +83,11 @@ impl RouterProxy {
 
     /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
     /// to the router.
-    ///
-    /// Unlike [add_route](Self::add_route) this method is strongly typed and guarantees
-    /// that the `receiver` and the `callback` use the same message type.
-    pub fn add_typed_route<T>(&self, receiver: IpcReceiver<T>, mut callback: TypedRouterHandler<T>)
-    where
+    pub fn add_typed_route<T>(
+        &self,
+        receiver: IpcReceiver<T>,
+        mut callback: TypedRouterMultiHandler<T>,
+    ) where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
         // Before passing the message on to the callback, turn it into the appropriate type
@@ -94,8 +96,31 @@ impl RouterProxy {
             callback(typed_message)
         };
 
-        #[allow(deprecated)]
-        self.add_route(receiver.to_opaque(), Box::new(modified_callback));
+        self.add_route(
+            receiver.to_opaque(),
+            RouterHandler::Multi(Box::new(modified_callback)),
+        );
+    }
+
+    /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
+    /// to the router.
+    pub fn add_typed_one_shot_route<T>(
+        &self,
+        receiver: IpcReceiver<T>,
+        callback: TypedRouterOneShotHandler<T>,
+    ) where
+        T: Serialize + for<'de> Deserialize<'de> + 'static,
+    {
+        // Before passing the message on to the callback, turn it into the appropriate type
+        let modified_callback = move |msg: IpcMessage| {
+            let typed_message = msg.to::<T>();
+            callback(typed_message)
+        };
+
+        self.add_route(
+            receiver.to_opaque(),
+            RouterHandler::Once(Some(Box::new(modified_callback))),
+        );
     }
 
     /// Send a shutdown message to the router containing a ACK sender,
@@ -226,7 +251,16 @@ impl Router {
                     },
                     // Event from one of our registered receivers, call callback.
                     IpcSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get_mut(&id).unwrap()(message)
+                        match self.handlers.get_mut(&id).unwrap() {
+                            RouterHandler::Once(handler) => {
+                                if let Some(handler) = handler.take() {
+                                    (handler)(message);
+                                }
+                            },
+                            RouterHandler::Multi(ref mut handler) => {
+                                (handler)(message);
+                            },
+                        }
                     },
                     IpcSelectionResult::ChannelClosed(id) => {
                         let _ = self.handlers.remove(&id).unwrap();
@@ -246,7 +280,18 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<dyn FnMut(IpcMessage) + Send>;
+pub type RouterMultiHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
-/// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
+/// Function to call the first time that a message is received from the corresponding receiver.
+pub type RouterOneShotHandler = Box<dyn FnOnce(IpcMessage) + Send>;
+
+enum RouterHandler {
+    Once(Option<RouterOneShotHandler>),
+    Multi(RouterMultiHandler),
+}
+
+/// Like [RouterMultiHandler] but includes the type that will be passed to the callback
+pub type TypedRouterMultiHandler<T> = Box<dyn FnMut(Result<T, bincode::Error>) + Send>;
+
+/// Like [RouterOneShotHandler] but includes the type that will be passed to the callback
+pub type TypedRouterOneShotHandler<T> = Box<dyn FnOnce(Result<T, bincode::Error>) + Send>;
