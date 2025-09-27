@@ -30,6 +30,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: ${{ matrix.platform.target }}
 
       - name: rustfmt
         run: cargo fmt --check
