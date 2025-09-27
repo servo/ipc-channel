@@ -119,7 +119,7 @@ impl RouterProxy {
 
         self.add_route(
             receiver.to_opaque(),
-            RouterHandler::Once(Box::new(modified_callback)),
+            RouterHandler::Once(Some(Box::new(modified_callback))),
         );
     }
 
@@ -252,17 +252,15 @@ impl Router {
                     // Event from one of our registered receivers, call callback.
                     IpcSelectionResult::MessageReceived(id, message) => {
                         match self.handlers.get_mut(&id).unwrap() {
-                            RouterHandler::Once(_) => {},
-                            RouterHandler::Multi(handler) => {
-                                (handler)(message);
-                                continue;
+                            RouterHandler::Once(handler) => {
+                                if let Some(handler) = handler.take() {
+                                    (handler)(message);
+                                }
                             },
-                        };
-                        let RouterHandler::Once(handler) = self.handlers.remove(&id).unwrap()
-                        else {
-                            continue;
-                        };
-                        (handler)(message);
+                            RouterHandler::Multi(ref mut handler) => {
+                                (handler)(message);
+                            },
+                        }
                     },
                     IpcSelectionResult::ChannelClosed(id) => {
                         let _ = self.handlers.remove(&id).unwrap();
@@ -284,11 +282,11 @@ enum RouterMsg {
 /// Function to call when a new event is received from the corresponding receiver.
 pub type RouterMultiHandler = Box<dyn FnMut(IpcMessage) + Send>;
 
-/// Function to call once when a new event is received from the corresponding receiver.
+/// Function to call the first time that a message is received from the corresponding receiver.
 pub type RouterOneShotHandler = Box<dyn FnOnce(IpcMessage) + Send>;
 
 enum RouterHandler {
-    Once(RouterOneShotHandler),
+    Once(Option<RouterOneShotHandler>),
     Multi(RouterMultiHandler),
 }
 
