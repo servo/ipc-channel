@@ -20,7 +20,6 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::Deref;
 use std::time::Duration;
 
@@ -369,24 +368,10 @@ where
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                 |os_ipc_shared_memory_regions_for_serialization| {
-                    let old_os_ipc_channels =
-                        mem::take(&mut *os_ipc_channels_for_serialization.borrow_mut());
-                    let old_os_ipc_shared_memory_regions = mem::take(
-                        &mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
-                    );
-                    let os_ipc_shared_memory_regions;
-                    let os_ipc_channels;
-                    {
-                        bincode::serialize_into(&mut bytes, &data)?;
-                        os_ipc_channels = mem::replace(
-                            &mut *os_ipc_channels_for_serialization.borrow_mut(),
-                            old_os_ipc_channels,
-                        );
-                        os_ipc_shared_memory_regions = mem::replace(
-                            &mut *os_ipc_shared_memory_regions_for_serialization.borrow_mut(),
-                            old_os_ipc_shared_memory_regions,
-                        );
-                    };
+                    bincode::serialize_into(&mut bytes, &data)?;
+                    let os_ipc_channels = os_ipc_channels_for_serialization.take();
+                    let os_ipc_shared_memory_regions =
+                        os_ipc_shared_memory_regions_for_serialization.take();
                     Ok(self.os_sender.send(
                         &bytes[..],
                         os_ipc_channels,
@@ -726,31 +711,27 @@ impl IpcMessage {
     }
 
     /// Deserialize the raw data in the contained message into the inferred type.
-    pub fn to<T>(mut self) -> Result<T, bincode::Error>
+    pub fn to<T>(self) -> Result<T, bincode::Error>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
         OS_IPC_CHANNELS_FOR_DESERIALIZATION.with(|os_ipc_channels_for_deserialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_DESERIALIZATION.with(
                 |os_ipc_shared_memory_regions_for_deserialization| {
-                    mem::swap(
-                        &mut *os_ipc_channels_for_deserialization.borrow_mut(),
-                        &mut self.os_ipc_channels,
-                    );
-                    let old_ipc_shared_memory_regions_for_deserialization = mem::replace(
-                        &mut *os_ipc_shared_memory_regions_for_deserialization.borrow_mut(),
-                        self.os_ipc_shared_memory_regions
-                            .into_iter()
-                            .map(Some)
-                            .collect(),
-                    );
+                    // Setup the thread local memory for deserialization to take it.
+                    *os_ipc_channels_for_deserialization.borrow_mut() = self.os_ipc_channels;
+                    *os_ipc_shared_memory_regions_for_deserialization.borrow_mut() = self
+                        .os_ipc_shared_memory_regions
+                        .into_iter()
+                        .map(Some)
+                        .collect();
+
                     let result = bincode::deserialize(&self.data[..]);
-                    *os_ipc_shared_memory_regions_for_deserialization.borrow_mut() =
-                        old_ipc_shared_memory_regions_for_deserialization;
-                    mem::swap(
-                        &mut *os_ipc_channels_for_deserialization.borrow_mut(),
-                        &mut self.os_ipc_channels,
-                    );
+
+                    // Clear the shared memory
+                    let _ = os_ipc_shared_memory_regions_for_deserialization.take();
+                    let _ = os_ipc_channels_for_deserialization.take();
+
                     /* Error check comes after doing cleanup,
                      * since we need the cleanup both in the success and the error cases. */
                     result
