@@ -42,7 +42,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ipc::IpcOneShotServer;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use crate::ipc::IpcReceiver;
-use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory, IpcSharedMemoryVec};
 use crate::router::{RouterProxy, ROUTER};
 
 #[cfg(not(any(
@@ -540,6 +540,25 @@ fn shared_memory_object_equality() {
     tx.send(person_and_shared_memory.clone()).unwrap();
     let received_person_and_shared_memory = rx.recv().unwrap();
     assert_eq!(received_person_and_shared_memory, person_and_shared_memory);
+}
+
+#[test]
+fn shared_memory_vec() {
+    let (mut vec, index) = IpcSharedMemoryVec::from_bytes(&[0xba; 24]);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(vec.reader()).unwrap();
+    let received_reader = rx.recv().unwrap();
+    assert_eq!(vec.get(&index), received_reader.get(&index));
+
+    let index2 = vec.push(&[0xbc; 24]);
+    assert!(vec.get(&index2).is_some());
+    assert!(received_reader.get(&index2).is_none()); // The reader is too old
+
+    tx.send(vec.reader()).unwrap();
+    let received_reader2 = rx.recv().unwrap();
+
+    assert_eq!(vec.get(&index), received_reader.get(&index));
+    assert_eq!(vec.get(&index2), received_reader2.get(&index2));
 }
 
 #[test]

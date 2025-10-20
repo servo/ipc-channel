@@ -153,9 +153,15 @@ impl OsIpcSender {
         data: &[u8],
         ports: Vec<OsIpcChannel>,
         shared_memory_regions: Vec<OsIpcSharedMemory>,
+        shared_memory_vecs: Vec<OsIpcSharedMemoryVec>,
     ) -> Result<(), ChannelError> {
         let os_ipc_channels = ports.into_iter().map(OsOpaqueIpcChannel::new).collect();
-        let ipc_message = IpcMessage::new(data.to_vec(), os_ipc_channels, shared_memory_regions);
+        let ipc_message = IpcMessage::new(
+            data.to_vec(),
+            os_ipc_channels,
+            shared_memory_regions,
+            shared_memory_vecs,
+        );
         self.sender
             .send(ChannelMessage(ipc_message))
             .map_err(|_| ChannelError::BrokenPipeError)
