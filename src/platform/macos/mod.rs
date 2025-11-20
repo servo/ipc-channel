@@ -27,7 +27,7 @@ use std::mem;
 use std::ops::Deref;
 use std::ptr;
 use std::slice;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 mod mach_sys;
@@ -36,8 +36,14 @@ mod mach_sys;
 /// this, we retry and spill to the heap.
 const SMALL_MESSAGE_SIZE: usize = 4096;
 
+pub fn set_bootstrap_prefix(prefix: impl Into<String>) {
+    BOOTSTRAP_PREFIX
+        .set(prefix.into())
+        .expect("set_bootstrap_prefix can only be called once")
+}
+
 /// A string to prepend to our bootstrap ports.
-static BOOTSTRAP_PREFIX: &str = "org.rust-lang.ipc-channel.";
+pub(crate) static BOOTSTRAP_PREFIX: OnceLock<String> = OnceLock::new();
 
 const BOOTSTRAP_NAME_IN_USE: kern_return_t = 1101;
 const BOOTSTRAP_SUCCESS: kern_return_t = 0;
@@ -265,7 +271,14 @@ impl OsIpcReceiver {
             let mut os_result;
             let mut name;
             loop {
-                name = format!("{}{}", BOOTSTRAP_PREFIX, rand::rng().random::<i64>());
+                name = format!(
+                    "{}{}",
+                    BOOTSTRAP_PREFIX
+                        .get()
+                        .map(AsRef::as_ref)
+                        .unwrap_or_else(|| "org.rust-lang.ipc-channel."),
+                    rand::rng().random::<i64>()
+                );
                 let c_name = CString::new(name.clone()).unwrap();
                 os_result = bootstrap_register2(bootstrap_port, c_name.as_ptr(), right, 0);
                 if os_result == BOOTSTRAP_NAME_IN_USE {

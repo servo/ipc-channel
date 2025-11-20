@@ -36,6 +36,8 @@ mod macos;
 mod os {
     pub use super::macos::*;
 }
+#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
+pub use macos::set_bootstrap_prefix;
 
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
 mod windows;
