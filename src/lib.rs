@@ -40,3 +40,5 @@ pub mod router;
 mod test;
 
 pub use bincode::{Error, ErrorKind};
+#[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
+pub use platform::set_bootstrap_prefix;
