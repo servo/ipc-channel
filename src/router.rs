@@ -18,7 +18,7 @@ use std::sync::{LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{self, Receiver, Sender};
-use serde_core::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::ipc::{
     self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcReceiver,
