@@ -378,7 +378,7 @@ impl<'a> From<&'a [u8]> for SendData<'a> {
     }
 }
 
-impl<'_> SendData<'_> {
+impl SendData<'_> {
     fn take_shared_memory(&mut self) -> Option<OsIpcSharedMemory> {
         match *self {
             SendData::Inline(_) => None,
