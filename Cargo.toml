@@ -6,6 +6,9 @@ authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/servo/ipc-channel"
 edition = "2021"
+# Keep this in sync with the msrv_build job in CI.
+# This version may be `<=`, but not higher than the MSRV in the main servo project.
+rust-version = "1.86.0"
 
 [[bench]]
 name = "platform"

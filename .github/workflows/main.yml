@@ -9,6 +9,36 @@ on:
     types: [checks_requested]
 
 jobs:
+  msrv_build:
+    name: ${{ format('MSRV {0} {1}', matrix.platform.target, matrix.features)}}
+    runs-on: ${{ matrix.platform.os }}
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      matrix:
+        platform:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+        features: [ "", "force-inprocess", "async" ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install minimum supported Rust toolchain
+        uses: dtolnay/rust-toolchain@1.86
+        with:
+          components: rustfmt, clippy
+          targets: ${{ matrix.platform.target }}
+
+      - name: clippy
+        uses: servo/actions/cargo-annotation@main
+        with:
+          cargo-command: clippy --features '${{ matrix.features }}' --target '${{ matrix.platform.target }}'
+          with-annotation: ${{ matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == '' }}
+      - name: build
+        run: cargo build --features "${{ matrix.features }}"
+
+
   test:
     name: ${{ format('{0} {1}', matrix.platform.target, matrix.features)}}
     runs-on: ${{ matrix.platform.os }}
@@ -34,12 +64,6 @@ jobs:
 
       - name: rustfmt
         run: cargo fmt --check
-
-      - name: clippy
-        uses: servo/actions/cargo-annotation@main
-        with:
-          cargo-command: clippy --features '${{ matrix.features }}' --target '${{ matrix.platform.target }}'
-          with-annotation: ${{ matrix.platform.target == 'x86_64-unknown-linux-gnu' && matrix.features == '' }}
 
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }} enable-slow-tests" --target ${{ matrix.platform.target }}
