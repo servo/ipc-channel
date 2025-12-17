@@ -18,7 +18,6 @@ use std::ops::{Deref, RangeFrom};
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
-use std::usize;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -394,7 +393,7 @@ impl From<ChannelError> for crate::IpcError {
     fn from(error: ChannelError) -> Self {
         match error {
             ChannelError::ChannelClosedError => crate::IpcError::Disconnected,
-            e => crate::IpcError::Io(io::Error::from(e).into()),
+            e => crate::IpcError::Io(io::Error::from(e)),
         }
     }
 }
@@ -406,7 +405,7 @@ impl From<ChannelError> for crate::TryRecvError {
                 crate::TryRecvError::IpcError(crate::IpcError::Disconnected)
             },
             ChannelError::ChannelEmpty => crate::TryRecvError::Empty,
-            e => crate::TryRecvError::IpcError(crate::IpcError::Io(io::Error::from(e).into())),
+            e => crate::TryRecvError::IpcError(crate::IpcError::Io(io::Error::from(e))),
         }
     }
 }
