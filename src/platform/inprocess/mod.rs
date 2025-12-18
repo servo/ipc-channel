@@ -17,7 +17,6 @@ use std::error::Error as StdError;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::ops::{Deref, RangeFrom};
-use std::ptr::eq;
 use std::slice;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
@@ -65,13 +64,6 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), ChannelError> {
 #[derive(Debug)]
 pub struct OsIpcReceiver {
     receiver: RefCell<Option<crossbeam_channel::Receiver<ChannelMessage>>>,
-}
-
-impl PartialEq for OsIpcReceiver {
-    fn eq(&self, other: &OsIpcReceiver) -> bool {
-        self.receiver.borrow().as_ref().map(|rx| rx as *const _)
-            == other.receiver.borrow().as_ref().map(|rx| rx as *const _)
-    }
 }
 
 impl OsIpcReceiver {
@@ -124,13 +116,6 @@ impl OsIpcReceiver {
 #[derive(Clone, Debug)]
 pub struct OsIpcSender {
     sender: Sender<ChannelMessage>,
-}
-
-impl PartialEq for OsIpcSender {
-    fn eq(&self, other: &OsIpcSender) -> bool {
-        // FIXME: this implementation is wrong: https://github.com/servo/ipc-channel/issues/414
-        eq(&self.sender as *const _, &other.sender as *const _)
-    }
 }
 
 impl OsIpcSender {
@@ -275,13 +260,13 @@ impl OsIpcOneShotServer {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum OsIpcChannel {
     Sender(OsIpcSender),
     Receiver(OsIpcReceiver),
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     channel: RefCell<Option<OsIpcChannel>>,
 }

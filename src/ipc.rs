@@ -669,7 +669,6 @@ impl IpcSelectionResult {
 /// Use the [to] method to deserialize the raw result into the requested type.
 ///
 /// [to]: #method.to
-#[derive(PartialEq)]
 pub struct IpcMessage {
     pub(crate) data: Vec<u8>,
     pub(crate) os_ipc_channels: Vec<OsOpaqueIpcChannel>,

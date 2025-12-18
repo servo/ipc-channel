@@ -130,7 +130,7 @@ pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), MachError> {
     Ok((sender, receiver))
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     port: Cell<mach_port_t>,
 }
@@ -401,7 +401,7 @@ impl SendData<'_> {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcSender {
     port: mach_port_t,
 }
@@ -577,7 +577,7 @@ impl OsIpcChannel {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     port: mach_port_t,
 }

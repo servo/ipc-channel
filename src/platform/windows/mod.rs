@@ -1288,7 +1288,7 @@ impl OsIpcReceiver {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct OsIpcSender {
     handle: WinHandle,
 }
@@ -1918,7 +1918,7 @@ pub enum OsIpcChannel {
     Receiver(OsIpcReceiver),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     handle: WinHandle,
 }

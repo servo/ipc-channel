@@ -116,7 +116,7 @@ struct PollEntry {
     pub fd: RawFd,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsIpcReceiver {
     fd: Cell<c_int>,
 }
@@ -181,7 +181,7 @@ impl Drop for SharedFileDescriptor {
     }
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub struct OsIpcSender {
     fd: Arc<SharedFileDescriptor>,
 }
@@ -454,7 +454,7 @@ impl OsIpcSender {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum OsIpcChannel {
     Sender(OsIpcSender),
     Receiver(OsIpcReceiver),
@@ -588,7 +588,7 @@ impl OsIpcSelectionResult {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub struct OsOpaqueIpcChannel {
     fd: c_int,
 }
