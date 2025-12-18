@@ -12,14 +12,12 @@ use self::mach_sys::{kern_return_t, mach_msg_body_t, mach_msg_header_t, mach_msg
 use self::mach_sys::{mach_msg_ool_descriptor_t, mach_msg_port_descriptor_t, mach_msg_type_name_t};
 use self::mach_sys::{mach_msg_timeout_t, mach_port_limits_t, mach_port_msgcount_t};
 use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit_t};
-use crate::ipc::{self, IpcMessage};
+use crate::ipc::IpcMessage;
 
-use bincode;
 use libc::{self, c_char, c_uint, c_void, size_t};
 use rand::{self, Rng};
 use std::cell::Cell;
 use std::convert::TryInto;
-use std::error::Error as StdError;
 use std::ffi::CString;
 use std::fmt::{self, Debug, Formatter};
 use std::io;
@@ -29,6 +27,7 @@ use std::ptr;
 use std::slice;
 use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
+use thiserror::Error;
 
 mod mach_sys;
 
@@ -1001,42 +1000,27 @@ impl Message {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum KernelError {
+    #[error("Success")]
     Success,
+    #[error("No room in IPC name space for another right.")]
     NoSpace,
+    #[error("Name doesn't denote a right in the task")]
     InvalidName,
+    #[error("Name denotes a right, but not an appropiate right.")]
     InvalidRight,
+    #[error("Blatant range error")]
     InvalidValue,
+    #[error("The supplied (port) capability is improper")]
     InvalidCapability,
+    #[error("Operation would overflow limit on user-references")]
     UrefsOverflow,
+    #[error("Receive right is not a member of a port set.")]
     NotInSet,
+    #[error("Unkown kernel error. {0}")]
     Unknown(kern_return_t),
 }
-
-impl fmt::Display for KernelError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            KernelError::Success => write!(fmt, "Success."),
-            KernelError::NoSpace => write!(fmt, "No room in IPC name space for another right."),
-            KernelError::InvalidName => write!(fmt, "Name doesn't denote a right in the task."),
-            KernelError::InvalidRight => {
-                write!(fmt, "Name denotes a right, but not an appropriate right.")
-            },
-            KernelError::InvalidValue => write!(fmt, "Blatant range error."),
-            KernelError::InvalidCapability => {
-                write!(fmt, "The supplied (port) capability is improper.")
-            },
-            KernelError::UrefsOverflow => {
-                write!(fmt, "Operation would overflow limit on user-references.")
-            },
-            KernelError::NotInSet => write!(fmt, "Receive right is not a member of a port set."),
-            KernelError::Unknown(code) => write!(fmt, "Unknown kernel error: {:x}", code),
-        }
-    }
-}
-
-impl StdError for KernelError {}
 
 impl From<kern_return_t> for KernelError {
     fn from(code: kern_return_t) -> KernelError {
@@ -1054,10 +1038,10 @@ impl From<kern_return_t> for KernelError {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum MachError {
     Success,
-    Kernel(KernelError),
+    Kernel(#[from] KernelError),
     IpcSpace,
     VmSpace,
     IpcKernel,
@@ -1189,14 +1173,6 @@ impl fmt::Display for MachError {
     }
 }
 
-impl StdError for MachError {}
-
-impl From<MachError> for bincode::Error {
-    fn from(mach_error: MachError) -> Self {
-        io::Error::from(mach_error).into()
-    }
-}
-
 impl From<mach_msg_return_t> for MachError {
     fn from(code: mach_msg_return_t) -> MachError {
         match code {
@@ -1244,27 +1220,23 @@ impl From<mach_msg_return_t> for MachError {
     }
 }
 
-impl From<KernelError> for MachError {
-    fn from(kernel_error: KernelError) -> MachError {
-        MachError::Kernel(kernel_error)
-    }
-}
-
-impl From<MachError> for ipc::TryRecvError {
+impl From<MachError> for crate::TryRecvError {
     fn from(error: MachError) -> Self {
         match error {
-            MachError::NotifyNoSenders => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
-            MachError::RcvTimedOut => ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
+            MachError::NotifyNoSenders => {
+                crate::TryRecvError::IpcError(crate::IpcError::Disconnected)
+            },
+            MachError::RcvTimedOut => crate::TryRecvError::Empty,
+            e => crate::TryRecvError::IpcError(crate::IpcError::Io(io::Error::from(e))),
         }
     }
 }
 
-impl From<MachError> for ipc::IpcError {
+impl From<MachError> for crate::IpcError {
     fn from(error: MachError) -> Self {
         match error {
-            MachError::NotifyNoSenders => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(io::Error::from(e)),
+            MachError::NotifyNoSenders => crate::IpcError::Disconnected,
+            e => crate::IpcError::Io(io::Error::from(e)),
         }
     }
 }
