@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 /// An error that occurs for serialization or deserialization
-pub struct SerializationError(#[from] pub(crate) bincode::Error);
+pub struct SerializationError(#[from] pub(crate) postcard::Error);
 
 impl Display for SerializationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

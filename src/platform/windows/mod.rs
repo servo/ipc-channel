@@ -6,9 +6,8 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-
+use postcard;
 use crate::ipc::IpcMessage;
-use bincode;
 use serde_core;
 use thiserror::Error;
 
@@ -207,7 +206,7 @@ impl<'data> Message<'data> {
 
     fn oob_data(&self) -> Option<OutOfBandMessage> {
         if self.oob_len > 0 {
-            let mut oob = bincode::deserialize::<OutOfBandMessage>(self.oob_bytes())
+            let mut oob = postcard::from_bytes::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
             if let Err(e) = oob.recover_handles() {
                 win32_trace!("Failed to recover handles: {:?}", e);
@@ -1347,7 +1346,7 @@ impl OsIpcSender {
 
     fn needs_fragmentation(data_len: usize, oob: &OutOfBandMessage) -> bool {
         let oob_size = if oob.needs_to_be_sent() {
-            bincode::serialized_size(oob).unwrap()
+            postcard::experimental::seriaslized_size(oob).unwrap()
         } else {
             0
         };
@@ -1452,7 +1451,7 @@ impl OsIpcSender {
         // If we need to send OOB data, serialize it
         let mut oob_data: Vec<u8> = vec![];
         if oob.needs_to_be_sent() {
-            oob_data = bincode::serialize(&oob).unwrap();
+            oob_data = postcard::to_allocvec(&oob).unwrap();
         }
 
         let in_band_data_len = if big_data_sender.is_none() {
