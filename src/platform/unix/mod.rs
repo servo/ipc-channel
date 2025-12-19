@@ -9,7 +9,7 @@
 
 use crate::ipc::{self, IpcMessage};
 use bincode;
-use fnv::FnvHasher;
+use rustc_hash::FxHasher;
 use libc::{
     self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
     PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
@@ -472,7 +472,7 @@ impl OsIpcChannel {
 pub struct OsIpcReceiverSet {
     incrementor: RangeFrom<u64>,
     poll: Poll,
-    pollfds: HashMap<Token, PollEntry, BuildHasherDefault<FnvHasher>>,
+    pollfds: HashMap<Token, PollEntry, BuildHasherDefault<FxHasher>>,
     events: Events,
 }
 
@@ -487,11 +487,11 @@ impl Drop for OsIpcReceiverSet {
 
 impl OsIpcReceiverSet {
     pub fn new() -> Result<OsIpcReceiverSet, UnixError> {
-        let fnv = BuildHasherDefault::<FnvHasher>::default();
+        let fx = BuildHasherDefault::<FxHasher>::default();
         Ok(OsIpcReceiverSet {
             incrementor: 0..,
             poll: Poll::new()?,
-            pollfds: HashMap::with_hasher(fnv),
+            pollfds: HashMap::with_hasher(fx),
             events: Events::with_capacity(10),
         })
     }
