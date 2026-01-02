@@ -68,6 +68,8 @@ impl RouterProxy {
 
     /// Add a new (receiver, callback) pair to the router, and send a wakeup message
     /// to the router.
+    ///
+    /// The `callback` is dropped when `receiver`'s channel disconnects.
     fn add_route(&self, receiver: OpaqueIpcReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
@@ -83,6 +85,8 @@ impl RouterProxy {
 
     /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
     /// to the router.
+    ///
+    /// The `callback` is dropped when `receiver`'s channel disconnects.
     pub fn add_typed_route<T>(
         &self,
         receiver: IpcReceiver<T>,
