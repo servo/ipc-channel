@@ -11,8 +11,8 @@ use crate::ipc::{self, IpcMessage};
 use bincode;
 use fnv::FnvHasher;
 use libc::{
-    self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
-    PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
+    self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_FIXED, MAP_NORESERVE,
+    MAP_SHARED, PROT_READ, PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
 };
 use libc::{c_char, c_int, c_void, getsockopt, SO_LINGER, S_IFMT, S_IFSOCK};
 use libc::{iovec, msghdr, off_t, recvmsg, sendmsg};
@@ -20,6 +20,7 @@ use libc::{sa_family_t, setsockopt, size_t, sockaddr, sockaddr_un, socketpair, s
 use libc::{EAGAIN, EWOULDBLOCK};
 use mio::unix::SourceFd;
 use mio::{Events, Interest, Poll, Token};
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 use std::cmp;
 use std::collections::HashMap;
@@ -230,7 +231,7 @@ impl OsIpcSender {
     ///
     /// This one is smaller than regular fragments, because it carries the message (size) header.
     fn first_fragment_size(sendbuf_size: usize) -> usize {
-        (Self::fragment_size(sendbuf_size) - mem::size_of::<usize>()) & (!8usize + 1)
+        (Self::fragment_size(sendbuf_size) - 2 * mem::size_of::<usize>()) & (!8usize + 1)
         // Ensure optimal alignment.
     }
 
@@ -252,6 +253,7 @@ impl OsIpcSender {
         data: &[u8],
         channels: Vec<OsIpcChannel>,
         shared_memory_regions: Vec<OsIpcSharedMemory>,
+        shared_memory_vecs: Vec<OsIpcSharedMemoryVec>,
     ) -> Result<(), UnixError> {
         let mut fds = Vec::new();
         for channel in channels.iter() {
@@ -259,6 +261,11 @@ impl OsIpcSender {
         }
         for shared_memory_region in shared_memory_regions.iter() {
             fds.push(shared_memory_region.store.fd());
+        }
+        let number_of_shared_memory_regions = shared_memory_regions.len();
+
+        for shared_memory_vec in shared_memory_vecs.iter() {
+            fds.push(shared_memory_vec.store.fd());
         }
 
         // `len` is the total length of the message.
@@ -272,6 +279,7 @@ impl OsIpcSender {
             fds: &[c_int],
             data_buffer: &[u8],
             len: usize,
+            number_of_shared_memory_regions: usize,
         ) -> Result<(), UnixError> {
             let result = unsafe {
                 let cmsg_length = mem::size_of_val(fds) as c_uint;
@@ -306,11 +314,14 @@ impl OsIpcSender {
                         iov_len: mem::size_of_val(&len),
                     },
                     iovec {
+                        iov_base: &number_of_shared_memory_regions as *const _ as *mut c_void,
+                        iov_len: mem::size_of_val(&number_of_shared_memory_regions),
+                    },
+                    iovec {
                         iov_base: data_buffer.as_ptr() as *mut c_void,
                         iov_len: data_buffer.len(),
                     },
                 ];
-
                 let msghdr = new_msghdr(&mut iovec, cmsg_buffer, cmsg_space as MsgControlLen);
                 let result = sendmsg(sender_fd, &msghdr, 0);
                 libc::free(cmsg_buffer as *mut c_void);
@@ -366,7 +377,13 @@ impl OsIpcSender {
 
         // If the message is small enough, try sending it in a single fragment.
         if data.len() <= Self::get_max_fragment_size() {
-            match send_first_fragment(self.fd.0, &fds[..], data, data.len()) {
+            match send_first_fragment(
+                self.fd.0,
+                &fds[..],
+                &data,
+                data.len(),
+                number_of_shared_memory_regions,
+            ) {
                 Ok(_) => return Ok(()),
                 Err(error) => {
                     // ENOBUFS means the kernel failed to allocate a buffer large enough
@@ -406,7 +423,13 @@ impl OsIpcSender {
 
                 // This fragment always uses the full allowable buffer size.
                 end_byte_position = Self::first_fragment_size(sendbuf_size);
-                send_first_fragment(self.fd.0, &fds[..], &data[..end_byte_position], data.len())
+                send_first_fragment(
+                    self.fd.0,
+                    &fds[..],
+                    &data[..end_byte_position],
+                    data.len(),
+                    number_of_shared_memory_regions,
+                )
             } else {
                 // Followup fragment. No header; but offset by amount of data already sent.
 
@@ -789,6 +812,31 @@ impl BackingStore {
         assert!(address != MAP_FAILED);
         (address as *mut u8, length)
     }
+
+    pub unsafe fn map_file_noreserve(&self, length: Option<size_t>) -> (*mut u8, size_t) {
+        let length = length.unwrap_or_else(|| {
+            let mut st = mem::MaybeUninit::uninit();
+            if libc::fstat(self.fd, st.as_mut_ptr()) != 0 {
+                panic!("error stating fd {}: {}", self.fd, UnixError::last());
+            }
+            st.assume_init().st_size as size_t
+        });
+        if length == 0 {
+            // This will cause `mmap` to fail, so handle it explicitly.
+            return (ptr::null_mut(), length);
+        }
+        let address = libc::mmap(
+            ptr::null_mut(),
+            length,
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED | MAP_NORESERVE,
+            self.fd,
+            0,
+        );
+        assert!(!address.is_null());
+        assert!(address != MAP_FAILED);
+        (address as *mut u8, length)
+    }
 }
 
 impl Drop for BackingStore {
@@ -796,6 +844,130 @@ impl Drop for BackingStore {
         unsafe {
             let result = libc::close(self.fd);
             assert!(thread::panicking() || result == 0);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct OsIpcSharedMemoryIndex {
+    // The offset in bytes
+    offset: usize,
+    // The length in bytes
+    length: usize,
+}
+
+pub struct OsIpcSharedMemoryVec {
+    ptr: *mut u8,
+    length: usize,
+    store: BackingStore,
+}
+
+impl OsIpcSharedMemoryVec {
+    pub fn from_bytes(bytes: &[u8]) -> (OsIpcSharedMemoryVec, OsIpcSharedMemoryIndex) {
+        unsafe {
+            let store = BackingStore::new(bytes.len());
+            let (address, _) = store.map_file_noreserve(Some(512_000_000));
+            ptr::copy_nonoverlapping(bytes.as_ptr(), address, bytes.len());
+            let memory = OsIpcSharedMemoryVec {
+                ptr: address,
+                length: bytes.len(),
+                store,
+            };
+            (
+                memory,
+                OsIpcSharedMemoryIndex {
+                    offset: 0,
+                    length: bytes.len(),
+                },
+            )
+        }
+    }
+
+    unsafe fn from_fd(fd: c_int) -> OsIpcSharedMemoryVec {
+        let store = BackingStore::from_fd(fd);
+        let (ptr, length) = store.map_file(None);
+        OsIpcSharedMemoryVec { ptr, length, store }
+    }
+
+    pub fn push(&mut self, bytes: &[u8]) -> OsIpcSharedMemoryIndex {
+        let fd = self.store.fd();
+        let index = unsafe {
+            assert_eq!(
+                0,
+                libc::ftruncate(fd, (self.length + bytes.len()).try_into().unwrap())
+            );
+
+            let new_length = self.length + bytes.len();
+            // map more of the file into the address space
+            let address = libc::mmap(
+                self.ptr.byte_offset(self.length.try_into().unwrap()) as *mut c_void,
+                bytes.len(),
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED,
+                self.store.fd,
+                0,
+            );
+
+            assert!(address != MAP_FAILED);
+            ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len());
+            OsIpcSharedMemoryIndex {
+                offset: self.length,
+                length: bytes.len(),
+            }
+        };
+        self.length += bytes.len();
+        index
+    }
+
+    pub fn get(&self, index: &OsIpcSharedMemoryIndex) -> Option<&[u8]> {
+        // While it would be nice to check index vs length here, we cannot.
+        // The length in this object might be a reader that was sent a long time ago
+        // The length does not get updated for the object, only for the main IpcSharedMemoryVec
+        // This is in general fine as we only produce indices for objects that exists _and_ we
+        // can never delete objects.
+        if self.length >= index.offset + index.length {
+            Some(unsafe {
+                slice::from_raw_parts(
+                    self.ptr.byte_offset(index.offset.try_into().unwrap()),
+                    index.length,
+                )
+            })
+        } else {
+            None
+        }
+    }
+}
+
+unsafe impl Send for OsIpcSharedMemoryVec {}
+unsafe impl Sync for OsIpcSharedMemoryVec {}
+
+impl PartialEq for OsIpcSharedMemoryVec {
+    fn eq(&self, other: &OsIpcSharedMemoryVec) -> bool {
+        self.ptr == other.ptr
+    }
+}
+
+impl Drop for OsIpcSharedMemoryVec {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.ptr.is_null() {
+                let result = libc::munmap(self.ptr as *mut c_void, self.length);
+                assert!(thread::panicking() || result == 0);
+            }
+        }
+    }
+}
+
+impl Clone for OsIpcSharedMemoryVec {
+    fn clone(&self) -> OsIpcSharedMemoryVec {
+        unsafe {
+            let store = BackingStore::from_fd(libc::dup(self.store.fd()));
+            let (address, _) = store.map_file(Some(self.length));
+            OsIpcSharedMemoryVec {
+                ptr: address,
+                length: self.length,
+                store,
+            }
         }
     }
 }
@@ -988,7 +1160,8 @@ enum BlockingMode {
 
 #[allow(clippy::uninit_vec, clippy::type_complexity)]
 fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError> {
-    let (mut channels, mut shared_memory_regions) = (Vec::new(), Vec::new());
+    let (mut channels, mut shared_memory_regions, mut shared_memory_vec) =
+        (Vec::new(), Vec::new(), Vec::new());
 
     // First fragments begins with a header recording the total data length.
     //
@@ -996,6 +1169,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
     // or need to receive additional fragments -- and if so, how much.
     let mut total_size = 0usize;
     let mut main_data_buffer;
+    let mut number_of_regions = 0usize;
     unsafe {
         // Allocate a buffer without initialising the memory.
         main_data_buffer = Vec::with_capacity(OsIpcSender::get_max_fragment_size());
@@ -1007,6 +1181,10 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
                 iov_len: mem::size_of_val(&total_size),
             },
             iovec {
+                iov_base: &mut number_of_regions as *mut _ as *mut c_void,
+                iov_len: mem::size_of_val(&number_of_regions),
+            },
+            iovec {
                 iov_base: main_data_buffer.as_mut_ptr() as *mut c_void,
                 iov_len: main_data_buffer.len(),
             },
@@ -1014,7 +1192,9 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
         let mut cmsg = UnixCmsg::new(&mut iovec)?;
 
         let bytes_read = cmsg.recv(fd, blocking_mode)?;
-        main_data_buffer.set_len(bytes_read - mem::size_of_val(&total_size));
+        main_data_buffer.set_len(
+            bytes_read - mem::size_of_val(&total_size) - mem::size_of_val(&number_of_regions),
+        );
 
         let cmsg_fds = CMSG_DATA(cmsg.cmsg_buffer) as *const c_int;
         let cmsg_length = cmsg.msghdr.msg_controllen;
@@ -1026,13 +1206,21 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
             // exposed by libc. CMSG_SPACE(0) is the portable version of that.)
             (cmsg.cmsg_len() - CMSG_SPACE(0) as size_t) / mem::size_of::<c_int>()
         };
+        // The null fd shows the difference between SharedMemory and SharedMemoryVecs.
+        // Everything after it is SharedMemoryVecs
         for index in 0..channel_length {
             let fd = *cmsg_fds.add(index);
             if is_socket(fd) {
                 channels.push(OsOpaqueIpcChannel::from_fd(fd));
                 continue;
             }
-            shared_memory_regions.push(OsIpcSharedMemory::from_fd(fd));
+
+            if number_of_regions > 0 {
+                shared_memory_regions.push(OsIpcSharedMemory::from_fd(fd));
+                number_of_regions -= 1;
+            } else {
+                shared_memory_vec.push(OsIpcSharedMemoryVec::from_fd(fd));
+            }
         }
     }
 
@@ -1042,6 +1230,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
             main_data_buffer,
             channels,
             shared_memory_regions,
+            shared_memory_vec,
         ));
     }
 
@@ -1093,6 +1282,7 @@ fn recv(fd: c_int, blocking_mode: BlockingMode) -> Result<IpcMessage, UnixError>
         main_data_buffer,
         channels,
         shared_memory_regions,
+        shared_memory_vec,
     ))
 }
 
