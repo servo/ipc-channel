@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc::{self, IpcMessage};
+use crate::ipc::IpcMessage;
 use libc::{
     self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
     PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
