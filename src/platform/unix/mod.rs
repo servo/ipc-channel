@@ -8,6 +8,7 @@
 // except according to those terms.
 
 use crate::ipc::IpcMessage;
+use crate::ipc::{self, IpcMessage};
 use libc::{
     self, cmsghdr, linger, CMSG_DATA, CMSG_LEN, CMSG_SPACE, MAP_FAILED, MAP_SHARED, PROT_READ,
     PROT_WRITE, SOCK_SEQPACKET, SOL_SOCKET,
