@@ -42,7 +42,7 @@ crossbeam-channel = "0.5"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 libc = "0.2.162"
-postcard = {version = "1.1", features = ["std"]}
+postcard = {version = "1.1", features = ["use-std"]}
 serde_core = "1.0"
 thiserror = "2.0.12"
 uuid = { version = "1", features = ["v4"] }

@@ -6,8 +6,8 @@
 // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
-use postcard;
 use crate::ipc::IpcMessage;
+use postcard;
 use serde_core;
 use thiserror::Error;
 
@@ -1346,7 +1346,7 @@ impl OsIpcSender {
 
     fn needs_fragmentation(data_len: usize, oob: &OutOfBandMessage) -> bool {
         let oob_size = if oob.needs_to_be_sent() {
-            postcard::experimental::seriaslized_size(oob).unwrap()
+            postcard::experimental::serialized_size(oob).unwrap()
         } else {
             0
         };
