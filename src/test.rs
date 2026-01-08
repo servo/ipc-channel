@@ -544,11 +544,11 @@ fn shared_memory_object_equality() {
 
 #[test]
 fn shared_memory_take() {
-    let shared_memory = IpcSharedMemory::from_bytes(&[0xba;1024*1024]);
-    let (tx,rx) = ipc::channel().unwrap();
+    let shared_memory = IpcSharedMemory::from_bytes(&[0xba; 1024 * 1024]);
+    let (tx, rx) = ipc::channel().unwrap();
     tx.send(shared_memory).unwrap();
     let received = rx.recv().unwrap();
-    assert_eq!(received.take(), Some([0xba;1024*1024].to_vec()));
+    assert_eq!(received.take(), Some([0xba; 1024 * 1024].to_vec()));
 }
 
 #[test]
