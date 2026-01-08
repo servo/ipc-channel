@@ -912,6 +912,11 @@ impl OsIpcSharedMemory {
         }
         unsafe { slice::from_raw_parts_mut(self.ptr, self.length) }
     }
+
+    pub fn take(mut self) -> Option<Vec<u8>> {
+        Some((*self).to_vec())
+    }
+
 }
 
 impl OsIpcSharedMemory {

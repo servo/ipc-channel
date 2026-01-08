@@ -629,6 +629,13 @@ impl IpcSharedMemory {
             }
         }
     }
+
+    /// Takes the bytes from the IpcSharedMemory consuming the IpcSharedMemory.
+    /// Notice that this will invalidate all other.
+    /// Depending on the implementation this might clone the data
+    pub fn take(mut self) -> Option<Vec<u8>> {
+        self.os_shared_memory.take().and_then(|inner| inner.take())
+    }
 }
 
 /// Result for readable events returned from [IpcReceiverSet::select].
