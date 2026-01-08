@@ -916,7 +916,6 @@ impl OsIpcSharedMemory {
     pub fn take(mut self) -> Option<Vec<u8>> {
         Some((*self).to_vec())
     }
-
 }
 
 impl OsIpcSharedMemory {
