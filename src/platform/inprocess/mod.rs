@@ -372,13 +372,13 @@ impl OsIpcSharedMemory {
 
 #[derive(Debug, PartialEq, Error)]
 pub enum ChannelError {
-    #[error("Channel Closed")]
+    #[error("Channel Closed.")]
     ChannelClosedError,
-    #[error("Broken Pipe")]
+    #[error("Broken Pipe.")]
     BrokenPipeError,
-    #[error("Channel Empty")]
+    #[error("Channel Empty.")]
     ChannelEmpty,
-    #[error("Unknown Error")]
+    #[error("Unknown Error.")]
     UnknownError,
 }
 

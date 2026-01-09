@@ -1950,11 +1950,11 @@ impl OsOpaqueIpcChannel {
 
 #[derive(Debug, Error)]
 pub enum WinIpcError {
-    #[error("Windows Error {0}")]
+    #[error("Windows Error {0}.")]
     WinError(#[from] WinError),
-    #[error("Channel Closed")]
+    #[error("Channel Closed.")]
     ChannelClosed,
-    #[error("No Data")]
+    #[error("No Data.")]
     NoData,
 }
 

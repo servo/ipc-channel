@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
-use crate::error::SerializationError;
+use crate::error::SerDeError;
 use crate::ipc::OpaqueIpcReceiver;
 use crate::ipc::{self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
 use crossbeam_channel::{self, Receiver, Sender};
@@ -294,7 +294,7 @@ enum RouterHandler {
 }
 
 /// Like [RouterMultiHandler] but includes the type that will be passed to the callback
-pub type TypedRouterMultiHandler<T> = Box<dyn FnMut(Result<T, SerializationError>) + Send>;
+pub type TypedRouterMultiHandler<T> = Box<dyn FnMut(Result<T, SerDeError>) + Send>;
 
 /// Like [RouterOneShotHandler] but includes the type that will be passed to the callback
-pub type TypedRouterOneShotHandler<T> = Box<dyn FnOnce(Result<T, SerializationError>) + Send>;
+pub type TypedRouterOneShotHandler<T> = Box<dyn FnOnce(Result<T, SerDeError>) + Send>;

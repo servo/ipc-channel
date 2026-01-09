@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::error::SerializationError;
+use crate::error::SerDeError;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{
     OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel,
@@ -319,7 +319,7 @@ where
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                 |os_ipc_shared_memory_regions_for_serialization| {
-                    let bytes = postcard::to_stdvec(&data).map_err(SerializationError)?;
+                    let bytes = postcard::to_stdvec(&data).map_err(SerDeError)?;
                     let os_ipc_channels = os_ipc_channels_for_serialization.take();
                     let os_ipc_shared_memory_regions =
                         os_ipc_shared_memory_regions_for_serialization.take();
@@ -661,7 +661,7 @@ impl IpcMessage {
     }
 
     /// Deserialize the raw data in the contained message into the inferred type.
-    pub fn to<T>(self) -> Result<T, SerializationError>
+    pub fn to<T>(self) -> Result<T, SerDeError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
