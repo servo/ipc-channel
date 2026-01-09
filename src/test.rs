@@ -552,6 +552,15 @@ fn shared_memory_take() {
 }
 
 #[test]
+fn shared_memory_take_empty() {
+    let shared_memory = IpcSharedMemory::from_bytes(&[]);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(shared_memory).unwrap();
+    let received = rx.recv().unwrap();
+    assert_eq!(received.take(), Some([].to_vec()));
+}
+
+#[test]
 fn opaque_sender() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();

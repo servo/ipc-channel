@@ -634,7 +634,12 @@ impl IpcSharedMemory {
     /// This does not make any guarantees what happens to the other IpcSharedMemory that share the same resources.
     /// Depending on the implementation this might clone the data.
     pub fn take(mut self) -> Option<Vec<u8>> {
-        self.os_shared_memory.take().and_then(|inner| inner.take())
+        if let Some(os_shared_memory) = self.os_shared_memory.take() {
+            os_shared_memory.take()
+        } else {
+            // an empty vector can be taken multiple times.
+            Some(vec![])
+        }
     }
 }
 
