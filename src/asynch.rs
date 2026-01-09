@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crate::error::SerializationError;
 use crate::ipc::{
     self, IpcMessage, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender, OpaqueIpcReceiver,
 };
@@ -95,7 +96,7 @@ impl<T> Stream for IpcStream<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
-    type Item = Result<T, bincode::Error>;
+    type Item = Result<T, SerializationError>;
 
     fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
         let recv = Pin::new(&mut self.0);

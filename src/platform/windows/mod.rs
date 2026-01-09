@@ -7,9 +7,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc::{self, IpcMessage};
+use crate::ipc::IpcMessage;
 use bincode;
 use serde_core;
+use thiserror::Error;
 
 use std::{
     cell::RefCell,
@@ -1948,10 +1949,13 @@ impl OsOpaqueIpcChannel {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum WinIpcError {
-    WinError(WinError),
+    #[error("Windows Error {0}")]
+    WinError(#[from] WinError),
+    #[error("Channel Closed")]
     ChannelClosed,
+    #[error("No Data")]
     NoData,
 }
 
@@ -1961,33 +1965,23 @@ impl WinIpcError {
     }
 }
 
-impl From<WinIpcError> for bincode::Error {
-    fn from(error: WinIpcError) -> bincode::Error {
-        io::Error::from(error).into()
-    }
-}
-
-impl From<WinError> for WinIpcError {
-    fn from(e: WinError) -> Self {
-        Self::WinError(e)
-    }
-}
-
-impl From<WinIpcError> for ipc::IpcError {
+impl From<WinIpcError> for crate::IpcError {
     fn from(error: WinIpcError) -> Self {
         match error {
-            WinIpcError::ChannelClosed => ipc::IpcError::Disconnected,
-            e => ipc::IpcError::Io(io::Error::from(e)),
+            WinIpcError::ChannelClosed => crate::IpcError::Disconnected,
+            e => crate::IpcError::Io(io::Error::from(e)),
         }
     }
 }
 
-impl From<WinIpcError> for ipc::TryRecvError {
+impl From<WinIpcError> for crate::TryRecvError {
     fn from(error: WinIpcError) -> Self {
         match error {
-            WinIpcError::ChannelClosed => ipc::TryRecvError::IpcError(ipc::IpcError::Disconnected),
-            WinIpcError::NoData => ipc::TryRecvError::Empty,
-            e => ipc::TryRecvError::IpcError(ipc::IpcError::Io(io::Error::from(e))),
+            WinIpcError::ChannelClosed => {
+                crate::TryRecvError::IpcError(crate::IpcError::Disconnected)
+            },
+            WinIpcError::NoData => crate::TryRecvError::Empty,
+            e => crate::TryRecvError::IpcError(crate::IpcError::Io(io::Error::from(e))),
         }
     }
 }
