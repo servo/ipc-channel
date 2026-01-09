@@ -5,28 +5,28 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 /// An error that occurs for serialization or deserialization
-pub struct SerializationError(#[from] pub(crate) bincode::Error);
+pub struct SerDeError(#[from] pub(crate) postcard::Error);
 
-impl Display for SerializationError {
+impl Display for SerDeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Serialization error")
+        write!(f, "Serialization/Deserialization error")
     }
 }
 
 #[derive(Debug, Error)]
 pub enum IpcError {
-    #[error("Error in decoding or encoding: {0}")]
-    SerializationError(#[from] SerializationError),
-    #[error("Error in IO: {0}")]
+    #[error("Error in decoding or encoding: {0}.")]
+    SerializationError(#[from] SerDeError),
+    #[error("Error in IO: {0}.")]
     Io(#[from] io::Error),
-    #[error("Ipc Disconnected")]
+    #[error("Ipc Disconnected.")]
     Disconnected,
 }
 
 #[derive(Debug, Error)]
 pub enum TryRecvError {
-    #[error("IPC error")]
+    #[error("IPC error {0}.")]
     IpcError(#[from] IpcError),
-    #[error("Channel empty")]
+    #[error("Channel empty.")]
     Empty,
 }

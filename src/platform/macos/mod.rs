@@ -1002,23 +1002,23 @@ impl Message {
 
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 pub enum KernelError {
-    #[error("Success")]
+    #[error("Success.")]
     Success,
     #[error("No room in IPC name space for another right.")]
     NoSpace,
-    #[error("Name doesn't denote a right in the task")]
+    #[error("Name doesn't denote a right in the task.")]
     InvalidName,
     #[error("Name denotes a right, but not an appropiate right.")]
     InvalidRight,
-    #[error("Blatant range error")]
+    #[error("Blatant range error.")]
     InvalidValue,
-    #[error("The supplied (port) capability is improper")]
+    #[error("The supplied (port) capability is improper.")]
     InvalidCapability,
-    #[error("Operation would overflow limit on user-references")]
+    #[error("Operation would overflow limit on user-references.")]
     UrefsOverflow,
     #[error("Receive right is not a member of a port set.")]
     NotInSet,
-    #[error("Unkown kernel error. {0}")]
+    #[error("Unkown kernel error. {0}.")]
     Unknown(kern_return_t),
 }
 

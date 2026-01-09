@@ -7,14 +7,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::error::SerializationError;
+use crate::error::SerDeError;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{
     OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel,
 };
 use crate::{IpcError, TryRecvError};
 
-use bincode;
 use serde_core::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::cmp::min;
@@ -317,11 +316,10 @@ where
 
     /// Send data across the channel to the receiver.
     pub fn send(&self, data: T) -> Result<(), IpcError> {
-        let mut bytes = Vec::with_capacity(4096);
         OS_IPC_CHANNELS_FOR_SERIALIZATION.with(|os_ipc_channels_for_serialization| {
             OS_IPC_SHARED_MEMORY_REGIONS_FOR_SERIALIZATION.with(
                 |os_ipc_shared_memory_regions_for_serialization| {
-                    bincode::serialize_into(&mut bytes, &data).map_err(SerializationError)?;
+                    let bytes = postcard::to_stdvec(&data).map_err(SerDeError)?;
                     let os_ipc_channels = os_ipc_channels_for_serialization.take();
                     let os_ipc_shared_memory_regions =
                         os_ipc_shared_memory_regions_for_serialization.take();
@@ -663,7 +661,7 @@ impl IpcMessage {
     }
 
     /// Deserialize the raw data in the contained message into the inferred type.
-    pub fn to<T>(self) -> Result<T, SerializationError>
+    pub fn to<T>(self) -> Result<T, SerDeError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -678,7 +676,7 @@ impl IpcMessage {
                         .map(Some)
                         .collect();
 
-                    let result = bincode::deserialize(&self.data[..]).map_err(|e| e.into());
+                    let result = postcard::from_bytes(&self.data).map_err(|e| e.into());
 
                     // Clear the shared memory
                     let _ = os_ipc_shared_memory_regions_for_deserialization.take();
