@@ -140,7 +140,7 @@ fn drop_equal_not_disconnect_with_msg() {
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
     drop(tx);
-    assert_eq!(rx.recv().unwrap(), ("Patrick Walton".to_owned(), 29));
+    assert_eq!(rx.recv().unwrap(), person);
 }
 
 #[test]
