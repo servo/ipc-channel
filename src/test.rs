@@ -135,6 +135,15 @@ fn simple() {
 }
 
 #[test]
+fn drop_equal_not_disconnect_with_msg() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person.clone()).unwrap();
+    drop(tx);
+    assert_eq!(rx.recv().unwrap(), ("Patrick Walton".to_owned(), 29));
+}
+
+#[test]
 fn embedded_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
