@@ -24,7 +24,7 @@ use crossbeam_channel::{self, Receiver, Sender};
 use serde_core::{Deserialize, Serialize};
 
 /// Global object wrapping a `RouterProxy`.
-/// Add routes ([add_route](RouterProxy::add_route)), or convert IpcReceiver<T>
+/// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `IpcReceiver<T>`
 /// to crossbeam channels (e.g. [route_ipc_receiver_to_new_crossbeam_receiver](RouterProxy::route_ipc_receiver_to_new_crossbeam_receiver))
 pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
 
