@@ -135,7 +135,8 @@ fn simple() {
 }
 
 #[test]
-/// We first want to have all the data that is an empty channel and only then the disconnect.
+// Messages sent before a channel is disconnected should be received before
+// recv returns the disconnected error.
 fn disconnect_non_empty_channel() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
