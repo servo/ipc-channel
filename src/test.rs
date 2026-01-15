@@ -135,7 +135,7 @@ fn simple() {
 }
 
 #[test]
-fn drop_equal_not_disconnect_with_msg() {
+fn disconnect_non_empty_channel() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (tx, rx) = ipc::channel().unwrap();
     tx.send(person.clone()).unwrap();
