@@ -135,6 +135,21 @@ fn simple() {
 }
 
 #[test]
+// Messages sent before a channel is disconnected should be received before
+// recv returns the disconnected error.
+fn disconnect_non_empty_channel() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (tx, rx) = ipc::channel().unwrap();
+    tx.send(person.clone()).unwrap();
+    drop(tx);
+    assert_eq!(rx.recv().unwrap(), person);
+    match rx.recv().unwrap_err() {
+        crate::IpcError::Disconnected => (),
+        e => panic!("expected disconnected error, got {e:?}"),
+    }
+}
+
+#[test]
 fn embedded_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
     let (sub_tx, sub_rx) = ipc::channel().unwrap();
