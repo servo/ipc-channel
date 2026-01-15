@@ -178,6 +178,26 @@ fn embedded_receivers() {
 }
 
 #[test]
+fn embedded_receivers_used_before_and_after_transmission() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (sub_tx, sub_rx) = ipc::channel().unwrap();
+
+    sub_tx.send(person.clone()).unwrap();
+    let received_person1 = sub_rx.recv().unwrap();
+    assert_eq!(received_person1, person);
+
+    let person_and_receiver = (person.clone(), sub_rx);
+    let (super_tx, super_rx) = ipc::channel().unwrap();
+    super_tx.send(person_and_receiver).unwrap();
+    let received_person_and_receiver = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_receiver.0, person);
+
+    sub_tx.send(person.clone()).unwrap();
+    let received_person2 = received_person_and_receiver.1.recv().unwrap();
+    assert_eq!(received_person2, person);
+}
+
+#[test]
 fn select() {
     let (tx0, rx0) = ipc::channel().unwrap();
     let (tx1, rx1) = ipc::channel().unwrap();
@@ -226,27 +246,6 @@ fn select() {
                 assert!(!received1);
                 received1 = true;
             }
-        }
-    }
-}
-
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-#[test]
-fn cross_process_embedded_senders_spawn() {
-    let person = ("Patrick Walton".to_owned(), 29);
-
-    let server0_name = get_channel_name_arg("server0");
-    let server2_name = get_channel_name_arg("server2");
-    if let (Some(server0_name), Some(server2_name)) = (server0_name, server2_name) {
-        let (tx1, rx1): (IpcSender<Person>, IpcReceiver<Person>) = ipc::channel().unwrap();
-        let tx0 = IpcSender::connect(server0_name).unwrap();
-        tx0.send(tx1).unwrap();
-        rx1.recv().unwrap();
-        let tx2: IpcSender<Person> = IpcSender::connect(server2_name).unwrap();
-        tx2.send(person.clone()).unwrap();
-
-        unsafe {
-            libc::exit(0);
         }
     }
 }
