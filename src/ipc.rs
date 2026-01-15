@@ -202,7 +202,7 @@ where
             .map_err(IpcError::SerializationError)
     }
 
-    /// Non-blocking receive
+    /// Non-blocking receive.
     pub fn try_recv(&self) -> Result<T, TryRecvError> {
         self.os_receiver
             .try_recv()?
