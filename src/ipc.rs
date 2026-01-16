@@ -620,6 +620,7 @@ impl IpcSharedMemory {
 /// Result for readable events returned from [IpcReceiverSet::select].
 ///
 /// [IpcReceiverSet::select]: struct.IpcReceiverSet.html#method.select
+#[derive(Debug)]
 pub enum IpcSelectionResult {
     /// A message received from the [`IpcReceiver`] in the [`IpcMessage`] form,
     /// identified by the `u64` value.
