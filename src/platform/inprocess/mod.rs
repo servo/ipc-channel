@@ -21,6 +21,14 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
+#[derive(Debug, Error)]
+pub enum OsTrySelectError {
+    #[error("Error in IO: {0}.")]
+    IoError(#[from] ChannelError),
+    #[error("No messages were received and no disconnections occurred.")]
+    Empty,
+}
+
 #[derive(Clone)]
 struct ServerRecord {
     sender: OsIpcSender,
@@ -188,6 +196,92 @@ impl OsIpcReceiverSet {
                 select.recv(r);
             }
             let res = select.select();
+            let receiver_index = res.index();
+            let receiver_id = self.receiver_ids[receiver_index];
+            if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index]) {
+                return Ok(vec![OsIpcSelectionResult::DataReceived(
+                    receiver_id,
+                    ipc_message,
+                )]);
+            } else {
+                Remove(receiver_index, receiver_id)
+            }
+        };
+        self.receivers.remove(r_index);
+        self.receiver_ids.remove(r_index);
+        Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
+    }
+
+    pub fn try_select(&mut self) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        if self.receivers.is_empty() {
+            return Err(OsTrySelectError::Empty);
+        }
+
+        struct Remove(usize, u64);
+
+        // FIXME: Remove early returns and explicitly drop `borrows` when lifetimes are non-lexical
+        let Remove(r_index, r_id) = {
+            let borrows: Vec<_> = self
+                .receivers
+                .iter()
+                .map(|r| Ref::map(r.receiver.borrow(), |o| o.as_ref().unwrap()))
+                .collect();
+
+            let mut select = Select::new();
+            for r in &borrows {
+                select.recv(r);
+            }
+            let res = select.try_select();
+            if res.is_err() {
+                return Err(OsTrySelectError::Empty);
+            }
+            let res = res.unwrap();
+            let receiver_index = res.index();
+            let receiver_id = self.receiver_ids[receiver_index];
+            if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index]) {
+                return Ok(vec![OsIpcSelectionResult::DataReceived(
+                    receiver_id,
+                    ipc_message,
+                )]);
+            } else {
+                Remove(receiver_index, receiver_id)
+            }
+        };
+        self.receivers.remove(r_index);
+        self.receiver_ids.remove(r_index);
+        Ok(vec![OsIpcSelectionResult::ChannelClosed(r_id)])
+    }
+
+    pub fn try_select_timeout(
+        &mut self,
+        duration: Duration,
+    ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        if self.receivers.is_empty() {
+            std::thread::sleep(duration);
+            if self.receivers.is_empty() {
+                return Err(OsTrySelectError::Empty);
+            }
+        }
+
+        struct Remove(usize, u64);
+
+        // FIXME: Remove early returns and explicitly drop `borrows` when lifetimes are non-lexical
+        let Remove(r_index, r_id) = {
+            let borrows: Vec<_> = self
+                .receivers
+                .iter()
+                .map(|r| Ref::map(r.receiver.borrow(), |o| o.as_ref().unwrap()))
+                .collect();
+
+            let mut select = Select::new();
+            for r in &borrows {
+                select.recv(r);
+            }
+            let res = select.select_timeout(duration);
+            if res.is_err() {
+                return Err(OsTrySelectError::Empty);
+            }
+            let res = res.unwrap();
             let receiver_index = res.index();
             let receiver_id = self.receiver_ids[receiver_index];
             if let Ok(ChannelMessage(ipc_message)) = res.recv(&borrows[receiver_index]) {

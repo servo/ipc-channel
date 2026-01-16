@@ -11,6 +11,7 @@ use crate::error::SerDeError;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{
     OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel,
+    OsTrySelectError,
 };
 use crate::{IpcError, TryRecvError, TrySelectError};
 
@@ -458,7 +459,23 @@ impl IpcReceiverSet {
     /// If no messages are received and no disconnection of a receiver in the set occurs,
     /// TrySelectError::Empty is returned.
     pub fn try_select(&mut self) -> Result<Vec<IpcSelectionResult>, TrySelectError> {
-        todo!("https://github.com/servo/ipc-channel/issues/434");
+        let results: Vec<OsIpcSelectionResult> =
+            self.os_receiver_set.try_select().map_err(|e| match e {
+                OsTrySelectError::IoError(e) => TrySelectError::IoError(e.into()),
+                OsTrySelectError::Empty => TrySelectError::Empty,
+            })?;
+        let results = results
+            .into_iter()
+            .map(|result| match result {
+                OsIpcSelectionResult::DataReceived(os_receiver_id, ipc_message) => {
+                    IpcSelectionResult::MessageReceived(os_receiver_id, ipc_message)
+                },
+                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                    IpcSelectionResult::ChannelClosed(os_receiver_id)
+                },
+            })
+            .collect::<Vec<IpcSelectionResult>>();
+        Ok(results)
     }
 
     /// Blocks for up to the specified duration attempting to receive IPC messages on any
@@ -479,9 +496,32 @@ impl IpcReceiverSet {
     /// smallest duration that may trigger this behavior is over 24 days.
     pub fn try_select_timeout(
         &mut self,
-        _duration: Duration,
+        duration: Duration,
     ) -> Result<Vec<IpcSelectionResult>, TrySelectError> {
-        todo!("https://github.com/servo/ipc-channel/issues/434");
+        let results = self
+            .os_receiver_set
+            .try_select_timeout(duration)
+            .map_err(|e| match e {
+                OsTrySelectError::IoError(e) => TrySelectError::IoError(e.into()),
+                OsTrySelectError::Empty => TrySelectError::Empty,
+            })?;
+
+        let results = results
+            .into_iter()
+            .map(|result| match result {
+                OsIpcSelectionResult::DataReceived(os_receiver_id, ipc_message) => {
+                    IpcSelectionResult::MessageReceived(os_receiver_id, ipc_message)
+                },
+                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                    IpcSelectionResult::ChannelClosed(os_receiver_id)
+                },
+            })
+            .collect::<Vec<IpcSelectionResult>>();
+        if results.is_empty() {
+            Err(TrySelectError::Empty)
+        } else {
+            Ok(results)
+        }
     }
 }
 

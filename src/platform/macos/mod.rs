@@ -122,6 +122,14 @@ const VM_INHERIT_SHARE: vm_inherit_t = 0;
 #[allow(non_camel_case_types)]
 type name_t = *const c_char;
 
+#[derive(Debug, Error)]
+pub enum OsTrySelectError {
+    #[error("Error in IO: {0}.")]
+    IoError(#[from] MachError),
+    #[error("No messages were received and no disconnections occurred.")]
+    Empty,
+}
+
 pub fn channel() -> Result<(OsIpcSender, OsIpcReceiver), MachError> {
     let receiver = OsIpcReceiver::new()?;
     let sender = receiver.sender()?;
@@ -626,7 +634,31 @@ impl OsIpcReceiverSet {
     }
 
     pub fn select(&mut self) -> Result<Vec<OsIpcSelectionResult>, MachError> {
-        let result = select(self.port, BlockingMode::Blocking);
+        self.selection_results(select(self.port, BlockingMode::Blocking))
+            .map_err(|e| {
+                if let OsTrySelectError::IoError(e) = e {
+                    e
+                } else {
+                    panic!("Blocking select produced RcvTimedOut")
+                }
+            })
+    }
+
+    pub fn try_select(&mut self) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        self.selection_results(select(self.port, BlockingMode::Nonblocking))
+    }
+
+    pub fn try_select_timeout(
+        &mut self,
+        duration: Duration,
+    ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        self.selection_results(select(self.port, BlockingMode::Timeout(duration)))
+    }
+
+    fn selection_results(
+        &mut self,
+        result: Result<OsIpcSelectionResult, MachError>,
+    ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
         if let Ok(OsIpcSelectionResult::ChannelClosed(mach_port)) = result {
             let index = self
                 .ports
@@ -634,8 +666,12 @@ impl OsIpcReceiverSet {
                 .position(|port| port.extract_port() as u64 == mach_port)
                 .expect("Port must be present for error to occur");
             let _ = self.ports.swap_remove(index);
+        } else if let Err(MachError::RcvTimedOut) = result {
+            return Err(OsTrySelectError::Empty);
         }
-        result.map(|result| vec![result])
+        result
+            .map(|result| vec![result])
+            .map_err(OsTrySelectError::IoError)
     }
 }
 
