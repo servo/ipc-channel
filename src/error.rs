@@ -19,6 +19,9 @@ pub enum IpcError {
     SerializationError(#[from] SerDeError),
     #[error("Error in IO: {0}.")]
     Io(#[from] io::Error),
+    /// Disconnected is returned when receiving from a channel if
+    /// all senders for the channel have been dropped and no messages
+    /// remain to be received.
     #[error("Ipc Disconnected.")]
     Disconnected,
 }
