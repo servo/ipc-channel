@@ -258,9 +258,9 @@ impl OsIpcReceiverSet {
     ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
         if self.receivers.is_empty() {
             std::thread::sleep(duration);
-            if self.receivers.is_empty() {
-                return Err(OsTrySelectError::Empty);
-            }
+            // The set is still empty since the current method is &mut self amd receivers
+            // does not have interior mutability.
+            return Err(OsTrySelectError::Empty);
         }
 
         struct Remove(usize, u64);

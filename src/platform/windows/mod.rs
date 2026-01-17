@@ -1809,15 +1809,15 @@ impl OsIpcReceiverSet {
         &mut self,
         wait: u32,
     ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
-        if self.readers.len() + self.closed_readers.len() == 0 {
+        if self.readers.is_empty() && self.closed_readers.is_empty() {
             thread::sleep(Duration::from_millis(wait as u64));
-            if self.readers.len() + self.closed_readers.len() == 0 {
-                win32_trace!(
-                    "[# {:?}] try_select_wait with 0 active and 0 closed receivers returning Empty",
-                    self.iocp.as_raw()
-                );
-                return Err(OsTrySelectError::Empty);
-            }
+            // The set is still empty since the current method is &mut self amd receivers
+            // does not have interior mutability.
+            win32_trace!(
+                "[# {:?}] try_select_wait with 0 active and 0 closed receivers returning Empty",
+                self.iocp.as_raw()
+            );
+            return Err(OsTrySelectError::Empty);
         }
         win32_trace!(
             "[# {:?}] try_select_wait() with {} active and {} closed receivers",
