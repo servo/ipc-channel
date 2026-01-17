@@ -11,8 +11,9 @@ use crate::error::SerDeError;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiver, OsIpcReceiverSet, OsIpcSender};
 use crate::platform::{
     OsIpcOneShotServer, OsIpcSelectionResult, OsIpcSharedMemory, OsOpaqueIpcChannel,
+    OsTrySelectError,
 };
-use crate::{IpcError, TryRecvError};
+use crate::{IpcError, TryRecvError, TrySelectError};
 
 use serde_core::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -448,6 +449,80 @@ impl IpcReceiverSet {
             })
             .collect())
     }
+
+    /// Non-blocking attempt to receive IPC messages on any of the receivers in the set.
+    ///
+    /// If at least one message is received and/or a disconnection of at least one of the
+    /// receivers in the set occurs, these events are returned. An event is either a
+    /// message received or a channel closed event.
+    ///
+    /// If no messages are received and no disconnection of a receiver in the set occurs,
+    /// TrySelectError::Empty is returned.
+    pub fn try_select(&mut self) -> Result<Vec<IpcSelectionResult>, TrySelectError> {
+        let results: Vec<OsIpcSelectionResult> =
+            self.os_receiver_set.try_select().map_err(|e| match e {
+                OsTrySelectError::IoError(e) => TrySelectError::IoError(e.into()),
+                OsTrySelectError::Empty => TrySelectError::Empty,
+            })?;
+        let results = results
+            .into_iter()
+            .map(|result| match result {
+                OsIpcSelectionResult::DataReceived(os_receiver_id, ipc_message) => {
+                    IpcSelectionResult::MessageReceived(os_receiver_id, ipc_message)
+                },
+                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                    IpcSelectionResult::ChannelClosed(os_receiver_id)
+                },
+            })
+            .collect::<Vec<IpcSelectionResult>>();
+        Ok(results)
+    }
+
+    /// Blocks for up to the specified duration attempting to receive IPC messages on any
+    /// of the receivers in the set.
+    ///
+    /// If, within the specified duration, at least one message is received and/or a
+    /// disconnection of at least one of the receivers in the set occurs, these events are
+    /// returned. An event is either a message received or a channel closed event.
+    ///
+    /// If, within the specified duration, no message are received and no disconnection of
+    /// a receiver in the set occurs, TrySelectError::Empty is returned.
+    ///
+    /// This may block for longer than the specified duration if any of the IPC channels in
+    /// the set are busy.
+    ///
+    /// If the specified duration exceeds the duration that your operating system can
+    /// represent in milliseconds, this may block forever. At the time of writing, the
+    /// smallest duration that may trigger this behavior is over 24 days.
+    pub fn try_select_timeout(
+        &mut self,
+        duration: Duration,
+    ) -> Result<Vec<IpcSelectionResult>, TrySelectError> {
+        let results = self
+            .os_receiver_set
+            .try_select_timeout(duration)
+            .map_err(|e| match e {
+                OsTrySelectError::IoError(e) => TrySelectError::IoError(e.into()),
+                OsTrySelectError::Empty => TrySelectError::Empty,
+            })?;
+
+        let results = results
+            .into_iter()
+            .map(|result| match result {
+                OsIpcSelectionResult::DataReceived(os_receiver_id, ipc_message) => {
+                    IpcSelectionResult::MessageReceived(os_receiver_id, ipc_message)
+                },
+                OsIpcSelectionResult::ChannelClosed(os_receiver_id) => {
+                    IpcSelectionResult::ChannelClosed(os_receiver_id)
+                },
+            })
+            .collect::<Vec<IpcSelectionResult>>();
+        if results.is_empty() {
+            Err(TrySelectError::Empty)
+        } else {
+            Ok(results)
+        }
+    }
 }
 
 /// Shared memory descriptor that will be made accessible to the receiver
@@ -585,6 +660,7 @@ impl IpcSharedMemory {
 /// Result for readable events returned from [IpcReceiverSet::select].
 ///
 /// [IpcReceiverSet::select]: struct.IpcReceiverSet.html#method.select
+#[derive(Debug)]
 pub enum IpcSelectionResult {
     /// A message received from the [`IpcReceiver`] in the [`IpcMessage`] form,
     /// identified by the `u64` value.

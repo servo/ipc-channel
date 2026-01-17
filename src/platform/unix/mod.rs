@@ -66,6 +66,14 @@ type MsgControlLen = size_t;
 #[cfg(not(target_env = "gnu"))]
 type MsgControlLen = socklen_t;
 
+#[derive(Debug, Error)]
+pub enum OsTrySelectError {
+    #[error("Error in IO: {0}.")]
+    IoError(#[from] UnixError),
+    #[error("No messages were received and no disconnections occurred.")]
+    Empty,
+}
+
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
     let mut sockaddr: sockaddr_un = mem::zeroed();
     libc::strncpy(
@@ -525,6 +533,41 @@ impl OsIpcReceiverSet {
             }
         }
 
+        match self.selection_results() {
+            Ok(v) => Ok(v),
+            Err(OsTrySelectError::Empty) => panic!("Blocking select cannot return Empty"),
+            Err(OsTrySelectError::IoError(e)) => Err(e),
+        }
+    }
+
+    pub fn try_select(&mut self) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        // Non-blocking poll to receive zero or more events.
+        self.try_select_timeout(Duration::ZERO)
+    }
+
+    pub fn try_select_timeout(
+        &mut self,
+        duration: Duration,
+    ) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
+        // Poll for the specified duration until we receive zero or more events.
+        match self.poll.poll(&mut self.events, Some(duration)) {
+            Ok(()) => (),
+            Err(ref error) => {
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(OsTrySelectError::IoError(UnixError::last()));
+                }
+            },
+        }
+
+        let v = self.selection_results()?;
+        if v.is_empty() {
+            Err(OsTrySelectError::Empty)
+        } else {
+            Ok(v)
+        }
+    }
+
+    fn selection_results(&mut self) -> Result<Vec<OsIpcSelectionResult>, OsTrySelectError> {
         let mut selection_results = Vec::new();
         for event in self.events.iter() {
             // We only register this `Poll` for readable events.
@@ -562,7 +605,7 @@ impl OsIpcReceiverSet {
                         // pending to read.
                         break;
                     },
-                    Err(err) => return Err(err),
+                    Err(e) => return Err(OsTrySelectError::IoError(e)),
                 }
             }
         }

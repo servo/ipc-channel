@@ -42,7 +42,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::ipc::IpcOneShotServer;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use crate::ipc::IpcReceiver;
-use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+use crate::ipc::{self, IpcReceiverSet, IpcSelectionResult, IpcSender, IpcSharedMemory};
 use crate::router::{RouterProxy, ROUTER};
 
 #[cfg(not(any(
@@ -227,6 +227,106 @@ fn select() {
                 received1 = true;
             }
         }
+    }
+}
+
+#[test]
+fn try_select() {
+    let (tx, rx) = ipc::channel().unwrap();
+    let mut rx_set = IpcReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx).unwrap();
+
+    match rx_set.try_select() {
+        Err(crate::TrySelectError::Empty) => (),
+        v => panic!("Expected empty select err: {v:?}"),
+    }
+
+    let person = ("Jane Austen".to_owned(), 41);
+    tx.send(person.clone()).unwrap();
+    let (received_id, received_data) = rx_set
+        .try_select()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_id, rx_id);
+    assert_eq!(received_person, person);
+
+    match rx_set.try_select() {
+        Err(crate::TrySelectError::Empty) => (),
+        v => panic!("Expected empty select err: {v:?}"),
+    }
+
+    drop(tx);
+    let selection_result = rx_set.try_select().unwrap().into_iter().next().unwrap();
+    if let IpcSelectionResult::ChannelClosed(closed_id) = selection_result {
+        assert_eq!(closed_id, rx_id);
+    } else {
+        panic!("Expected channel closed event: {selection_result:?}");
+    }
+
+    match rx_set.try_select() {
+        Err(crate::TrySelectError::Empty) => (),
+        v => panic!("Expected empty select err: {v:?}"),
+    }
+}
+
+#[test]
+fn try_select_timeout() {
+    let (tx, rx) = ipc::channel().unwrap();
+    let mut rx_set = IpcReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx).unwrap();
+
+    let timeout = Duration::from_millis(10);
+    let start_select = Instant::now();
+    match rx_set.try_select_timeout(timeout) {
+        Err(crate::TrySelectError::Empty) => {
+            assert!(start_select.elapsed() >= timeout)
+        },
+        v => panic!("Expected empty select err: {v:?}"),
+    }
+
+    let person = ("Jane Austen".to_owned(), 41);
+    tx.send(person.clone()).unwrap();
+    let start_select = Instant::now();
+    let (received_id, received_data) = rx_set
+        .try_select()
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert!(start_select.elapsed() < timeout);
+    let received_person: Person = received_data.to().unwrap();
+    assert_eq!(received_id, rx_id);
+    assert_eq!(received_person, person);
+
+    let start_select = Instant::now();
+    match rx_set.try_select_timeout(timeout) {
+        Err(crate::TrySelectError::Empty) => {
+            assert!(start_select.elapsed() >= timeout)
+        },
+        v => panic!("Expected empty select err: {v:?}"),
+    }
+
+    drop(tx);
+    let start_select = Instant::now();
+    let selection_result = rx_set.try_select().unwrap().into_iter().next().unwrap();
+    assert!(start_select.elapsed() < timeout);
+    if let IpcSelectionResult::ChannelClosed(closed_id) = selection_result {
+        assert_eq!(closed_id, rx_id);
+    } else {
+        panic!("Expected channel closed event: {selection_result:?}");
+    }
+
+    let start_select = Instant::now();
+    match rx_set.try_select_timeout(timeout) {
+        Err(crate::TrySelectError::Empty) => {
+            assert!(start_select.elapsed() >= timeout)
+        },
+        v => panic!("Expected empty select err: {v:?}"),
     }
 }
 

@@ -33,3 +33,12 @@ pub enum TryRecvError {
     #[error("Channel empty.")]
     Empty,
 }
+
+/// TrySelectError is returned by non-blocking variants of IpcReceiverSet::select.
+#[derive(Debug, Error)]
+pub enum TrySelectError {
+    #[error("Error in IO: {0}.")]
+    IoError(#[from] io::Error),
+    #[error("No messages were received and no disconnections occurred.")]
+    Empty,
+}
