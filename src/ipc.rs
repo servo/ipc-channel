@@ -655,6 +655,18 @@ impl IpcSharedMemory {
             }
         }
     }
+
+    /// Takes the bytes from the IpcSharedMemory consuming the IpcSharedMemory.
+    /// This does not make any guarantees what happens to the other IpcSharedMemory that share the same resources.
+    /// Depending on the implementation this might clone the data.
+    pub fn take(mut self) -> Option<Vec<u8>> {
+        if let Some(os_shared_memory) = self.os_shared_memory.take() {
+            os_shared_memory.take()
+        } else {
+            // an empty vector can be taken multiple times.
+            Some(vec![])
+        }
+    }
 }
 
 /// Result for readable events returned from [IpcReceiverSet::select].
