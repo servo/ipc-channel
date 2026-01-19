@@ -40,6 +40,6 @@ pub mod router;
 #[cfg(test)]
 mod test;
 
-pub use error::{IpcError, TryRecvError, TrySelectError};
+pub use error::{IpcError, SerDeError, TryRecvError, TrySelectError};
 #[cfg(all(not(feature = "force-inprocess"), target_os = "macos"))]
 pub use platform::set_bootstrap_prefix;
