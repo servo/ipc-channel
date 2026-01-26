@@ -1988,6 +1988,10 @@ impl OsIpcSharedMemory {
         assert!(!self.view_handle.Value.is_null() && self.handle.is_valid());
         unsafe { slice::from_raw_parts_mut(self.view_handle.Value as _, self.length) }
     }
+
+    pub fn take(self) -> Option<Vec<u8>> {
+        Some((*self).to_vec())
+    }
 }
 
 impl OsIpcSharedMemory {
