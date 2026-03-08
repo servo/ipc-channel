@@ -27,8 +27,8 @@ use std::process::{self, Command, Stdio};
 )))]
 use std::ptr;
 use std::rc::Rc;
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{iter, thread};
 
 use crossbeam_channel::{self, Sender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};

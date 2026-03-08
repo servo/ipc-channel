@@ -7,7 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::ipc::IpcMessage;
 use crate::platform::OsIpcSharedMemory;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use std::collections::HashMap;
