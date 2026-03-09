@@ -62,7 +62,7 @@ static ROUTER: LazyLock<Router> = LazyLock::new(|| {
                 }
             }
             if !recv.is_terminated() {
-                while let Ok(Some((receiver, sender))) = recv.try_next() {
+                while let Ok(Some((receiver, sender))) = recv.try_recv() {
                     if let Ok(id) = receivers.add_opaque(receiver) {
                         senders.insert(id, sender);
                     }
