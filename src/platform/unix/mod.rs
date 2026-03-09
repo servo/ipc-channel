@@ -41,10 +41,17 @@ use thiserror::Error;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
 
-// The value Linux returns for SO_SNDBUF
-// is not the size we are actually allowed to use...
-// Empirically, we have to deduct 32 bytes from that.
-const RESERVED_SIZE: usize = 32;
+// The value of SO_SNDBUF is not the size we are actually allowed to use...
+// Empirically, we have to deduct 32 bytes from that on Linux.
+//
+// On FreeBSD the control messages share the buffer space with the normal data
+// The kernel-side representation of an SCM_RIGHTS message consists of the
+// cmsghdr, followed by the pointers to the file descriptors. Thus, the amount
+// we need to deduct from SO_SNDBUF depends on the number of file descriptors.
+//
+// A safe solution is to budget for all MAX_FDS_IN_CMSG file descriptors being
+// present, each taking up 8 bytes regardless of the target.
+const RESERVED_SIZE: usize = unsafe { CMSG_SPACE(MAX_FDS_IN_CMSG * 8) } as usize;
 
 #[cfg(any(target_os = "linux", target_os = "illumos"))]
 const SOCK_FLAGS: c_int = libc::SOCK_CLOEXEC;
