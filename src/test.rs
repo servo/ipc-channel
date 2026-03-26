@@ -757,6 +757,60 @@ fn try_recv_timeout() {
     }
 }
 
+// Regression test for: try_recv_timeout silently loses messages on Windows
+//
+// When a message arrives in the narrow window between GetOverlappedResultEx
+// returning WAIT_TIMEOUT and CancelIoEx running in issue_async_cancel, the
+// kernel completes the read but CancelIoEx returns ERROR_NOT_FOUND. The
+// current ERROR_NOT_FOUND handler restores the buffer without updating its
+// length, so the bytes the kernel read are silently discarded.
+//
+// This test sends a message timed to arrive right at the timeout boundary,
+// then verifies it is not lost. The race window is small, so the test is
+// repeated to increase the chance of hitting it.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn try_recv_timeout_message_not_lost_at_boundary() {
+    // Use a short timeout so iterations are fast.
+    let timeout = Duration::from_millis(50);
+
+    // Repeat many times to exercise the race window.
+    for _ in 0..200 {
+        let (tx, rx) = ipc::channel::<i32>().unwrap();
+
+        // Send from another thread after sleeping for approximately the
+        // timeout duration, maximising the chance of hitting the window
+        // between WAIT_TIMEOUT and CancelIoEx.
+        let send_delay = timeout;
+        thread::spawn(move || {
+            thread::sleep(send_delay);
+            tx.send(42).unwrap();
+        });
+
+        // The first try_recv_timeout may legitimately return Empty if the
+        // message has not been written yet. But the message must not be
+        // lost — a subsequent receive with a generous timeout must find it.
+        match rx.try_recv_timeout(timeout) {
+            Ok(val) => {
+                assert_eq!(val, 42);
+                continue; // Got it on the first try — no race this iteration.
+            },
+            Err(crate::TryRecvError::Empty) => {
+                // Timed out. The message should still be available.
+            },
+            Err(e) => panic!("Unexpected error: {e:?}"),
+        }
+
+        // The message was sent (the sender thread has run) but the first
+        // try_recv_timeout returned Empty. The message must still be
+        // retrievable — if it was silently lost, this will hang or fail.
+        let val = rx
+            .try_recv_timeout(Duration::from_secs(5))
+            .expect("message lost: first try_recv_timeout returned Empty but message is no longer in the pipe");
+        assert_eq!(val, 42);
+    }
+}
+
 #[test]
 fn multiple_paths_to_a_sender() {
     let person = ("Patrick Walton".to_owned(), 29);
