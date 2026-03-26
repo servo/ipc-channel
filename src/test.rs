@@ -762,8 +762,9 @@ fn try_recv_timeout() {
 // When a message arrives in the narrow window between GetOverlappedResultEx
 // returning WAIT_TIMEOUT and CancelIoEx running in issue_async_cancel, the
 // kernel completes the read but CancelIoEx returns ERROR_NOT_FOUND. The
-// current ERROR_NOT_FOUND handler restores the buffer without updating its
-// length, so the bytes the kernel read are silently discarded.
+// previous ERROR_NOT_FOUND handling restored the buffer without updating its
+// length, so the bytes the kernel read were silently discarded, resulting in
+// message loss.
 //
 // This test sends a message timed to arrive right at the timeout boundary,
 // then verifies it is not lost. The race window is small, so the test is

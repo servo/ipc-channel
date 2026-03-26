@@ -651,8 +651,9 @@ impl MessageReader {
     /// (Or `fetch_iocp_result()` for readers in a set.)
     ///
     /// The only exception is if the kernel indicates
-    /// that no operation was actually outstanding at this point.
-    /// In that case, the `async` data is released immediately;
+    /// that no operation was actually outstanding at this point
+    /// (i.e. the read already completed before the cancel request).
+    /// In that case, the completed read is processed immediately;
     /// and the caller should not attempt waiting for completion.
     fn issue_async_cancel(&mut self) {
         unsafe {
@@ -664,25 +665,18 @@ impl MessageReader {
             );
 
             if let Err(error) = result {
-                // A cancel operation is not expected to fail.
-                // If it does, callers are not prepared for that -- so we have to bail.
-                //
-                // Note that we should never ignore a failed cancel,
-                // since that would affect further operations;
-                // and the caller definitely must not free the aliased data in that case!
-                //
-                // Sometimes `CancelIoEx()` fails with `ERROR_NOT_FOUND` though,
-                // meaning there is actually no async operation outstanding at this point.
-                // (Specifically, this is triggered by the `receiver_set_big_data()` test.)
-                // Not sure why that happens -- but I *think* it should be benign...
-                //
-                // In that case, we can safely free the async data right now;
-                // and the caller should not attempt to wait for completion.
+                // `CancelIoEx()` can fail with `ERROR_NOT_FOUND` when the
+                // async read has already completed by the time we try to
+                // cancel it. This happens when data arrives between the
+                // timeout expiring and the cancel call. Any other error is
+                // unexpected — callers are not prepared for it, so bail.
                 assert!(error.code() == ERROR_NOT_FOUND.to_hresult());
 
-                let async_data = self.r#async.take().unwrap().into_inner();
-                self.handle = async_data.handle;
-                self.read_buf = async_data.buf;
+                // The operation completed before we could cancel it.
+                // Process it as a normal completion so that the bytes the
+                // kernel read are accounted for in `read_buf`.
+                self.notify_completion(Ok(()))
+                    .expect("completed read should not fail");
             }
         }
     }
