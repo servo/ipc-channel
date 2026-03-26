@@ -768,6 +768,7 @@ fn try_recv_timeout() {
 // This test sends a message timed to arrive right at the timeout boundary,
 // then verifies it is not lost. The race window is small, so the test is
 // repeated to increase the chance of hitting it.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
 #[test]
 fn try_recv_timeout_message_not_lost_at_boundary() {
     // Use a short timeout so iterations are fast.
