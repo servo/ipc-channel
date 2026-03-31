@@ -1233,11 +1233,9 @@ fn stress_concurrent_senders_many_threads() {
             thread::spawn(move || {
                 for msg_index in 0..messages_per_sender {
                     // Deterministic pseudo-random size per (sender, msg) pair.
-                    let size = ((msg_index * 99991 + sender_id as usize * 90001) % max_msg_size)
-                        .max(1);
-                    let data: Vec<u8> = (0..size)
-                        .map(|j| (j % 251) as u8 ^ sender_id)
-                        .collect();
+                    let size =
+                        ((msg_index * 99991 + sender_id as usize * 90001) % max_msg_size).max(1);
+                    let data: Vec<u8> = (0..size).map(|j| (j % 251) as u8 ^ sender_id).collect();
                     tx.send(&data, vec![], vec![]).unwrap();
                 }
             })
@@ -1349,7 +1347,10 @@ fn stress_receiver_set_churn() {
         sender_stop.store(true, Ordering::Relaxed);
     }
 
-    assert!(total_messages > 0, "should have received at least some messages");
+    assert!(
+        total_messages > 0,
+        "should have received at least some messages"
+    );
 }
 
 /// Rapid-fire try_recv_timeout to stress the CancelIoEx / timeout race.
@@ -1502,8 +1503,8 @@ fn stress_shared_memory_concurrent_create() {
             let tx = tx.clone();
             thread::spawn(move || {
                 for i in 0..regions_per_thread {
-                    let size =
-                        min_size + ((i * 99991 + thread_id as usize * 90001) % (max_size - min_size));
+                    let size = min_size
+                        + ((i * 99991 + thread_id as usize * 90001) % (max_size - min_size));
                     let fill_byte = thread_id ^ (i as u8);
                     let shmem = OsIpcSharedMemory::from_byte(fill_byte, size);
                     // Send the fill byte and expected size in the data payload
@@ -1641,11 +1642,7 @@ fn stress_channel_create_destroy_rapid() {
         let (tx, rx) = platform::channel().unwrap();
         tx.send(data, vec![], vec![]).unwrap();
         let msg = rx.recv().unwrap();
-        assert_eq!(
-            msg.data, data,
-            "data mismatch on iteration {}",
-            i
-        );
+        assert_eq!(msg.data, data, "data mismatch on iteration {}", i);
         // tx and rx drop here, closing handles.
     }
 }
