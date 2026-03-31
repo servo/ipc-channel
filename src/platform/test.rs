@@ -10,6 +10,7 @@
 use crate::platform::OsIpcSharedMemory;
 use crate::platform::{self, OsIpcChannel, OsIpcReceiverSet};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1202,4 +1203,449 @@ fn cross_process_two_step_transfer_spawn() {
 fn get_max_fragment_size() -> usize {
     // Some platforms have a very large max fragment size, so cap it to a reasonable value.
     OsIpcSender::get_max_fragment_size().min(65536)
+}
+
+// ---------------------------------------------------------------------------
+// Stress tests targeting unsafe paths in the Windows platform implementation.
+//
+// These are gated behind `enable-slow-tests` (or `#[ignore]`) so they don't
+// slow down regular CI.  Run with:
+//
+//   cargo test --features enable-slow-tests -- stress_
+// ---------------------------------------------------------------------------
+
+/// 16 concurrent senders on a single channel with varying message sizes.
+///
+/// Exercises `start_read()` / `notify_completion()` buffer management when the
+/// kernel-aliased read buffer is under heavy concurrent write pressure.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_concurrent_senders_many_threads() {
+    let num_senders: u8 = 16;
+    let messages_per_sender = 200;
+    let max_msg_size: usize = 256 * 1024;
+
+    let (tx, rx) = platform::channel().unwrap();
+
+    let threads: Vec<_> = (0..num_senders)
+        .map(|sender_id| {
+            let tx = tx.clone();
+            thread::spawn(move || {
+                for msg_index in 0..messages_per_sender {
+                    // Deterministic pseudo-random size per (sender, msg) pair.
+                    let size = ((msg_index * 99991 + sender_id as usize * 90001) % max_msg_size)
+                        .max(1);
+                    let data: Vec<u8> = (0..size)
+                        .map(|j| (j % 251) as u8 ^ sender_id)
+                        .collect();
+                    tx.send(&data, vec![], vec![]).unwrap();
+                }
+            })
+        })
+        .collect();
+    drop(tx); // Drop original sender so the channel closes after all clones finish.
+
+    let mut total_received = 0usize;
+    loop {
+        match rx.recv() {
+            Ok(msg) => {
+                // Identify the sender from the first byte and verify content.
+                let sender_id = msg.data[0] ^ (0u8); // first byte = (0 % 251) ^ sender_id
+                for (j, &byte) in msg.data.iter().enumerate() {
+                    assert_eq!(
+                        byte,
+                        (j % 251) as u8 ^ sender_id,
+                        "data corruption at byte {} in message {} from sender {}",
+                        j,
+                        total_received,
+                        sender_id
+                    );
+                }
+                total_received += 1;
+            },
+            Err(e) => {
+                assert!(e.channel_is_closed(), "unexpected recv error: {e:?}");
+                break;
+            },
+        }
+    }
+
+    assert_eq!(
+        total_received,
+        num_senders as usize * messages_per_sender,
+        "expected {} messages, got {}",
+        num_senders as usize * messages_per_sender,
+        total_received
+    );
+
+    for t in threads {
+        t.join().unwrap();
+    }
+}
+
+/// Rapid receiver-set churn: add and remove receivers while messages flow.
+///
+/// Exercises `fetch_iocp_result()` raw OVERLAPPED pointer lookup when the set
+/// of active receivers changes between completion events.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_receiver_set_churn() {
+    let initial_channels = 4;
+    let total_select_calls = 500;
+    let churn_interval = 50;
+
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+
+    // Helper: create a channel, add receiver to set, start a sender thread.
+    // Returns (rx_id, stop_flag).
+    fn spawn_sender(rx_set: &mut OsIpcReceiverSet) -> (u64, Arc<AtomicBool>) {
+        let (tx, rx) = platform::channel().unwrap();
+        let rx_id = rx_set.add(rx).unwrap();
+        let sender_stop = Arc::new(AtomicBool::new(false));
+        let stop_clone = sender_stop.clone();
+        thread::spawn(move || {
+            let data: Vec<u8> = (0..64).map(|i| i as u8).collect();
+            while !stop_clone.load(Ordering::Relaxed) {
+                if tx.send(&data, vec![], vec![]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+        (rx_id, sender_stop)
+    }
+
+    let mut active_senders: Vec<(u64, Arc<AtomicBool>)> = Vec::new();
+    for _ in 0..initial_channels {
+        active_senders.push(spawn_sender(&mut rx_set));
+    }
+
+    let mut total_messages = 0usize;
+
+    for iteration in 0..total_select_calls {
+        let results = rx_set.select().unwrap();
+        for result in results {
+            match result {
+                platform::OsIpcSelectionResult::DataReceived(_rx_id, msg) => {
+                    assert_eq!(msg.data.len(), 64);
+                    total_messages += 1;
+                },
+                platform::OsIpcSelectionResult::ChannelClosed(_rx_id) => {
+                    // Sender stopped; expected during churn.
+                },
+            }
+        }
+
+        // Periodically churn: stop oldest sender and add a new channel.
+        if iteration > 0 && iteration % churn_interval == 0 && !active_senders.is_empty() {
+            let (_old_id, old_stop) = active_senders.remove(0);
+            old_stop.store(true, Ordering::Relaxed);
+            active_senders.push(spawn_sender(&mut rx_set));
+        }
+    }
+
+    // Signal all senders to stop.
+    for (_id, sender_stop) in &active_senders {
+        sender_stop.store(true, Ordering::Relaxed);
+    }
+
+    assert!(total_messages > 0, "should have received at least some messages");
+}
+
+/// Rapid-fire try_recv_timeout to stress the CancelIoEx / timeout race.
+///
+/// Exercises `fetch_async_result()` and `issue_async_cancel()` — the exact
+/// code path where the bug fixed in commit 87cb37d lived.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_try_recv_timeout_rapid_fire() {
+    let total_sends = 2000;
+
+    let (tx, rx) = platform::channel().unwrap();
+    let sent_count = Arc::new(AtomicUsize::new(0));
+    let sent_count_clone = sent_count.clone();
+
+    let sender = thread::spawn(move || {
+        for i in 0..total_sends {
+            let data: Vec<u8> = vec![(i % 256) as u8; 64];
+            tx.send(&data, vec![], vec![]).unwrap();
+            sent_count_clone.fetch_add(1, Ordering::Release);
+            // ~1ms between sends to create many timeout/arrival races.
+            thread::sleep(Duration::from_millis(1));
+        }
+    });
+
+    let mut received_count = 0usize;
+    let timeout = Duration::from_millis(1);
+
+    // Tight loop with short timeouts to maximise cancel/complete races.
+    for _ in 0..(total_sends * 4) {
+        match rx.try_recv_timeout(timeout) {
+            Ok(msg) => {
+                assert_eq!(msg.data.len(), 64);
+                received_count += 1;
+                if received_count == total_sends {
+                    break;
+                }
+            },
+            Err(e) if e.channel_is_closed() => break,
+            Err(_) => {
+                // Timeout or empty — keep going.
+            },
+        }
+    }
+
+    // Drain any remaining messages with a generous timeout.
+    loop {
+        match rx.try_recv_timeout(Duration::from_secs(2)) {
+            Ok(_msg) => {
+                received_count += 1;
+            },
+            Err(_) => break,
+        }
+    }
+
+    sender.join().unwrap();
+
+    let total_sent = sent_count.load(Ordering::Acquire);
+    assert_eq!(
+        received_count, total_sent,
+        "message loss detected: sent {}, received {}",
+        total_sent, received_count
+    );
+}
+
+/// 4 senders each sending 20 x 1MB messages on a shared channel.
+///
+/// Exercises multi-fragment message reassembly under concurrent writes,
+/// targeting `start_read()` buffer extension and `notify_completion()` length
+/// updates with large payloads.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_large_message_interleaved() {
+    let num_senders: u8 = 4;
+    let messages_per_sender = 20;
+    let msg_size = 1024 * 1024; // 1 MB
+
+    let (tx, rx) = platform::channel().unwrap();
+
+    let threads: Vec<_> = (0..num_senders)
+        .map(|sender_id| {
+            let tx = tx.clone();
+            thread::spawn(move || {
+                let data: Vec<u8> = vec![sender_id; msg_size];
+                for _ in 0..messages_per_sender {
+                    tx.send(&data, vec![], vec![]).unwrap();
+                }
+            })
+        })
+        .collect();
+    drop(tx);
+
+    let mut counts = [0usize; 256];
+
+    loop {
+        match rx.recv() {
+            Ok(msg) => {
+                assert_eq!(
+                    msg.data.len(),
+                    msg_size,
+                    "wrong message length: {}",
+                    msg.data.len()
+                );
+                let sender_id = msg.data[0];
+                // Every byte in the message must match the sender tag.
+                assert!(
+                    msg.data.iter().all(|&b| b == sender_id),
+                    "data corruption: message tagged as sender {} has mixed bytes",
+                    sender_id
+                );
+                counts[sender_id as usize] += 1;
+            },
+            Err(e) => {
+                assert!(e.channel_is_closed());
+                break;
+            },
+        }
+    }
+
+    for id in 0..num_senders {
+        assert_eq!(
+            counts[id as usize], messages_per_sender,
+            "sender {} sent {} messages but only {} received",
+            id, messages_per_sender, counts[id as usize]
+        );
+    }
+
+    for t in threads {
+        t.join().unwrap();
+    }
+}
+
+/// Concurrent shared-memory creation and transfer over channels.
+///
+/// Exercises `OsIpcSharedMemory::new()` / `from_bytes()` / `deref()` under
+/// concurrent pressure — the unsafe `CreateFileMappingA`, `MapViewOfFile`, and
+/// `ptr::copy_nonoverlapping` paths.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_shared_memory_concurrent_create() {
+    let num_threads: u8 = 8;
+    let regions_per_thread = 100;
+    let min_size = 4 * 1024;
+    let max_size = 256 * 1024;
+
+    let (tx, rx) = platform::channel().unwrap();
+
+    let threads: Vec<_> = (0..num_threads)
+        .map(|thread_id| {
+            let tx = tx.clone();
+            thread::spawn(move || {
+                for i in 0..regions_per_thread {
+                    let size =
+                        min_size + ((i * 99991 + thread_id as usize * 90001) % (max_size - min_size));
+                    let fill_byte = thread_id ^ (i as u8);
+                    let shmem = OsIpcSharedMemory::from_byte(fill_byte, size);
+                    // Send the fill byte and expected size in the data payload
+                    // so the receiver can verify.
+                    let header = [thread_id, fill_byte];
+                    let mut data = header.to_vec();
+                    data.extend(&(size as u64).to_le_bytes());
+                    tx.send(&data, vec![], vec![shmem]).unwrap();
+                }
+            })
+        })
+        .collect();
+    drop(tx);
+
+    let mut total_received = 0usize;
+    loop {
+        match rx.recv() {
+            Ok(msg) => {
+                let fill_byte = msg.data[1];
+                let expected_size =
+                    u64::from_le_bytes(msg.data[2..10].try_into().unwrap()) as usize;
+                assert_eq!(msg.os_ipc_shared_memory_regions.len(), 1);
+                let shmem = &msg.os_ipc_shared_memory_regions[0];
+                assert_eq!(
+                    shmem.len(),
+                    expected_size,
+                    "shared memory region has wrong size"
+                );
+                assert!(
+                    shmem.iter().all(|&b| b == fill_byte),
+                    "shared memory data corruption: expected fill byte {:#x}",
+                    fill_byte
+                );
+                total_received += 1;
+            },
+            Err(e) => {
+                assert!(e.channel_is_closed());
+                break;
+            },
+        }
+    }
+
+    assert_eq!(
+        total_received,
+        num_threads as usize * regions_per_thread,
+        "not all shared memory regions received"
+    );
+
+    for t in threads {
+        t.join().unwrap();
+    }
+}
+
+/// High fan-in: 32 channels feeding a single receiver set.
+///
+/// Exercises IOCP `fetch_iocp_result()` and `add_to_iocp()` with many
+/// concurrent completion events arriving on different pipes.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_receiver_set_high_fanin() {
+    let num_channels = 32;
+    let messages_per_channel = 100;
+    let msg_size = 64;
+
+    let mut rx_set = OsIpcReceiverSet::new().unwrap();
+
+    let (threads, mut receiver_records): (Vec<_>, HashMap<_, _>) = (0..num_channels)
+        .map(|chan_index| {
+            let (tx, rx) = platform::channel().unwrap();
+            let rx_id = rx_set.add(rx).unwrap();
+
+            let data: Vec<u8> = (0..msg_size)
+                .map(|offset| (offset % 251) as u8 ^ (chan_index as u8))
+                .collect();
+            let reference_data = data.clone();
+
+            let thread = thread::spawn(move || {
+                for _ in 0..messages_per_channel {
+                    tx.send(&data, vec![], vec![]).unwrap();
+                }
+            });
+            (thread, (rx_id, (reference_data, chan_index, 0usize)))
+        })
+        .unzip();
+
+    while !receiver_records.is_empty() {
+        for result in rx_set.select().unwrap().into_iter() {
+            match result {
+                platform::OsIpcSelectionResult::DataReceived(rx_id, msg) => {
+                    let &mut (ref reference_data, chan_index, ref mut msg_index) =
+                        receiver_records.get_mut(&rx_id).unwrap();
+                    assert_eq!(
+                        msg.data.len(),
+                        msg_size,
+                        "wrong message size from channel {}",
+                        chan_index
+                    );
+                    assert_eq!(
+                        &msg.data[..],
+                        &reference_data[..],
+                        "data mismatch from channel {} message {}",
+                        chan_index,
+                        *msg_index
+                    );
+                    *msg_index += 1;
+                },
+                platform::OsIpcSelectionResult::ChannelClosed(rx_id) => {
+                    let (_, _, msg_index) = receiver_records.remove(&rx_id).unwrap();
+                    assert_eq!(
+                        msg_index, messages_per_channel,
+                        "channel closed after only {} of {} messages",
+                        msg_index, messages_per_channel
+                    );
+                },
+            }
+        }
+    }
+
+    for t in threads {
+        t.join().unwrap();
+    }
+}
+
+/// Rapid channel create-send-recv-destroy cycle.
+///
+/// Exercises `create_duplex()` (CreateNamedPipeA) and `WinHandle::Drop`
+/// (CloseHandle) in a tight loop to detect handle leaks or name collisions.
+#[cfg_attr(not(feature = "enable-slow-tests"), ignore)]
+#[test]
+fn stress_channel_create_destroy_rapid() {
+    let iterations = 5000;
+    let data: &[u8] = b"ping";
+
+    for i in 0..iterations {
+        let (tx, rx) = platform::channel().unwrap();
+        tx.send(data, vec![], vec![]).unwrap();
+        let msg = rx.recv().unwrap();
+        assert_eq!(
+            msg.data, data,
+            "data mismatch on iteration {}",
+            i
+        );
+        // tx and rx drop here, closing handles.
+    }
 }
