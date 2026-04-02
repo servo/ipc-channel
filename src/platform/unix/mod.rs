@@ -53,14 +53,14 @@ const MAX_FDS_IN_CMSG: u32 = 64;
 // present, each taking up 8 bytes regardless of the target.
 const RESERVED_SIZE: usize = unsafe { CMSG_SPACE(MAX_FDS_IN_CMSG * 8) } as usize;
 
-#[cfg(any(target_os = "linux", target_os = "illumos"))]
+#[cfg(any(target_os = "linux", target_os = "illumos", target_os = "freebsd"))]
 const SOCK_FLAGS: c_int = libc::SOCK_CLOEXEC;
-#[cfg(not(any(target_os = "linux", target_os = "illumos")))]
+#[cfg(not(any(target_os = "linux", target_os = "illumos", target_os = "freebsd")))]
 const SOCK_FLAGS: c_int = 0;
 
-#[cfg(any(target_os = "linux", target_os = "illumos"))]
+#[cfg(any(target_os = "linux", target_os = "illumos", target_os = "freebsd"))]
 const RECVMSG_FLAGS: c_int = libc::MSG_CMSG_CLOEXEC;
-#[cfg(not(any(target_os = "linux", target_os = "illumos")))]
+#[cfg(not(any(target_os = "linux", target_os = "illumos", target_os = "freebsd")))]
 const RECVMSG_FLAGS: c_int = 0;
 
 #[cfg(target_env = "gnu")]
