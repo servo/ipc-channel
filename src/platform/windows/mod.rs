@@ -1539,9 +1539,12 @@ impl Drop for OsIpcReceiverSet {
         // thus freeing the associated async data.
         self.readers.retain(|r| r.r#async.is_some());
         while !self.readers.is_empty() {
-            // We unwrap the outer result (can't deal with the IOCP call failing here),
-            // but don't care about the actual results of the completed read operations.
-            let _ = self.fetch_iocp_result(INFINITE).unwrap();
+            // Panicking out of Drop is worse than failing to drain the IOCP,
+            // so swallow the outer error and stop polling. Inner read results
+            // are intentionally discarded — the readers are about to be dropped.
+            if self.fetch_iocp_result(INFINITE).is_err() {
+                break;
+            }
         }
     }
 }
