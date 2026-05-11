@@ -1541,7 +1541,7 @@ impl Drop for OsIpcReceiverSet {
         while !self.readers.is_empty() {
             // Panicking out of Drop is worse than failing to drain the IOCP,
             // so swallow the outer error and stop polling. Inner read results
-            // are intentionally discarded — the readers are about to be dropped.
+            // are intentionally discarded, the readers are about to be dropped.
             if self.fetch_iocp_result(INFINITE).is_err() {
                 break;
             }
