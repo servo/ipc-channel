@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel"
-version = "0.22.1"
+version = "0.23.0"
 description = "A multiprocess drop-in replacement for Rust channels"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
@@ -42,7 +42,7 @@ crossbeam-channel = "0.5"
 futures-channel = { version = "0.3.32", optional = true }
 futures-core = { version = "0.3.32", optional = true }
 libc = "0.2.162"
-postcard = {version = "1.1", default-features = false, features = ["use-std"]}
+postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 serde_core = "1.0"
 thiserror = "2.0.12"
 uuid = { version = "1", features = ["v4"] }
