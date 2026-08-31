@@ -1114,7 +1114,7 @@ fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),
                     sz,
                     written,
                     total,
-                    WinError::from_win32()
+                    WinError::from_thread()
                 );
             },
         }
@@ -2022,7 +2022,7 @@ impl OsIpcSharedMemory {
         unsafe {
             let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0);
             if address.Value.is_null() {
-                return Err(WinError::from_win32());
+                return Err(WinError::from_thread());
             }
 
             Ok(OsIpcSharedMemory {
