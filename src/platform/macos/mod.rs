@@ -15,7 +15,7 @@ use self::mach_sys::{mach_port_right_t, mach_port_t, mach_task_self_, vm_inherit
 use crate::ipc::IpcMessage;
 
 use libc::{self, c_char, c_uint, c_void, size_t};
-use rand::{self, Rng};
+use rand::{self, RngExt};
 use std::cell::Cell;
 use std::convert::TryInto;
 use std::ffi::CString;

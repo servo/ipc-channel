@@ -1114,7 +1114,7 @@ fn write_buf(handle: &WinHandle, bytes: &[u8], atomic: AtomicMode) -> Result<(),
                     sz,
                     written,
                     total,
-                    WinError::from_win32()
+                    WinError::from_thread()
                 );
             },
         }
@@ -1482,7 +1482,13 @@ impl OsIpcSender {
             full_message.extend_from_slice(header_bytes);
         }
 
-        if big_data_sender.is_none() {
+        if let Some(big_data_sender) = big_data_sender {
+            full_message.extend_from_slice(&oob_data);
+            assert!(full_message.len() == full_in_band_len);
+
+            write_buf(&self.handle, &full_message, AtomicMode::Atomic)?;
+            big_data_sender.send_raw(data)?;
+        } else {
             full_message.extend_from_slice(data);
             full_message.extend_from_slice(&oob_data);
             assert!(full_message.len() == full_in_band_len);
@@ -1491,12 +1497,6 @@ impl OsIpcSender {
             // could result in parts of different messages getting intermixed,
             // and the receiver would not be able to extract the individual messages.
             write_buf(&self.handle, &full_message, AtomicMode::Atomic)?;
-        } else {
-            full_message.extend_from_slice(&oob_data);
-            assert!(full_message.len() == full_in_band_len);
-
-            write_buf(&self.handle, &full_message, AtomicMode::Atomic)?;
-            big_data_sender.unwrap().send_raw(data)?;
         }
 
         Ok(())
@@ -2022,7 +2022,7 @@ impl OsIpcSharedMemory {
         unsafe {
             let address = MapViewOfFile(handle.as_raw(), FILE_MAP_ALL_ACCESS, 0, 0, 0);
             if address.Value.is_null() {
-                return Err(WinError::from_win32());
+                return Err(WinError::from_thread());
             }
 
             Ok(OsIpcSharedMemory {

@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{
     CloseHandle, CompareObjectHandles, ERROR_INVALID_HANDLE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::System::Memory::{CreateFileMappingA, PAGE_READWRITE};
-use windows::Win32::System::Threading::{CreateEventA, GetCurrentProcessId};
+use windows::Win32::System::Threading::CreateEventA;
 
 #[test]
 fn test_recover_handles_empty() {
@@ -38,7 +38,7 @@ fn test_recover_handles_duplicates_channel_handles() {
     assert_eq!(oob.channel_handles.len(), 3);
     for (i, handle) in oob.channel_handles.iter().enumerate() {
         assert_ne!(*handle, handles[i]);
-        assert_ne!(*handle as isize, INVALID_HANDLE_VALUE.0 as isize);
+        assert_ne!(*handle, INVALID_HANDLE_VALUE.0 as isize);
     }
 
     // Clean up the handles
@@ -90,7 +90,7 @@ fn test_recover_handles_duplicates_shmem_handles() {
     let mut oob = OutOfBandMessage {
         target_process_id: std::process::id(),
         channel_handles: vec![],
-        shmem_handles: handles.clone().into_iter().zip(sizes.into_iter()).collect(),
+        shmem_handles: handles.clone().into_iter().zip(sizes).collect(),
         big_data_receiver_handle: None,
     };
 
