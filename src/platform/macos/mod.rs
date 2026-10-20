@@ -830,11 +830,12 @@ fn select(
 }
 
 /// The contents of a received message, as found by `parse_message`. Its port
-/// names and out-of-line regions, the payload's included, leak unless they are
+/// names and out-of-line regions leak (payloads included) unless they are
 /// wrapped in `OsOpaqueIpcChannel` and `OsIpcSharedMemory`.
 struct ParsedMessage {
     port_names: Vec<mach_port_t>,
-    /// The address and size of each out-of-line region, without the payload's.
+    /// The address and size of each out-of-line region, except the one holding
+    /// the payload.
     shared_memory_regions: Vec<(*mut u8, usize)>,
     payload: ReceivedPayload,
 }
