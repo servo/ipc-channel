@@ -36,7 +36,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
-use tempfile::{Builder, TempDir};
+#[cfg(not(target_os = "linux"))]
+use tempfile::Builder;
+use tempfile::TempDir;
 use thiserror::Error;
 
 const MAX_FDS_IN_CMSG: u32 = 64;
@@ -81,6 +83,10 @@ pub enum OsTrySelectError {
     Empty,
 }
 
+/// Builds a filesystem-backed `sockaddr_un` for a pathname socket. Only used
+/// on non-Linux Unix targets; Linux goes through the abstract-namespace
+/// branch in `build_sockaddr` instead.
+#[cfg(not(target_os = "linux"))]
 unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
     let mut sockaddr: sockaddr_un = mem::zeroed();
     libc::strncpy(
@@ -90,6 +96,69 @@ unsafe fn new_sockaddr_un(path: *const c_char) -> (sockaddr_un, usize) {
     );
     sockaddr.sun_family = libc::AF_UNIX as sa_family_t;
     (sockaddr, mem::size_of::<sockaddr_un>())
+}
+
+/// Builds a `sockaddr_un` for `name`.
+///
+/// On Linux the name is placed in the abstract socket namespace
+/// (see man 7 unix): `sun_path[0]` is a NUL marker rather than a
+/// terminator, the kernel uses `addrlen` to determine the address
+/// bytes, and no filesystem entry is created. This lets the one-shot
+/// server bind without a writable temp directory, which matters in
+/// containers/sandboxes where `/tmp` is read-only.
+///
+/// On other Unix targets there is no abstract namespace, so the name
+/// is encoded as a regular filesystem-backed pathname (see
+/// `new_sockaddr_un`).
+unsafe fn build_sockaddr(name: &str) -> Result<(sockaddr_un, usize), UnixError> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut sockaddr: sockaddr_un = mem::zeroed();
+        sockaddr.sun_family = libc::AF_UNIX as sa_family_t;
+        // sun_path[0] = 0 (already zeroed) marks this as an abstract
+        // socket address on Linux (see man 7 unix).
+        let bytes = name.as_bytes();
+        let max_len = sockaddr.sun_path.len() - 1; // leave room for the leading NUL
+        if bytes.len() > max_len {
+            return Err(UnixError::last());
+        }
+        // Linux abstract namespace (see man 7 unix): sun_path[0] is a marker
+        // (NUL), not a terminator. The kernel uses addrlen to determine the
+        // address bytes, so the name goes in sun_path[1..].
+        //
+        // The null-terminated pathname requirement from connect(2) applies to
+        // filesystem-backed pathname sockets; Linux abstract sockets use addrlen
+        // to determine the address bytes instead.
+        for (i, b) in bytes.iter().enumerate() {
+            sockaddr.sun_path[i + 1] = *b as c_char;
+        }
+        let addr_len = size_of::<sa_family_t>() + 1 + bytes.len();
+        Ok((sockaddr, addr_len))
+    }
+
+    // Fallback for non-Linux Unix targets: encode `name` as a regular
+    // filesystem-backed pathname.
+    #[cfg(not(target_os = "linux"))]
+    {
+        let c_name = CString::new(name).unwrap();
+        Ok(new_sockaddr_un(c_name.as_ptr()))
+    }
+}
+
+/// Generates a random name for an abstract-namespace socket. The
+/// returned name has no filesystem meaning on Linux; `build_sockaddr`
+/// interprets it directly as an abstract-namespace address.
+#[cfg(target_os = "linux")]
+fn make_abstract_name() -> String {
+    let mut buf = [0u8; 16];
+    unsafe {
+        libc::getrandom(buf.as_mut_ptr() as *mut c_void, buf.len(), 0);
+    }
+    let mut hex = String::with_capacity(32);
+    for b in buf {
+        hex.push_str(&format!("{:02x}", b));
+    }
+    format!("ipc-osn-{hex}")
 }
 
 static SYSTEM_SENDBUF_SIZE: LazyLock<usize> = LazyLock::new(|| {
@@ -463,10 +532,9 @@ impl OsIpcSender {
     }
 
     pub fn connect(name: String) -> Result<OsIpcSender, UnixError> {
-        let name = CString::new(name).unwrap();
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET | SOCK_FLAGS, 0);
-            let (sockaddr, len) = new_sockaddr_un(name.as_ptr());
+            let (sockaddr, len) = build_sockaddr(&name)?;
             if libc::connect(
                 fd,
                 &sockaddr as *const _ as *const sockaddr,
@@ -686,7 +754,10 @@ pub struct OsIpcOneShotServer {
     // Object representing the temporary directory the socket was created in.
     // The directory is automatically deleted (along with the socket inside it)
     // when this field is dropped.
-    _temp_dir: TempDir,
+    //
+    // `None` on Linux, where the abstract namespace needs no filesystem entry
+    // and thus no writable directory anywhere.
+    _temp_dir: Option<TempDir>,
 }
 
 impl Drop for OsIpcOneShotServer {
@@ -702,12 +773,21 @@ impl OsIpcOneShotServer {
     pub fn new() -> Result<(OsIpcOneShotServer, String), UnixError> {
         unsafe {
             let fd = libc::socket(libc::AF_UNIX, SOCK_SEQPACKET | SOCK_FLAGS, 0);
-            let temp_dir = Builder::new().tempdir()?;
-            let socket_path = temp_dir.path().join("socket");
-            let path_string = socket_path.to_str().unwrap();
 
-            let path_c_string = CString::new(path_string).unwrap();
-            let (sockaddr, len) = new_sockaddr_un(path_c_string.as_ptr());
+            // Linux: bind in the abstract namespace, no filesystem entry.
+            #[cfg(target_os = "linux")]
+            let (name_string, temp_dir) = (make_abstract_name(), None);
+
+            // Other Unix targets have no abstract namespace: bind to a
+            // path inside a fresh temp directory instead.
+            #[cfg(not(target_os = "linux"))]
+            let (name_string, temp_dir) = {
+                let temp_dir = Builder::new().tempdir()?;
+                let socket_path = temp_dir.path().join("socket");
+                (socket_path.to_str().unwrap().to_string(), Some(temp_dir))
+            };
+
+            let (sockaddr, len) = build_sockaddr(&name_string)?;
             if libc::bind(
                 fd,
                 &sockaddr as *const _ as *const sockaddr,
@@ -726,7 +806,7 @@ impl OsIpcOneShotServer {
                     fd,
                     _temp_dir: temp_dir,
                 },
-                path_string.to_string(),
+                name_string
             ))
         }
     }
