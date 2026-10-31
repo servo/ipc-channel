@@ -1207,10 +1207,18 @@ fn new_msghdr(iovec: &mut [iovec], cmsg_buffer: *mut cmsghdr, cmsg_space: MsgCon
     msghdr
 }
 
+unsafe fn memfd_create(name: *const c_char, flags: c_uint) -> Result<c_int, UnixError> {
+    let fd = unsafe { libc::memfd_create(name, flags) };
+    if fd >= 0 {
+        Ok(fd)
+    } else {
+        Err(UnixError::last())
+    }
+}
+
 fn create_shmem(name: CString, length: usize) -> c_int {
     unsafe {
-        let fd = libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC);
-        assert!(fd >= 0);
+        let fd = memfd_create(name.as_ptr(), libc::MFD_CLOEXEC).unwrap();
         assert_eq!(libc::ftruncate(fd, length as off_t), 0);
         fd
     }
