@@ -5,7 +5,7 @@ use windows::Win32::Foundation::{
     CloseHandle, CompareObjectHandles, ERROR_INVALID_HANDLE, HANDLE, INVALID_HANDLE_VALUE,
 };
 use windows::Win32::System::Memory::{CreateFileMappingA, PAGE_READWRITE};
-use windows::Win32::System::Threading::CreateEventA;
+use windows::Win32::System::Threading::{CreateEventA, GetCurrentProcess, GetProcessHandleCount};
 
 #[test]
 fn test_recover_handles_empty() {
@@ -478,4 +478,36 @@ fn test_recover_handles_invalid_process() {
     oob.channel_handles.push(1); // Dummy handle
 
     assert!(oob.recover_handles().is_err());
+}
+
+fn process_handle_count() -> u32 {
+    let mut count = 0;
+    unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut count) }
+        .expect("Failed to get the process handle count");
+    count
+}
+
+#[test]
+fn receiving_shared_memory_does_not_leak_handles() {
+    let (tx, rx) = channel().unwrap();
+    let send_and_receive = || {
+        let shmem = OsIpcSharedMemory::from_bytes(&[1, 2, 3]);
+        tx.send(&[], vec![], vec![shmem]).unwrap();
+        let message = rx.recv().unwrap();
+        assert_eq!(message.os_ipc_shared_memory_regions.len(), 1);
+    };
+
+    // Warm up, so lazily created handles do not count as a leak.
+    send_and_receive();
+    let before = process_handle_count();
+    for _ in 0..100 {
+        send_and_receive();
+    }
+    let after = process_handle_count();
+
+    // Each received region used to leak the sender's copy of its handle (+100 here).
+    assert!(
+        after < before + 10,
+        "handle count grew from {before} to {after} over 100 received regions"
+    );
 }
