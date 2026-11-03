@@ -216,9 +216,13 @@ impl<'data> Message<'data> {
         if self.oob_len > 0 {
             let mut oob = postcard::from_bytes::<OutOfBandMessage>(self.oob_bytes())
                 .expect("Failed to deserialize OOB data");
-            if let Err(e) = oob.recover_handles() {
-                win32_trace!("Failed to recover handles: {:?}", e);
-                return None;
+            // The sender already put the handles into `target_process_id`. If that is us, they
+            // are valid here; duplicating them again would leak the sender's copy.
+            if oob.target_process_id != *CURRENT_PROCESS_ID {
+                if let Err(e) = oob.recover_handles() {
+                    win32_trace!("Failed to recover handles: {:?}", e);
+                    return None;
+                }
             }
             Some(oob)
         } else {
